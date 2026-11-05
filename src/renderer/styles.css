@@ -757,6 +757,29 @@ body { display: flex; flex-direction: column; }
 /* ---- problems panel ---- */
 .problems-view { position: absolute; inset: 0; overflow: auto; padding: 4px 0; background: var(--bg); }
 
+/* References panel */
+.references-summary { padding: 4px 12px 6px; color: var(--fg-muted); }
+.reference-text { font-family: var(--font-code); font-size: 12px; }
+.reference-text mark { background: var(--find-match, rgba(255, 200, 0, 0.3)); color: inherit; border-radius: 2px; }
+
+/* Outline (sidebar) */
+.outline-view { display: flex; flex-direction: column; height: 100%; }
+.outline-filter { margin: 4px 8px 6px; }
+.outline-list { flex: 1; overflow: auto; }
+.outline-item {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 2px 8px; border: 0; background: none; color: var(--fg);
+  font: inherit; text-align: left; cursor: pointer; white-space: nowrap;
+}
+.outline-item:hover { background: var(--bg-hover); }
+.outline-item.current { background: var(--bg-active); }
+.outline-icon { width: 14px; flex-shrink: 0; text-align: center; font-size: 11px; font-weight: 700; color: var(--fg-muted); }
+.outline-icon.kind-class { color: var(--tok-class, #e5c07b); }
+.outline-icon.kind-function, .outline-icon.kind-method, .outline-icon.kind-constructor { color: var(--tok-function, #61afef); }
+.outline-icon.kind-constant { color: var(--tok-constant, #d19a66); }
+.outline-name { flex-shrink: 0; }
+.outline-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--fg-muted); font-size: 11px; }
+
 /* Tests panel */
 .tests-view { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg); }
 .tests-summary { padding: 4px 12px; color: var(--fg-muted); border-bottom: 1px solid var(--border); min-height: 1.4em; }

@@ -8,6 +8,7 @@ import type { Doc } from '../editor/document'
 import type { Position } from '../editor/textBuffer'
 import { pathToUri, uriToPath } from '../../shared/uri'
 import type { CompletionItem } from './completionLogic'
+import { parseLocations, parseSymbols, parseWorkspaceEdit, type DocSymbol, type FileEdits, type Location } from './navigation'
 
 export interface Diagnostic {
   start: Position
@@ -97,7 +98,7 @@ export class PythonLanguage {
         rootUri,
         workspaceFolders: [{ uri: rootUri, name: rootPath.split(/[\\/]/).pop() }],
         capabilities: {
-          workspace: { configuration: true, workspaceFolders: true },
+          workspace: { configuration: true, workspaceFolders: true, workspaceEdit: { documentChanges: true } },
           textDocument: {
             synchronization: { didSave: true, dynamicRegistration: false },
             publishDiagnostics: { relatedInformation: false },
@@ -106,7 +107,10 @@ export class PythonLanguage {
               contextSupport: true
             },
             hover: { contentFormat: ['markdown', 'plaintext'] },
-            definition: { linkSupport: false }
+            definition: { linkSupport: false },
+            references: {},
+            rename: { prepareSupport: true },
+            documentSymbol: { hierarchicalDocumentSymbolSupport: true }
           }
         }
       })
@@ -239,6 +243,70 @@ export class PythonLanguage {
     const range = first.range ?? first.targetSelectionRange ?? first.targetRange
     if (!uri || !range) return null
     return { path: uriToPath(uri), start: toPosition(range.start), end: toPosition(range.end) }
+  }
+
+  // ---------- references, rename, symbols ----------
+
+  /** Every use of the symbol at `pos` across the project (including its definition). */
+  async references(doc: Doc, pos: Position): Promise<Location[]> {
+    if (!this.started || !this.open.has(doc)) return []
+    this.flush()
+    const res = await this.client.request<unknown>('textDocument/references', {
+      textDocument: { uri: pathToUri(doc.path) },
+      position: toLsp(pos),
+      context: { includeDeclaration: true }
+    })
+    return parseLocations(res)
+  }
+
+  /**
+   * Can the thing at `pos` be renamed? Returns its range and current name,
+   * or null (e.g. a keyword, or something from a library).
+   */
+  async prepareRename(doc: Doc, pos: Position): Promise<{ start: Position; end: Position; name: string } | null> {
+    if (!this.started || !this.open.has(doc)) return null
+    this.flush()
+    const res = await this.client.request<any>('textDocument/prepareRename', {
+      textDocument: { uri: pathToUri(doc.path) },
+      position: toLsp(pos)
+    })
+    const range = res?.range ?? (res?.start ? res : null)
+    if (!range?.start) return null
+    const start = toPosition(range.start)
+    const end = toPosition(range.end)
+    const name = typeof res.placeholder === 'string' ? res.placeholder : start.line === end.line ? doc.buffer.getLine(start.line).slice(start.col, end.col) : ''
+    return { start, end, name }
+  }
+
+  /** The edits that rename the symbol at `pos` to `newName`, per file. */
+  async rename(doc: Doc, pos: Position, newName: string): Promise<FileEdits> {
+    if (!this.started || !this.open.has(doc)) return new Map()
+    this.flush()
+    const res = await this.client.request<unknown>('textDocument/rename', {
+      textDocument: { uri: pathToUri(doc.path) },
+      position: toLsp(pos),
+      newName
+    })
+    return parseWorkspaceEdit(res)
+  }
+
+  /** The classes, functions, methods and variables in a file (for the outline). */
+  async symbols(doc: Doc): Promise<DocSymbol[]> {
+    if (!this.started || !this.open.has(doc)) return []
+    this.flush()
+    const res = await this.client.request<unknown>('textDocument/documentSymbol', { textDocument: { uri: pathToUri(doc.path) } })
+    return parseSymbols(res)
+  }
+
+  /** Tell the server files changed on disk behind its back (e.g. a rename edited closed files). */
+  filesChangedOnDisk(paths: string[]): void {
+    if (!this.started || !paths.length) return
+    this.client.notify('workspace/didChangeWatchedFiles', { changes: paths.map((p) => ({ uri: pathToUri(p), type: 2 })) })
+  }
+
+  /** Is this doc known to the server (open and Python)? */
+  knows(doc: Doc): boolean {
+    return this.started && this.open.has(doc)
   }
 
   // ---------- diagnostics ----------

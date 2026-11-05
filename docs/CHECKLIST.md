@@ -65,11 +65,11 @@ to real source code or runtime behaviour.
 - [x] Debugger (DAP, debugpy): breakpoints, stepping, call stack, variables, debug console with expression evaluation, hover values, pause on uncaught exceptions (v0.17)
 
 Language features (Pyright already does the analysis for most of these; they're mostly UI work):
-- [ ] Find references
-- [ ] Rename symbol across project
+- [x] Find references (v0.31: Shift+F12, References tab with line previews)
+- [x] Rename symbol across project (v0.31: F2; open files undoable, closed files changed on disk after confirming)
 - [ ] Go to implementation
 - [ ] Call hierarchy
-- [ ] Document symbols / outline panel
+- [x] Document symbols / outline panel (v0.31: Outline sidebar tab follows the cursor, filter; Ctrl+Shift+O)
 - [ ] Import organisation and automatic import suggestions
 - [ ] Code actions and quick fixes
 - [ ] Format document / selection (Black, Ruff)

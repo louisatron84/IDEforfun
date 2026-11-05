@@ -1,6 +1,7 @@
 import { FileTree } from './fileTree'
 import { Editor, type EditorOptions } from './editor/editor'
 import type { Doc } from './editor/document'
+import type { Position } from './editor/textBuffer'
 import { OpenRefused, Workspace, isInside, samePath } from './workspace'
 import { BackupKeeper } from './backups'
 import { ENCODINGS, encodingLabel } from '../shared/encoding'
@@ -30,6 +31,9 @@ import { Shortcuts } from './shortcuts'
 import { PythonEnv, type PythonTool } from './pythonEnv'
 import { TestView } from './testView'
 import { WelcomePage } from './welcome'
+import { ReferencesView } from './referencesView'
+import { OutlineView } from './outlineView'
+import { applyEdits, type DocSymbol, type Location, type TextEdit, SYMBOL_KIND } from './lsp/navigation'
 import { isTestFile } from '../shared/tests'
 import { normalizeRunFile, resolveConfiguration, resolveTask, RUN_FILE, starterRunFile, type LaunchSpec, type RunFile, type Task } from '../shared/runConfig'
 
@@ -472,6 +476,8 @@ async function startLanguageServer(): Promise<void> {
     await python.start(rootFolder, py)
     python.syncDocs(workspace.docs.filter((d) => !d.large))
     problems.setStatus('')
+    outlineDoc = null
+    refreshOutlineSoon(0)
   } catch (err) {
     problems.setStatus(`Python language server failed to start: ${String(err)}`)
   }
@@ -601,6 +607,220 @@ async function goBack(): Promise<void> {
   if (await openFile(prev.path)) editor.goTo(prev.line, prev.col)
 }
 
+// ---------- find references, rename, outline ----------
+
+const hasDocNow = () => workspace.active !== null
+
+/** The name at `pos` in a line (for messages). */
+function nameAt(line: string, col: number): string {
+  let a = col
+  let b = col
+  while (a > 0 && /[\p{L}\p{N}_]/u.test(line[a - 1])) a--
+  while (b < line.length && /[\p{L}\p{N}_]/u.test(line[b])) b++
+  return line.slice(a, b)
+}
+
+const referencesView = new ReferencesView(
+  (loc) => void openFile(loc.path).then((doc) => {
+    if (!doc) return
+    editor.select(loc.start, loc.end)
+    editor.focus()
+  }),
+  (path) => (rootFolder && isInside(path, rootFolder) ? path.slice(rootFolder.length).replace(/^[\\/]+/, '') : path)
+)
+panel.addView('references', 'References', referencesView.body, referencesView.actions)
+
+async function findReferences(): Promise<void> {
+  const doc = workspace.active
+  if (!doc) return
+  panel.show('references')
+  if (!python.knows(doc)) {
+    referencesView.message(doc.large ? 'This file is too large for the Python language server.' : 'Find references works in Python files, once the language server has started.')
+    return
+  }
+  const pos = cursorOnWord()
+  const name = nameAt(doc.buffer.getLine(pos.line), pos.col)
+  referencesView.message(`Looking for references to "${name}"…`)
+  let locations: Location[] = []
+  try {
+    locations = await python.references(doc, pos)
+  } catch (err) {
+    referencesView.message(`Couldn't find references: ${String(err)}`)
+    return
+  }
+  // Lines for the previews: open files from the editor, others read once from disk.
+  const cache = new Map<string, Promise<string[]>>()
+  const lineText = async (path: string, line: number) => {
+    const open = workspace.find(path)
+    if (open) return open.buffer.getLine(line)
+    if (!cache.has(path)) {
+      cache.set(path, window.api.readTextFile(path).then((r) => (r.kind === 'text' ? r.text.split(/\r\n|\r|\n/) : [])))
+    }
+    return (await cache.get(path)!)[line] ?? ''
+  }
+  await referencesView.show(name, locations, lineText)
+}
+
+/** Apply edits to an open document as one undoable step. */
+function applyEditsToDoc(doc: Doc, edits: TextEdit[]): void {
+  const sorted = [...edits].sort((a, b) => b.start.line - a.start.line || b.start.col - a.start.col)
+  const before = workspace.active === doc ? editor.getCursor() : { line: 0, col: 0 }
+  doc.history.transact('other', before, () => {
+    let at = before
+    for (const e of sorted) {
+      doc.buffer.delete(e.start, e.end)
+      at = doc.buffer.insert(e.start, e.text)
+    }
+    return at
+  })
+  python.docChanged(doc)
+}
+
+async function renameSymbol(): Promise<void> {
+  const doc = workspace.active
+  if (!doc) return
+  if (!python.knows(doc)) {
+    alert('Rename works in Python files, once the language server has started.')
+    return
+  }
+  const pos = cursorOnWord()
+  let prep: Awaited<ReturnType<typeof python.prepareRename>> = null
+  try {
+    prep = await python.prepareRename(doc, pos)
+  } catch { /* treated as "can't rename" */ }
+  if (!prep) {
+    alert("That can't be renamed. Put the cursor on a name defined in your code (a variable, function, class, parameter...).")
+    return
+  }
+  const oldName = prep.name
+  palette.prompt(`Rename "${oldName}" everywhere to…`, (text) => void doRename(doc, pos, oldName, text.trim()), oldName, 'Rename to')
+}
+
+async function doRename(doc: Doc, pos: Position, oldName: string, newName: string): Promise<void> {
+  if (newName === oldName || !newName) return
+  if (!/^[\p{L}_][\p{L}\p{N}_]*$/u.test(newName)) {
+    alert(`"${newName}" isn't a valid Python name (letters, digits and _, not starting with a digit).`)
+    return
+  }
+  let edits
+  try {
+    edits = await python.rename(doc, pos, newName)
+  } catch (err) {
+    alert(`Rename failed: ${err instanceof Error ? err.message : String(err)}`)
+    return
+  }
+  if (!edits.size) {
+    alert('Nothing to rename.')
+    return
+  }
+  const count = [...edits.values()].reduce((n, l) => n + l.length, 0)
+  const closed = [...edits.keys()].filter((p) => !workspace.find(p))
+  const rel = (p: string) => (rootFolder && isInside(p, rootFolder) ? p.slice(rootFolder.length).replace(/^[\\/]+/, '') : p)
+  if (closed.length) {
+    const list = closed.slice(0, 10).map((p) => `  • ${rel(p)}`).join('\n') + (closed.length > 10 ? `\n  …and ${closed.length - 10} more` : '')
+    const ok = confirm(
+      `Rename "${oldName}" to "${newName}": ${count} change${count === 1 ? '' : 's'} in ${edits.size} file${edits.size === 1 ? '' : 's'}.\n\n` +
+      `${closed.length} of them ${closed.length === 1 ? "isn't" : "aren't"} open and will be changed and saved on disk:\n${list}\n\nContinue?`
+    )
+    if (!ok) return
+  }
+  // Open files: edited in place (unsaved, Ctrl+Z undoes it).
+  for (const [path, list] of edits) {
+    const open = workspace.find(path)
+    if (open) applyEditsToDoc(open, list)
+  }
+  // Closed files: changed on disk.
+  const failed: string[] = []
+  for (const path of closed) {
+    try {
+      const res = await window.api.readTextFile(path)
+      if (res.kind !== 'text') throw new Error('not a text file')
+      await window.api.writeTextFile(path, applyEdits(res.text, edits.get(path)!), res.encoding)
+    } catch (err) {
+      failed.push(`${rel(path)} (${err instanceof Error ? err.message : String(err)})`)
+    }
+  }
+  python.filesChangedOnDisk(closed)
+  workspace.notifyChanged()
+  if (closed.length) void refreshGit()
+  if (failed.length) alert(`These files couldn't be changed, so the rename is incomplete there:\n${failed.join('\n')}`)
+}
+
+const outline = new OutlineView((s: DocSymbol) => {
+  editor.goTo(s.nameStart.line, s.nameStart.col)
+  editor.focus()
+})
+$('outline-panel').append(outline.root)
+let outlineTimer: number | undefined
+let outlineGeneration = 0
+let outlineDoc: Doc | null = null
+let outlineVersion = -1
+
+function refreshOutlineSoon(delay = 500): void {
+  window.clearTimeout(outlineTimer)
+  outlineTimer = window.setTimeout(() => void refreshOutline(), delay)
+}
+
+/** Ask the language server for the open file's symbols (only while the Outline tab shows). */
+async function refreshOutline(): Promise<void> {
+  if ($('outline-panel').hidden) return
+  const doc = workspace.active
+  if (!doc) return outline.set([], 'Open a Python file to see its outline.')
+  if (!/\.pyi?$/i.test(doc.path)) return outline.set([], 'The outline is for Python files.')
+  if (!python.knows(doc)) {
+    return outline.set([], doc.large ? 'This file is too large for the Python language server.' : 'Waiting for the Python language server…')
+  }
+  if (doc === outlineDoc && doc.version === outlineVersion) return
+  const gen = ++outlineGeneration
+  let symbols: DocSymbol[] = []
+  try {
+    symbols = await python.symbols(doc)
+  } catch {
+    return
+  }
+  if (gen !== outlineGeneration || workspace.active !== doc) return
+  outlineDoc = doc
+  outlineVersion = doc.version
+  outline.set(symbols)
+  outline.highlight(editor.getCursor())
+}
+
+/** Ctrl+Shift+O: jump to a class / function / method in this file. */
+async function goToSymbol(): Promise<void> {
+  const doc = workspace.active
+  if (!doc) return
+  if (!python.knows(doc)) {
+    palette.choose('Go to symbol works in Python files, once the language server has started.', [])
+    return
+  }
+  const symbols = await python.symbols(doc).catch(() => [] as DocSymbol[])
+  const items: { label: string; detail?: string; hint?: string; run: () => void }[] = []
+  const walk = (list: DocSymbol[], parent: string) => {
+    for (const s of list) {
+      const kind = SYMBOL_KIND[s.kind]?.name ?? 'symbol'
+      items.push({
+        label: s.name,
+        detail: parent ? `${kind} in ${parent}` : kind,
+        hint: `line ${s.nameStart.line + 1}`,
+        run: () => {
+          editor.goTo(s.nameStart.line, s.nameStart.col)
+          editor.focus()
+        }
+      })
+      walk(s.children, parent ? `${parent}.${s.name}` : s.name)
+    }
+  }
+  walk(symbols, '')
+  palette.choose(items.length ? 'Go to a symbol in this file' : 'No classes or functions in this file', items)
+}
+
+const editorFocused = () => editors.some((e) => e.hasFocus)
+commands.register({ id: 'nav.references', title: 'Find All References', keys: 'Shift+F12', when: hasDocNow, run: () => void findReferences() })
+commands.register({ id: 'editor.renameSymbol', title: 'Rename Symbol…', keys: 'F2', when: () => hasDocNow() && editorFocused(), run: () => void renameSymbol() })
+commands.register({ id: 'nav.symbol', title: 'Go to Symbol in File…', keys: 'Ctrl+Shift+O', when: hasDocNow, run: () => void goToSymbol() })
+commands.register({ id: 'view.outline', title: 'Show Outline', run: () => showSidebar('outline') })
+commands.register({ id: 'panel.references', title: 'Show References', run: () => panel.show('references') })
+
 // ---------- settings ----------
 
 /** The settings in effect: yours, with the open project's overrides on top. */
@@ -687,6 +907,7 @@ workspace.subscribe(() => {
     lastActiveDoc = workspace.active
   }
   updateWelcome()
+  refreshOutlineSoon(workspace.active === outlineDoc ? 600 : 50)
   syncGroups()
   workspace.groups.forEach((g, i) => {
     tabBars[i].render()
@@ -1320,16 +1541,18 @@ const searchView = new SearchView(
 )
 $('search-panel').append(searchView.root)
 
-function showSidebar(view: 'files' | 'search'): void {
+function showSidebar(view: 'files' | 'search' | 'outline'): void {
   $('file-tree').hidden = view !== 'files'
   $('search-panel').hidden = view !== 'search'
+  $('outline-panel').hidden = view !== 'outline'
   for (const b of document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs button')) {
     b.setAttribute('aria-selected', String(b.dataset.view === view))
   }
+  if (view === 'outline') void refreshOutline()
 }
 for (const b of document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs button')) {
   b.addEventListener('click', () => {
-    showSidebar(b.dataset.view as 'files' | 'search')
+    showSidebar(b.dataset.view as 'files' | 'search' | 'outline')
     if (b.dataset.view === 'search') searchView.focus()
   })
 }
@@ -1486,6 +1709,7 @@ function updateStatus(): void {
       problemsEl.append(e, w)
     }
   }
+  if (!$('outline-panel').hidden) outline.highlight(doc ? editor.getCursor() : null)
   set('sb-debug', session?.state === 'paused' ? '🐞 Paused' : session?.active ? '🐞 Debugging' : '')
   set('sb-run', rootFolder ? `▶ ${runConfigName ?? 'Current file'}` : '')
   set('sb-python', pyEnv.statusText)

@@ -54,6 +54,9 @@ your terminal has `ELECTRON_RUN_AS_NODE` set. Clear it first: `$env:ELECTRON_RUN
 | Ctrl+Shift+F / Ctrl+Shift+E | Search the whole project / back to the file tree |
 | Ctrl+Space | Autocomplete (also pops up as you type) |
 | F12 or Ctrl+click / Alt+← | Go to definition / go back |
+| Shift+F12 | Find all references (References tab in the bottom panel) |
+| F2 (in the editor) | Rename a symbol everywhere it's used |
+| Ctrl+Shift+O | Go to a class / function in this file (also the Outline tab in the sidebar) |
 | Ctrl+Shift+M | Problems (errors and warnings from Pyright) |
 | F5 | Run the current Python file (auto-saves). With breakpoints set it debugs instead; while paused it continues |
 | Ctrl+F5 / Shift+F5 | Run without debugging / stop (running or debugging) |
