@@ -103,6 +103,11 @@ the app's data folder, which you can also edit by hand ("Edit Keyboard Shortcuts
   from `requirements.txt` or the project's `pyproject.toml`, or save what's installed to
   `requirements.txt`. If the project needs packages that aren't installed, the status
   bar says so (⚠ n missing packages); click it to install them. pip runs in the Output panel.
+- **Tests** (Run → Tests, or the Tests tab in the bottom panel): every test in
+  `test_*.py` / `*_test.py`, grouped by file. Run all of them, only the failed ones, a
+  file, or one test (▶ on its row, or "Run Test at Cursor"). Failures show their message;
+  click to jump to the failing line, ▸ for the full traceback. Uses pytest when it's
+  installed (offers to install it), otherwise unittest.
 - Run configurations and tasks live in `.ideforfun/run.json` (Run → Edit Run Configurations).
   Click **▶** in the status bar (or Run → Select Run Configuration) to choose what F5 /
   Ctrl+F5 run; "Current file" is the default. Configurations work for debugging too.

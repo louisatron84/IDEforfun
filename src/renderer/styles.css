@@ -707,6 +707,44 @@ body { display: flex; flex-direction: column; }
 
 /* ---- problems panel ---- */
 .problems-view { position: absolute; inset: 0; overflow: auto; padding: 4px 0; background: var(--bg); }
+
+/* Tests panel */
+.tests-view { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg); }
+.tests-summary { padding: 4px 12px; color: var(--fg-muted); border-bottom: 1px solid var(--border); min-height: 1.4em; }
+.tests-list { flex: 1; overflow: auto; padding: 4px 0; }
+.tests-log {
+  flex: 1; margin: 0; padding: 6px 12px; overflow: auto;
+  font-family: var(--font-code); font-size: 12px; white-space: pre-wrap;
+}
+.tests-empty { padding: 8px 14px; color: var(--fg-muted); }
+.tests-inline-button, .tests-run {
+  border: 1px solid var(--border); border-radius: 3px; background: var(--bg-panel);
+  color: var(--fg); font: inherit; cursor: pointer;
+}
+.tests-inline-button { margin-left: 6px; padding: 2px 8px; }
+.tests-file-header, .tests-row, .tests-message {
+  display: flex; align-items: center; gap: 6px; padding: 2px 12px; cursor: pointer;
+}
+.tests-file-header { font-weight: 500; }
+.tests-row { padding-left: 30px; }
+.tests-message { padding-left: 50px; font-family: var(--font-code); font-size: 12px; color: var(--sev-1); }
+.tests-message.st-skipped { color: var(--fg-muted); }
+.tests-file-header:hover, .tests-row:hover, .tests-message:hover { background: var(--bg-hover); }
+.tests-name, .tests-file-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tests-time { color: var(--fg-muted); font-size: 11px; }
+.tests-icon { width: 14px; flex-shrink: 0; text-align: center; }
+.tests-icon.st-passed { color: #4caf50; }
+.tests-icon.st-failed, .tests-icon.st-error { color: var(--sev-1); }
+.tests-icon.st-skipped, .tests-icon.st-notrun { color: var(--fg-muted); }
+.tests-icon.st-running { color: var(--accent); }
+.tests-run { visibility: hidden; padding: 0 6px; font-size: 10px; }
+.tests-file-header:hover .tests-run, .tests-row:hover .tests-run, .tests-run:focus-visible { visibility: visible; }
+.tests-toggle { width: 12px; color: var(--fg-muted); }
+.tests-details {
+  margin: 2px 12px 6px 50px; padding: 6px 8px; max-height: 260px; overflow: auto;
+  background: var(--bg-panel); border-radius: 4px;
+  font-family: var(--font-code); font-size: 12px; white-space: pre-wrap;
+}
 .problems-empty { padding: 8px 14px; color: var(--fg-muted); }
 .problem-file-header { display: flex; align-items: center; gap: 8px; padding: 4px 12px; font-weight: 500; }
 .problem {

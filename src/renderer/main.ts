@@ -28,6 +28,8 @@ import { DEFAULT_SETTINGS, effectiveSettings, type ProjectSettings, type Setting
 import type { WorkspaceState } from '../shared/projectState'
 import { Shortcuts } from './shortcuts'
 import { PythonEnv, type PythonTool } from './pythonEnv'
+import { TestView } from './testView'
+import { isTestFile } from '../shared/tests'
 import { normalizeRunFile, resolveConfiguration, resolveTask, RUN_FILE, starterRunFile, type LaunchSpec, type RunFile, type Task } from '../shared/runConfig'
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
@@ -690,6 +692,7 @@ async function saveActive(): Promise<boolean> {
     if (rootFolder && projectSettingsPath && samePath(doc.path, projectSettingsPath)) void loadProjectSettings(rootFolder)
     if (rootFolder && runFilePath && samePath(doc.path, runFilePath)) void loadRunFile(rootFolder)
     if (rootFolder && /^(requirements\.txt|pyproject\.toml)$/i.test(doc.name) && samePath(parentDir(doc.path), rootFolder)) refreshPythonEnv()
+    if (isTestFile(doc.name) && panel.activeView === 'tests') void tests.discover()
     void refreshGit()
     // Project search reads files from disk: refresh visible results after saving.
     if (!$('search-panel').hidden) searchView.refresh()
@@ -733,6 +736,7 @@ async function openFolderPath(folder: string): Promise<void> {
     await loadProjectSettings(folder, false)
     runConfigName = null
     lastTask = null
+    tests.reset()
     await loadRunFile(folder)
     await tree.setRoot(folder)
     workspace.notifyChanged()
@@ -1314,6 +1318,35 @@ commands.register({ id: 'python.createVenv', title: 'Create Virtual Environment 
 commands.register({ id: 'python.packages', title: 'Python Packages…', when: () => rootFolder !== null, run: () => void pyEnv.showPackages() })
 commands.register({ id: 'python.installRequirements', title: 'Install Requirements (requirements.txt)', when: () => rootFolder !== null, run: () => pyEnv.installRequirements() })
 commands.register({ id: 'python.checkDeps', title: 'Check Dependencies', when: () => rootFolder !== null, run: () => void pyEnv.refresh().then(() => pyEnv.missing.length ? pyEnv.showMissing() : alert('Every package in requirements.txt / pyproject.toml is installed.')) })
+
+// ---------- tests (pytest / unittest) ----------
+
+const tests = new TestView({
+  root: () => rootFolder,
+  python: async () => {
+    if (!pyEnv.current) await pyEnv.refresh()
+    return pyEnv.current?.path ?? null
+  },
+  open: (path, line) => void openFile(path, line),
+  saveAll: () => saveAllDirty((m) => alert(`Couldn't save before testing: ${m}`)),
+  installPytest: () => pyEnv.install('pytest'),
+  changed: (failed) => panel.setTitle('tests', failed ? `Tests (${failed} ✗)` : 'Tests')
+})
+panel.addView('tests', 'Tests', tests.body, tests.actions, () => tests.show())
+
+const showTests = () => panel.show('tests')
+commands.register({ id: 'tests.show', title: 'Show Tests', when: () => rootFolder !== null, run: showTests })
+commands.register({ id: 'tests.runAll', title: 'Run All Tests', when: () => rootFolder !== null && !tests.isRunning, run: () => { showTests(); void tests.run('all') } })
+commands.register({ id: 'tests.runFailed', title: 'Run Failed Tests Again', when: () => rootFolder !== null && !tests.isRunning, run: () => { showTests(); void tests.run('failed') } })
+commands.register({
+  id: 'tests.runFile', title: 'Run Tests in This File', when: () => hasDoc() && !tests.isRunning,
+  run: () => { showTests(); void tests.runFile(workspace.active!.path) }
+})
+commands.register({
+  id: 'tests.runAtCursor', title: 'Run Test at Cursor', when: () => hasDoc() && !tests.isRunning,
+  run: () => { showTests(); void tests.runAt(workspace.active!.path, editor.getCursor().line) }
+})
+commands.register({ id: 'tests.stop', title: 'Stop Tests', when: () => tests.isRunning, run: () => void window.api.stopTests() })
 
 // ---------- keyboard shortcuts you can change ----------
 

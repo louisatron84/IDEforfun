@@ -1,8 +1,27 @@
 import type { ProjectSettings, Settings } from './settings'
 import type { KeyOverrides } from './keybindings'
 import type { WorkspaceState } from './projectState'
+import type { TestFile } from './tests'
 import type { FindOptions } from './regex'
 import type { Encoding, TextFileResult } from './encoding'
+
+/** Which tests to run, and how. */
+export interface TestRunRequest {
+  python: string
+  root: string
+  framework: 'pytest' | 'unittest'
+  /** pytest node ids or unittest ids; empty = all. */
+  ids: string[]
+}
+
+export interface TestRunResult {
+  exitCode: number | null
+  output: string
+  /** pytest's JUnit XML report. */
+  xml?: string
+  seconds: number
+  error?: string
+}
 
 /** A Python interpreter that was found and runs. */
 export interface InterpreterInfo {
@@ -207,5 +226,11 @@ export interface IdeApi {
   listPackages(python: string): Promise<{ packages: { name: string; version: string }[]; error?: string }>
   pipFreeze(python: string): Promise<{ text: string; error?: string }>
   /** requirements.txt / pyproject.toml dependencies, and which aren't installed. */
+  /** Test files in the project and the tests in each. */
+  discoverTests(root: string): Promise<TestFile[]>
+  hasPytest(python: string): Promise<boolean>
+  runTests(req: TestRunRequest): Promise<TestRunResult>
+  stopTests(): Promise<void>
+  onTestOutput(listener: (text: string) => void): () => void
   checkDependencies(root: string, python: string): Promise<{ sources: string[]; required: { name: string; spec: string }[]; missing: { name: string; spec: string }[]; error?: string }>
 }

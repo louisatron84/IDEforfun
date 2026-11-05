@@ -208,6 +208,11 @@ export class PythonEnv {
     return out
   }
 
+  /** pip install one package (e.g. pytest), then re-check. */
+  install(spec: string): void {
+    this.pip(`pip install ${spec}`, ['install', spec])
+  }
+
   installRequirements(): void {
     if (!this.sources.includes('requirements.txt')) {
       this.hooks.report('This project has no requirements.txt.')

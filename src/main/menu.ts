@@ -146,6 +146,18 @@ export function buildMenu(state: MenuState = { keys: {}, recent: [] }): Menu {
         cmd('Run Task…', 'tasks.run', 'CmdOrCtrl+Shift+B'),
         cmd('Run Last Task Again', 'tasks.rerun'),
         sep,
+        {
+          label: 'Tests',
+          submenu: [
+            cmd('Show Tests', 'tests.show'),
+            cmd('Run All Tests', 'tests.runAll'),
+            cmd('Run Failed Tests Again', 'tests.runFailed'),
+            cmd('Run Tests in This File', 'tests.runFile'),
+            cmd('Run Test at Cursor', 'tests.runAtCursor'),
+            cmd('Stop Tests', 'tests.stop')
+          ]
+        },
+        sep,
         cmd('Select Python Interpreter…', 'python.selectInterpreter'),
         cmd('Create Virtual Environment (.venv)…', 'python.createVenv'),
         cmd('Python Packages…', 'python.packages'),

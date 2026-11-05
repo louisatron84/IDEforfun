@@ -2,6 +2,8 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
 import { buildMenu, type EditAction, type MenuState } from './menu'
 import { ensureProjectFile, ensureProjectSettings, readProjectFile, readProjectSettings, updateProjectSettings, UserState } from './userState'
 import { checkDependencies, describePython, findInterpreters, freeze, listPackages } from './pyenv'
+import { discoverTests, hasPytest, TestRunner } from './tests'
+import type { TestRunRequest } from '../shared/api'
 import type { KeyOverrides } from '../shared/keybindings'
 import type { ProjectSettings } from '../shared/settings'
 import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
@@ -32,6 +34,7 @@ const languageServer = new LanguageServer()
 const debugAdapter = new DebugAdapter()
 const backups = new Backups(() => join(app.getPath('userData'), 'backups'))
 const userState = new UserState(() => app.getPath('userData'))
+const testRunner = new TestRunner()
 
 // The menu shows the window's current shortcuts and the recent folders, so it's rebuilt when they change.
 const menuState: MenuState = { keys: {}, recent: [] }
@@ -53,6 +56,7 @@ function createWindow(): void {
 
   // A reload or closed window abandons its terminals: don't leave shells running.
   win.webContents.on('did-start-loading', () => {
+    testRunner.stop()
     terminals.killAll()
     languageServer.stop()
     debugAdapter.stop()
@@ -244,6 +248,10 @@ ipcMain.handle('py:current', async (_event, root: string, configured?: string) =
 ipcMain.handle('py:packages', (_event, python: string) => listPackages(python))
 ipcMain.handle('py:freeze', (_event, python: string) => freeze(python))
 ipcMain.handle('py:deps', (_event, root: string, python: string) => checkDependencies(root, python))
+ipcMain.handle('tests:discover', (_event, root: string) => discoverTests(root))
+ipcMain.handle('tests:hasPytest', (_event, python: string) => hasPytest(python))
+ipcMain.handle('tests:run', (event, req: TestRunRequest) => testRunner.run(event.sender, req))
+ipcMain.handle('tests:stop', () => testRunner.stop())
 ipcMain.handle('project:readFile', (_event, root: string, name: string) => readProjectFile(root, name))
 ipcMain.handle('project:ensureFile', (_event, root: string, name: string, initial: unknown) => ensureProjectFile(root, name, initial))
 
@@ -264,6 +272,7 @@ ipcMain.handle('settings:save', async (_event, settings: unknown) => {
 })
 
 app.on('before-quit', () => {
+  testRunner.stop()
   runner.stop()
   debugAdapter.stop()
   terminals.killAll()

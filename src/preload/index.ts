@@ -111,7 +111,16 @@ const api: IdeApi = {
   currentInterpreter: (root, configured) => ipcRenderer.invoke('py:current', root, configured),
   listPackages: (python) => ipcRenderer.invoke('py:packages', python),
   pipFreeze: (python) => ipcRenderer.invoke('py:freeze', python),
-  checkDependencies: (root, python) => ipcRenderer.invoke('py:deps', root, python)
+  checkDependencies: (root, python) => ipcRenderer.invoke('py:deps', root, python),
+  discoverTests: (root) => ipcRenderer.invoke('tests:discover', root),
+  hasPytest: (python) => ipcRenderer.invoke('tests:hasPytest', python),
+  runTests: (req) => ipcRenderer.invoke('tests:run', req),
+  stopTests: () => ipcRenderer.invoke('tests:stop'),
+  onTestOutput: (listener) => {
+    const handler = (_e: Electron.IpcRendererEvent, text: string) => listener(text)
+    ipcRenderer.on('tests:output', handler)
+    return () => ipcRenderer.removeListener('tests:output', handler)
+  }
 }
 
 contextBridge.exposeInMainWorld('api', api)
