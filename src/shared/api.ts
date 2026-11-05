@@ -4,6 +4,17 @@ import type { WorkspaceState } from './projectState'
 import type { FindOptions } from './regex'
 import type { Encoding, TextFileResult } from './encoding'
 
+/** A Python interpreter that was found and runs. */
+export interface InterpreterInfo {
+  /** Full path of the executable (sys.executable). */
+  path: string
+  version: string
+  /** A virtual environment (venv / virtualenv). */
+  isVenv: boolean
+  /** sys.prefix: the environment's folder. */
+  prefix: string
+}
+
 /** What to run: a script or module, with arguments, environment and working folder. */
 export interface RunSpec {
   /** The project folder (where a .venv is looked for). */
@@ -113,7 +124,7 @@ export interface IdeApi {
 
   /** Run a Python file (stops any program already running). */
   /** Run a Python file or module (Run / Ctrl+F5); output arrives as run events. */
-  runPython(spec: RunSpec): Promise<void>
+  runPython(spec: RunSpec): Promise<number>
   stopRun(): Promise<void>
   /** Send text to the running program's stdin (for input()). */
   sendRunInput(text: string): Promise<void>
@@ -186,4 +197,15 @@ export interface IdeApi {
   /** Another file in <project>/.ideforfun (e.g. run.json): its JSON, or why it can't be read. */
   readProjectFile(root: string, name: string): Promise<{ value: unknown; path: string; exists: boolean; error?: string }>
   ensureProjectFile(root: string, name: string, initial: unknown): Promise<string>
+  /** Set (or with undefined, remove) values in the project's .ideforfun/settings.json, keeping the rest. */
+  updateProjectSettings(root: string, patch: Record<string, unknown>): Promise<void>
+
+  /** Interpreters found in the project (venvs) and on this machine. */
+  findInterpreters(root: string | null): Promise<InterpreterInfo[]>
+  /** The interpreter Run would use, described (null if none works). */
+  currentInterpreter(root: string, configured?: string): Promise<InterpreterInfo | null>
+  listPackages(python: string): Promise<{ packages: { name: string; version: string }[]; error?: string }>
+  pipFreeze(python: string): Promise<{ text: string; error?: string }>
+  /** requirements.txt / pyproject.toml dependencies, and which aren't installed. */
+  checkDependencies(root: string, python: string): Promise<{ sources: string[]; required: { name: string; spec: string }[]; missing: { name: string; spec: string }[]; error?: string }>
 }

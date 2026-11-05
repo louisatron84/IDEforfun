@@ -1093,4 +1093,5 @@ button.sb-item { cursor: pointer; }
 button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 #sb-problems .err { color: var(--sev-1); }
 #sb-problems .warn { color: var(--sev-2); }
+.sb-item.warn { color: var(--sev-2); }
 #sb-debug { color: var(--exec-arrow); }

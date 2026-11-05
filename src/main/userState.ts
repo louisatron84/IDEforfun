@@ -145,6 +145,19 @@ export async function ensureProjectFile(root: string, name: string, initial: unk
   return path
 }
 
+/** Change some values in the project settings file, keeping everything else in it. */
+export async function updateProjectSettings(root: string, patch: Record<string, unknown>): Promise<void> {
+  const path = projectSettingsPath(root)
+  const res = await readJson(path)
+  if (res.error) throw new Error(`${path} can't be updated: ${res.error}`)
+  const current = res.value && typeof res.value === 'object' && !Array.isArray(res.value) ? { ...(res.value as Record<string, unknown>) } : {}
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined || v === null) delete current[k]
+    else current[k] = v
+  }
+  await writeJson(path, current)
+}
+
 /** Create the project settings file (with `initial` in it) if it doesn't exist yet. */
 export async function ensureProjectSettings(root: string, initial: ProjectSettings): Promise<string> {
   const path = projectSettingsPath(root)

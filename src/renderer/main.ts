@@ -27,6 +27,7 @@ import { wordStartAt } from './lsp/completionLogic'
 import { DEFAULT_SETTINGS, effectiveSettings, type ProjectSettings, type Settings } from '../shared/settings'
 import type { WorkspaceState } from '../shared/projectState'
 import { Shortcuts } from './shortcuts'
+import { PythonEnv, type PythonTool } from './pythonEnv'
 import { normalizeRunFile, resolveConfiguration, resolveTask, RUN_FILE, starterRunFile, type LaunchSpec, type RunFile, type Task } from '../shared/runConfig'
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
@@ -560,7 +561,10 @@ let projectSettingsPath: string | null = null
 function applySettings(s: Settings, restartLsp = true): void {
   const pythonChanged = s.pythonPath !== settings.pythonPath
   settings = s
-  if (pythonChanged && rootFolder && restartLsp) void startLanguageServer()
+  if (pythonChanged && rootFolder && restartLsp) {
+    void startLanguageServer()
+    refreshPythonEnv()
+  }
   const root = document.documentElement
   root.style.setProperty('--code-size', `${s.fontSize}px`)
   root.style.setProperty('--line-height', `${Math.round(s.fontSize * 1.45)}px`)
@@ -685,6 +689,7 @@ async function saveActive(): Promise<boolean> {
     if (shortcuts.path && samePath(doc.path, shortcuts.path)) void shortcuts.load()
     if (rootFolder && projectSettingsPath && samePath(doc.path, projectSettingsPath)) void loadProjectSettings(rootFolder)
     if (rootFolder && runFilePath && samePath(doc.path, runFilePath)) void loadRunFile(rootFolder)
+    if (rootFolder && /^(requirements\.txt|pyproject\.toml)$/i.test(doc.name) && samePath(parentDir(doc.path), rootFolder)) refreshPythonEnv()
     void refreshGit()
     // Project search reads files from disk: refresh visible results after saving.
     if (!$('search-panel').hidden) searchView.refresh()
@@ -734,6 +739,7 @@ async function openFolderPath(folder: string): Promise<void> {
     void refreshGit()
     lspRestarts = 0
     void startLanguageServer()
+    refreshPythonEnv()
     await restoreLayout(folder)
   } finally {
     restoringState = false
@@ -1063,14 +1069,36 @@ function pickTask(): void {
   palette.choose(runFile.tasks.length ? 'Run a task (in a new terminal)' : 'No tasks yet: add some to .ideforfun/run.json', items)
 }
 
+/** What to do when a tool run (pip, venv) ends, by run id. */
+const afterRun = new Map<number, (code: number | null) => void>()
+let lastExit: { runId: number; code: number | null } | null = null
+
 window.api.onRunEvent((e) => {
   if (e.runId < lastRunId) return // late event from a run we already replaced
   lastRunId = e.runId
   if (e.type === 'start') output.started(e.python)
   else if (e.type === 'output') output.append(e.stream, e.text)
   else if (e.type === 'error') output.error(e.message)
-  else if (e.type === 'exit') output.finished(e.code, e.ms, e.signal)
+  else if (e.type === 'exit') {
+    output.finished(e.code, e.ms, e.signal)
+    lastExit = { runId: e.runId, code: e.code }
+    const after = afterRun.get(e.runId)
+    afterRun.delete(e.runId)
+    after?.(e.code)
+  }
 })
+
+/** Run python -m pip / venv in the Output panel (in the project folder). */
+async function runTool(title: string, tool: PythonTool, after?: (code: number | null) => void): Promise<void> {
+  if (!rootFolder) return
+  panel.show('output')
+  output.begin(title)
+  const id = await window.api.runPython({ root: rootFolder, program: null, module: tool.module, args: tool.args, env: {}, cwd: rootFolder, python: tool.python })
+  if (!after) return
+  // A run that fails to start may have ended before we got its id.
+  if (lastExit?.runId === id) after(lastExit.code)
+  else afterRun.set(id, after)
+}
 
 commands.register({
   id: 'run.smart', title: 'Run (or Debug if there are breakpoints) / Continue', keys: 'F5',
@@ -1239,6 +1267,54 @@ const palette = new Palette({
   lineCount: () => workspace.active?.buffer.lineCount ?? null
 })
 
+// ---------- Python environment and packages ----------
+
+const pyEnv = new PythonEnv({
+  palette,
+  root: () => rootFolder,
+  configuredPython: () => settings.pythonPath || undefined,
+  setProjectPython: async (path) => {
+    if (!rootFolder) return
+    const folder = rootFolder
+    await window.api.updateProjectSettings(folder, { pythonPath: path })
+    await loadProjectSettings(folder)
+    void tree.refreshAll()
+  },
+  runTool,
+  writeFile: async (path, text) => {
+    const open = workspace.find(path)
+    if (open?.dirty) {
+      alert(`${open.name} has unsaved changes. Save or close it first.`)
+      return false
+    }
+    try {
+      await window.api.writeTextFile(path, text, open?.encoding ?? 'utf8')
+      if (open) workspace.discard([open]) // reopened fresh below
+      void tree.refreshAll()
+      return true
+    } catch (err) {
+      alert(`Couldn't write ${path}:\n${String(err)}`)
+      return false
+    }
+  },
+  openFile: (path) => void openFile(path),
+  changed: scheduleStatus,
+  report: (message) => alert(message)
+})
+
+let envTimer: number | undefined
+/** Re-check the interpreter and dependencies shortly (several triggers in a row check once). */
+function refreshPythonEnv(): void {
+  window.clearTimeout(envTimer)
+  envTimer = window.setTimeout(() => void pyEnv.refresh(), 300)
+}
+
+commands.register({ id: 'python.selectInterpreter', title: 'Select Python Interpreter…', when: () => rootFolder !== null, run: () => void pyEnv.pickInterpreter() })
+commands.register({ id: 'python.createVenv', title: 'Create Virtual Environment (.venv)…', when: () => rootFolder !== null, run: () => void pyEnv.createVenv() })
+commands.register({ id: 'python.packages', title: 'Python Packages…', when: () => rootFolder !== null, run: () => void pyEnv.showPackages() })
+commands.register({ id: 'python.installRequirements', title: 'Install Requirements (requirements.txt)', when: () => rootFolder !== null, run: () => pyEnv.installRequirements() })
+commands.register({ id: 'python.checkDeps', title: 'Check Dependencies', when: () => rootFolder !== null, run: () => void pyEnv.refresh().then(() => pyEnv.missing.length ? pyEnv.showMissing() : alert('Every package in requirements.txt / pyproject.toml is installed.')) })
+
 // ---------- keyboard shortcuts you can change ----------
 
 const shortcuts = new Shortcuts(commands, palette, (message) => alert(message))
@@ -1298,6 +1374,9 @@ function updateStatus(): void {
   }
   set('sb-debug', session?.state === 'paused' ? '🐞 Paused' : session?.active ? '🐞 Debugging' : '')
   set('sb-run', rootFolder ? `▶ ${runConfigName ?? 'Current file'}` : '')
+  set('sb-python', pyEnv.statusText)
+  set('sb-deps', pyEnv.missingText)
+  $('sb-python').title = pyEnv.current ? `${pyEnv.current.path}\nClick to pick another interpreter or create a .venv` : 'Click to pick a Python interpreter'
 }
 
 function changeLineEndings(): void {
@@ -1355,6 +1434,8 @@ $('sb-cursor').addEventListener('click', () => void palette.open(':'))
 $('sb-indent').addEventListener('click', () => commands.run('settings.open'))
 $('sb-problems').addEventListener('click', () => panel.show('problems'))
 $('sb-run').addEventListener('click', () => commands.run('run.selectConfig'))
+$('sb-python').addEventListener('click', () => commands.run('python.selectInterpreter'))
+$('sb-deps').addEventListener('click', () => pyEnv.showMissing())
 python.onDiagnostics(scheduleStatus)
 updateStatus()
 

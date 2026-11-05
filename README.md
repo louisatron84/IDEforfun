@@ -96,6 +96,13 @@ the app's data folder, which you can also edit by hand ("Edit Keyboard Shortcuts
 ```
 
   A relative `pythonPath` is relative to the project folder.
+- **🐍 in the status bar** shows the project's Python. Click it to pick another
+  interpreter (project venvs, installed Pythons, or a path) or to create a `.venv`;
+  the choice is saved in the project settings and used by Run, Debug and error checking.
+- **Packages** (Run → Python Packages…): install, upgrade or uninstall packages, install
+  from `requirements.txt` or the project's `pyproject.toml`, or save what's installed to
+  `requirements.txt`. If the project needs packages that aren't installed, the status
+  bar says so (⚠ n missing packages); click it to install them. pip runs in the Output panel.
 - Run configurations and tasks live in `.ideforfun/run.json` (Run → Edit Run Configurations).
   Click **▶** in the status bar (or Run → Select Run Configuration) to choose what F5 /
   Ctrl+F5 run; "Current file" is the default. Configurations work for debugging too.

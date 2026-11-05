@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
 import { buildMenu, type EditAction, type MenuState } from './menu'
-import { ensureProjectFile, ensureProjectSettings, readProjectFile, readProjectSettings, UserState } from './userState'
+import { ensureProjectFile, ensureProjectSettings, readProjectFile, readProjectSettings, updateProjectSettings, UserState } from './userState'
+import { checkDependencies, describePython, findInterpreters, freeze, listPackages } from './pyenv'
 import type { KeyOverrides } from '../shared/keybindings'
 import type { ProjectSettings } from '../shared/settings'
 import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
@@ -234,6 +235,15 @@ ipcMain.on('state:save', (_event, root: string, state: unknown) => {
 })
 ipcMain.handle('project:settings', (_event, root: string) => readProjectSettings(root))
 ipcMain.handle('project:ensureSettings', (_event, root: string, initial: ProjectSettings) => ensureProjectSettings(root, initial))
+ipcMain.handle('project:updateSettings', (_event, root: string, patch: Record<string, unknown>) => updateProjectSettings(root, patch))
+ipcMain.handle('py:interpreters', (_event, root: string | null) => findInterpreters(root))
+ipcMain.handle('py:current', async (_event, root: string, configured?: string) => {
+  const python = await resolvePython(root, configured)
+  return python ? describePython(python) : null
+})
+ipcMain.handle('py:packages', (_event, python: string) => listPackages(python))
+ipcMain.handle('py:freeze', (_event, python: string) => freeze(python))
+ipcMain.handle('py:deps', (_event, root: string, python: string) => checkDependencies(root, python))
 ipcMain.handle('project:readFile', (_event, root: string, name: string) => readProjectFile(root, name))
 ipcMain.handle('project:ensureFile', (_event, root: string, name: string, initial: unknown) => ensureProjectFile(root, name, initial))
 

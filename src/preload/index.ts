@@ -105,7 +105,13 @@ const api: IdeApi = {
   projectSettings: (root) => ipcRenderer.invoke('project:settings', root),
   ensureProjectSettings: (root, initial) => ipcRenderer.invoke('project:ensureSettings', root, initial),
   readProjectFile: (root, name) => ipcRenderer.invoke('project:readFile', root, name),
-  ensureProjectFile: (root, name, initial) => ipcRenderer.invoke('project:ensureFile', root, name, initial)
+  ensureProjectFile: (root, name, initial) => ipcRenderer.invoke('project:ensureFile', root, name, initial),
+  updateProjectSettings: (root, patch) => ipcRenderer.invoke('project:updateSettings', root, patch),
+  findInterpreters: (root) => ipcRenderer.invoke('py:interpreters', root),
+  currentInterpreter: (root, configured) => ipcRenderer.invoke('py:current', root, configured),
+  listPackages: (python) => ipcRenderer.invoke('py:packages', python),
+  pipFreeze: (python) => ipcRenderer.invoke('py:freeze', python),
+  checkDependencies: (root, python) => ipcRenderer.invoke('py:deps', root, python)
 }
 
 contextBridge.exposeInMainWorld('api', api)

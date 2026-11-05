@@ -42,6 +42,8 @@ export class Palette {
   private textSubmit: ((text: string) => void) | null = null
   /** In key-capture mode: what to do with the next shortcut pressed. */
   private keyCapture: ((key: string) => void) | null = null
+  /** The action word shown in prompt mode ("Open", "Install"...). */
+  private promptVerb = 'Open'
 
   constructor(private readonly deps: PaletteDeps) {
     this.overlay = document.createElement('div')
@@ -95,9 +97,10 @@ export class Palette {
   }
 
   /** Ask for a line of text (e.g. a folder path); Enter calls `submit` with it. */
-  prompt(placeholder: string, submit: (text: string) => void, initial = ''): void {
+  prompt(placeholder: string, submit: (text: string) => void, initial = '', verb = 'Open'): void {
     this.choose(placeholder, [])
     this.textSubmit = submit
+    this.promptVerb = verb
     this.input.value = initial
     this.update()
   }
@@ -152,7 +155,7 @@ export class Palette {
     if (this.textSubmit) {
       const submit = this.textSubmit
       const text = value.trim()
-      this.items = [{ label: text ? `Open "${text}"` : 'Type a path and press Enter', positions: [], run: () => { if (text) submit(text) } }]
+      this.items = [{ label: text ? `${this.promptVerb} "${text}"` : 'Type here and press Enter', positions: [], run: () => { if (text) submit(text) } }]
       this.selected = 0
       this.input.placeholder = this.choicePrompt
       this.renderList()

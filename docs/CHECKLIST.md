@@ -48,8 +48,8 @@ to real source code or runtime behaviour.
 - [x] Project-specific settings (v0.26: .ideforfun/settings.json can set tabSize, pythonPath, shell)
 - [x] Task runner for predefined project commands (v0.27: tasks in .ideforfun/run.json, Ctrl+Shift+B, each in its own terminal)
 - [x] Run configurations (arguments, environment variables and working directory) (v0.27: file or module, for Run and Debug, picked in the status bar)
-- [ ] Python environment management (create, select and manage virtual environments)
-- [ ] Dependency management integration (pip, requirements.txt, pyproject.toml)
+- [x] Python environment management (create, select and manage virtual environments) (v0.28: 🐍 in the status bar, finds venvs and installed Pythons, creates .venv, saved per project)
+- [x] Dependency management integration (pip, requirements.txt, pyproject.toml) (v0.28: Python Packages…, missing-package warning, install/upgrade/uninstall, freeze)
 - [ ] Test runner integration (pytest, unittest)
   - [ ] Test discovery and running individual tests
   - [ ] Test results panel with navigation to failures

@@ -32,7 +32,8 @@ export class PythonRunner {
   private child: ChildProcess | null = null
   private runId = 0
 
-  async run(sender: WebContents, spec: RunSpec): Promise<void> {
+  /** Start a run; resolves with its id once it started (or failed to). */
+  async run(sender: WebContents, spec: RunSpec): Promise<number> {
     const { root, python: configured } = spec
     this.stop()
     // Every event carries the run's id, so the window can ignore late events
@@ -55,7 +56,7 @@ export class PythonRunner {
         }
       }
       const started = await this.trySpawn(python, spec, send)
-      if (started) return
+      if (started) return runId
     }
     send({
       type: 'error',
@@ -64,6 +65,7 @@ export class PythonRunner {
         : 'Python was not found. Install it from python.org, or create a .venv in your project.'
     })
     send({ type: 'exit', code: null, ms: 0 })
+    return runId
   }
 
   /** Resolves true once the process has started, false if this interpreter doesn't exist. */
