@@ -20,9 +20,9 @@ to real source code or runtime behaviour.
 - [x] Undo/redo (v0.3)
 - [x] Scrolling that only renders visible lines (50k lines opens in ~80ms, v0.5)
 - [x] Multi-cursor editing (v0.18: Alt+click, Ctrl+Alt+↑/↓, Ctrl+D, Ctrl+Shift+L; paste spreads lines across cursors)
-- [ ] Bracket matching and automatic bracket completion
-- [ ] Automatic quote completion
-- [ ] Comment/uncomment selection
+- [x] Bracket matching and automatic bracket completion (v0.19: highlight the pair, Ctrl+Shift+\ to jump, Enter between brackets, Backspace deletes empty pairs, wrap a selection)
+- [x] Automatic quote completion (v0.19: skips apostrophes, understands f""/r"" prefixes and """docstrings""")
+- [x] Comment/uncomment selection (v0.19: Ctrl+/)
 - [ ] Code folding (functions, classes and blocks)
 - [ ] Minimap
 - [ ] Multiple editor groups / split view

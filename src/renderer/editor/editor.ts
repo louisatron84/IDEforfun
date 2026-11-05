@@ -20,6 +20,7 @@ import * as sel from './selection'
 import type { EditKind } from './history'
 import { Doc } from './document'
 import * as mc from './multiCursor'
+import * as pairs from './pairs'
 
 const PAD_TOP = 4 // space above the first line
 const PAD_LEFT = 12 // must match .editor .lines padding-left in styles.css
@@ -228,6 +229,25 @@ export class Editor {
     return this.buffer.getRange(this.anchor, this.cursor)
   }
 
+  // ---------- brackets ----------
+
+  /** Auto-close brackets and quotes while typing. */
+  autoClose = true
+  private bracketMatch: { bracket: Position; match: Position } | null = null
+
+  /** The bracket next to the cursor and its partner (ignoring brackets in strings and comments). */
+  private findBracketMatch(): { bracket: Position; match: Position } | null {
+    if (!this.hasDoc) return null
+    const cache = new Map<number, ReturnType<Doc['highlighter']['tokensFor']>>()
+    const isCode = (line: number, col: number) => {
+      let tokens = cache.get(line)
+      if (!tokens) cache.set(line, (tokens = this.highlighter.tokensFor(line)))
+      const t = tokens.find((tok) => tok.start <= col && col < tok.end)
+      return !t || (t.type !== 'string' && t.type !== 'comment')
+    }
+    return pairs.findMatchingBracket(this.buffer, this.cursor, isCode, 1000)
+  }
+
   // ---------- multi-cursor ----------
 
   /** True when there are extra cursors besides the main one. */
@@ -382,7 +402,7 @@ export class Editor {
             b.delete(start, s.head)
             return at(start)
           }
-          return at(cmd.backspace(b, s.head, tab))
+          return at((this.autoClose && pairs.backspacePair(b, s.head)) || cmd.backspace(b, s.head, tab))
         })
         return true
       case 'Delete':
@@ -394,7 +414,7 @@ export class Editor {
         })
         return true
       case 'Enter':
-        this.editMulti('newline', (s) => at(cmd.newline(b, replace(s), tab)))
+        this.editMulti('newline', (s) => at((sel.isEmpty(s) && pairs.newlineBetweenBrackets(b, s.head, tab)) || cmd.newline(b, replace(s), tab)))
         return true
       case 'Tab': {
         if (ctrl) return false
@@ -448,6 +468,32 @@ export class Editor {
     // --- multiple cursors ---
     if (this.multiCursorKeys(e) || (this.multi && !(ctrl && 'zyacx'.includes(k)) && this.multiKeyDown(e))) {
       e.preventDefault()
+      return
+    }
+
+    // --- comments and brackets ---
+    if (ctrl && !e.altKey && (e.key === '/' || e.code === 'Slash')) {
+      e.preventDefault()
+      // Several cursors on one line must toggle it once, not once per cursor.
+      const done = new Set<number>()
+      this.editMulti('other', (s) => {
+        const [first, last] = sel.selectedLines(s)
+        let fresh = false
+        for (let l = first; l <= last; l++) if (!done.has(l)) fresh = true
+        if (!fresh) return s
+        for (let l = first; l <= last; l++) done.add(l)
+        return pairs.toggleComment(b, s)
+      })
+      return
+    }
+    if (ctrl && shift && e.code === 'Backslash') {
+      e.preventDefault()
+      const m = this.findBracketMatch()
+      if (m) {
+        this.clearExtras()
+        this.cursor = this.anchor = m.match
+        this.render(false)
+      }
       return
     }
 
@@ -520,7 +566,7 @@ export class Editor {
             return wordStart
           }
         }
-        else edit = () => cmd.backspace(b, pos, this._tabSize)
+        else edit = () => (this.autoClose && pairs.backspacePair(b, pos)) || cmd.backspace(b, pos, this._tabSize)
         break
       case 'Delete':
         kind = 'delete'
@@ -530,7 +576,7 @@ export class Editor {
         break
       case 'Enter':
         kind = 'newline'
-        edit = () => cmd.newline(b, replaceSelection(), this._tabSize)
+        edit = () => (!hadSelection && pairs.newlineBetweenBrackets(b, pos, this._tabSize)) || cmd.newline(b, replaceSelection(), this._tabSize)
         break
       case 'Tab': {
         if (ctrl) return // leave Ctrl+Tab for future tab switching
@@ -567,6 +613,8 @@ export class Editor {
       const lines = text.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n')
       const perCursor = kind === 'paste' && lines.length === this.cursorCount
       this.editMulti(kind, (s, i) => {
+        const paired = kind === 'typing' && text.length === 1 && this.autoClose ? pairs.typeChar(this.buffer, s, text) : null
+        if (paired) return paired
         const at = sel.isEmpty(s) ? s.head : sel.deleteSelection(this.buffer, s)
         const p = this.buffer.insert(at, perCursor ? lines[i] : text)
         return { anchor: p, head: p }
@@ -577,11 +625,18 @@ export class Editor {
     const s = this.selection
     // Typing over a selection is a normal 'typing' step, so the letters typed after it
     // merge in and one Ctrl+Z brings the original selection text back.
+    let anchor: Position | null = null
     const next = this.history.transact(kind, this.cursor, () => {
+      // Brackets and quotes: auto-close, type over closers, wrap a selection.
+      const paired = kind === 'typing' && text.length === 1 && this.autoClose ? pairs.typeChar(this.buffer, s, text) : null
+      if (paired) {
+        anchor = paired.anchor
+        return paired.head
+      }
       const at = hadSelection ? sel.deleteSelection(this.buffer, s) : this.cursor
       return this.buffer.insert(at, text)
     })
-    this.afterEdit(next)
+    this.afterEdit(next, anchor ?? next)
     if (kind === 'typing') this.opts.onType?.(text)
   }
 
@@ -716,6 +771,7 @@ export class Editor {
    */
   private render(textChanged = true, scroll: 'nearest' | 'center' = 'nearest'): void {
     if (textChanged) this.updateSize()
+    this.bracketMatch = this.hasSelection() || this.multi ? null : this.findBracketMatch()
     const { x, y } = this.positionCursor()
     this.scrollIntoView(x, y, scroll)
     this.renderLines()
@@ -859,6 +915,13 @@ export class Editor {
     if (this.hasSelection()) {
       const { start, end } = sel.selectionRange(this.selection)
       this.addBoxes(boxes, start, end, 'sel', firstVisible, lastVisible)
+    }
+    if (this.bracketMatch) {
+      for (const p of [this.bracketMatch.bracket, this.bracketMatch.match]) {
+        if (p.line >= firstVisible && p.line <= lastVisible) {
+          this.addBoxes(boxes, p, { line: p.line, col: p.col + 1 }, 'bracket-match', firstVisible, lastVisible)
+        }
+      }
     }
     // Extra cursors: their selections, plus a drawn cursor each (the main cursor is drawn separately).
     for (const s of this.doc.extras) {
