@@ -150,8 +150,15 @@ const tree = new FileTree($('file-tree'), {
     try {
       await window.api.trashEntry(path)
     } catch (err) {
-      alert(`Couldn't delete ${path}:\n${String(err)}`)
-      return false
+      // No usable trash (common on Linux without a desktop trash service): offer a real delete.
+      const reason = String(err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
+      if (!confirm(`Couldn't move ${name} to the trash (${reason}).\n\nDelete it permanently instead? This can't be undone.`)) return false
+      try {
+        await window.api.deletePermanently(path)
+      } catch (err2) {
+        alert(`Couldn't delete ${path}:\n${String(err2)}`)
+        return false
+      }
     }
     workspace.discard(open)
     breakpoints.removeUnder(path)
@@ -488,6 +495,17 @@ function expressionAt(line: string, col: number): string {
 
 const navigationStack: { path: string; line: number; col: number }[] = []
 
+/**
+ * The cursor, moved onto the name it touches: with the cursor right after
+ * a name ("add_tax|("), the language server needs a position inside it.
+ */
+function cursorOnWord(): { line: number; col: number } {
+  const pos = editor.getCursor()
+  const line = workspace.active?.buffer.getLine(pos.line) ?? ''
+  const word = (ch: string | undefined) => !!ch && /[\p{L}\p{N}_]/u.test(ch)
+  return !word(line[pos.col]) && word(line[pos.col - 1]) ? { line: pos.line, col: pos.col - 1 } : pos
+}
+
 async function goToDefinition(pos = editor.getCursor()): Promise<void> {
   const doc = workspace.active
   if (!doc) return
@@ -736,8 +754,8 @@ commands.register({
   id: 'tab.close', title: 'Close Tab', keys: 'Ctrl+W', when: hasDoc,
   run: () => { if (workspace.active) workspace.close(workspace.active) }
 })
-commands.register({ id: 'tab.next', title: 'Next Tab', keys: 'Ctrl+Tab', when: hasDoc, run: () => workspace.next(1) })
-commands.register({ id: 'tab.prev', title: 'Previous Tab', keys: 'Ctrl+Shift+Tab', when: hasDoc, run: () => workspace.next(-1) })
+commands.register({ id: 'tab.next', title: 'Next Tab', keys: ['Ctrl+Tab', 'Ctrl+PageDown'], when: hasDoc, run: () => workspace.next(1) })
+commands.register({ id: 'tab.prev', title: 'Previous Tab', keys: ['Ctrl+Shift+Tab', 'Ctrl+PageUp'], when: hasDoc, run: () => workspace.next(-1) })
 
 commands.register({ id: 'find.open', title: 'Find', keys: 'Ctrl+F', when: hasDoc, run: () => findBar.open(false) })
 commands.register({ id: 'find.replace', title: 'Find and Replace', keys: 'Ctrl+H', when: hasDoc, run: () => findBar.open(true) })
@@ -840,7 +858,7 @@ commands.register({ id: 'editor.unfoldAll', title: 'Unfold All', when: hasDoc, r
 commands.register({ id: 'panel.debug', title: 'Show Debug Panel', run: () => panel.show('debug') })
 commands.register({ id: 'panel.toggle', title: 'Toggle Bottom Panel', keys: 'Ctrl+J', run: () => panel.toggle() })
 commands.register({ id: 'panel.output', title: 'Show Output', run: () => panel.show('output') })
-commands.register({ id: 'nav.definition', title: 'Go to Definition', keys: 'F12', when: hasDoc, run: () => void goToDefinition() })
+commands.register({ id: 'nav.definition', title: 'Go to Definition', keys: 'F12', when: hasDoc, run: () => void goToDefinition(cursorOnWord()) })
 commands.register({ id: 'nav.back', title: 'Go Back', keys: 'Alt+ArrowLeft', run: () => void goBack() })
 commands.register({ id: 'panel.problems', title: 'Show Problems', keys: 'Ctrl+Shift+M', run: () => panel.show('problems') })
 commands.register({ id: 'python.restartServer', title: 'Restart Python Language Server', when: () => rootFolder !== null, run: () => { lspRestarts = 0; void startLanguageServer() } })

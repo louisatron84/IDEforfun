@@ -27,6 +27,25 @@ export class Highlighter {
     return tokenizeLine(this.buffer.getLine(line), this.stateAt(line)).tokens
   }
 
+  /**
+   * Tokens for `line` only if that's cheap (the state before it is cached),
+   * else null. For the minimap: it must never make a keystroke re-tokenize
+   * the rest of a big file.
+   */
+  tokensIfCached(line: number): Token[] | null {
+    return line < this.states.length ? this.tokensFor(line) : null
+  }
+
+  /** Cache more line states, for at most `budgetMs`. Returns true if there's more to do. */
+  warmUp(budgetMs: number, upTo = this.buffer.lineCount - 1): boolean {
+    const end = performance.now() + budgetMs
+    while (this.states.length <= upTo) {
+      this.stateAt(Math.min(upTo, this.states.length + 200))
+      if (performance.now() > end) break
+    }
+    return this.states.length <= upTo
+  }
+
   private stateAt(line: number): LineState {
     while (this.states.length <= line) {
       const prev = this.states.length - 1

@@ -32,3 +32,17 @@ describe('Highlighter', () => {
     expect(h.cachedLines).toBeLessThan(10)
   })
 })
+
+describe('Highlighter: cheap access for the minimap', () => {
+  it('only gives tokens for lines whose state is cached, and warms up on request', () => {
+    const b = new TextBuffer(Array.from({ length: 1000 }, (_, i) => `x${i} = "${i}"`).join('\n'))
+    const h = new Highlighter(b)
+    expect(h.tokensIfCached(0)).not.toBeNull()
+    expect(h.tokensIfCached(900)).toBeNull()
+    while (h.warmUp(50, 900)) { /* keep going */ }
+    expect(h.tokensIfCached(900)?.length).toBeGreaterThan(0)
+    // An edit near the top forgets the states below it again.
+    b.insert({ line: 1, col: 0 }, '# ')
+    expect(h.tokensIfCached(900)).toBeNull()
+  })
+})

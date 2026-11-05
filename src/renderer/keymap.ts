@@ -9,8 +9,8 @@
 export interface Command {
   id: string
   title: string
-  /** Shortcut like 'Ctrl+S', 'Ctrl+Shift+P', 'F5'. */
-  keys?: string
+  /** Shortcut like 'Ctrl+S', 'Ctrl+Shift+P', 'F5' (or several; the first is the one shown). */
+  keys?: string | string[]
   /** Only available when this returns true (e.g. "Run" needs an open file). */
   when?: () => boolean
   run: () => void | Promise<void>
@@ -54,7 +54,8 @@ export class CommandRegistry {
     const key = keyString(e)
     if (!key) return false
     for (const c of this.commands.values()) {
-      if (c.keys === key && (!c.when || c.when())) {
+      const keys = typeof c.keys === 'string' ? [c.keys] : c.keys ?? []
+      if (keys.includes(key) && (!c.when || c.when())) {
         void c.run()
         return true
       }

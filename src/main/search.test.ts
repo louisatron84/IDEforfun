@@ -59,6 +59,7 @@ describe('searchProject', () => {
   it('skips files over the size limit', async () => {
     const r = await searchProject(root, 'get_user', opts(), { maxFileBytes: 40 })
     expect(r.files.map((f) => f.rel)).toEqual(['pkg/users.py']) // main.py is 42 bytes, users.py 38
+    expect(r.skipped).toEqual(['main.py']) // ...and says so
   })
 })
 

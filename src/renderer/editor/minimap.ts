@@ -16,7 +16,10 @@ export interface MinimapSource {
   rowCount(): number
   lineAtRow(row: number): number
   getLine(line: number): string
-  tokens(line: number): Token[]
+  /** Tokens if they're cheap to get right now, else null (the line is drawn in one color). */
+  tokens(line: number): Token[] | null
+  /** Do some highlighting work in spare time; true if there's more to do. */
+  warmUp(budgetMs: number, upToLine: number): boolean
   /** The editor's scroll position and size, in pixels, and the height of one row. */
   scroll(): { top: number; height: number; rowHeight: number }
   /** Scroll so that `row` is in the middle of the editor. */
@@ -30,6 +33,7 @@ const CHAR_PX = 1
 export class Minimap {
   readonly canvas: HTMLCanvasElement
   private frame = 0
+  private idle = 0
   private visible = true
 
   constructor(private readonly source: MinimapSource) {
@@ -92,6 +96,7 @@ export class Minimap {
     const barH = Math.max(1, Math.min(scale, ROW_PX) * 0.75)
     const pixelRows = Math.min(rows, Math.ceil(rows * scale))
     ctx.globalAlpha = 0.75
+    let missing = -1 // last line drawn without colors (highlighting not computed yet)
     for (let py = 0; py < pixelRows; py += Math.max(1, scale)) {
       const row = Math.min(rows - 1, Math.floor(py / scale))
       const line = this.source.lineAtRow(row)
@@ -107,7 +112,9 @@ export class Minimap {
         ctx.fillStyle = fill
         ctx.fillRect(4 + start * CHAR_PX, y, Math.min(to - start, 200) * CHAR_PX, barH)
       }
-      for (const tok of this.source.tokens(line)) {
+      const tokens = this.source.tokens(line)
+      if (!tokens) missing = line
+      for (const tok of tokens ?? []) {
         if (tok.start > pos) drawRun(pos, tok.start, textColor)
         drawRun(tok.start, tok.end, tokenColors[tok.type] ?? textColor)
         pos = tok.end
@@ -122,6 +129,17 @@ export class Minimap {
     ctx.globalAlpha = 1
     ctx.fillStyle = color('--minimap-view', 'rgba(127,127,127,0.18)')
     ctx.fillRect(0, y, cssW, h)
+
+    // Some lines had no colors yet: highlight them in spare moments, then redraw.
+    if (missing >= 0 && !this.idle) {
+      const work = () => {
+        this.idle = 0
+        const more = this.source.warmUp(8, missing)
+        if (more) this.idle = window.setTimeout(work, 30)
+        else this.schedule()
+      }
+      this.idle = window.setTimeout(work, 120)
+    }
   }
 
   private onMouseDown(e: MouseEvent): void {

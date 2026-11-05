@@ -150,7 +150,7 @@ export class Palette {
     return fuzzyFilter(query, commands, (c) => c.title, MAX_ITEMS).map(({ item, match }) => ({
       label: item.title,
       positions: match.positions,
-      hint: item.keys,
+      hint: typeof item.keys === 'string' ? item.keys : item.keys?.[0],
       run: () => this.deps.commands.run(item.id)
     }))
   }

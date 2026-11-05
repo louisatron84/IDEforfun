@@ -34,6 +34,7 @@ const api: IdeApi = {
   createEntry: (dir, name, isDirectory) => ipcRenderer.invoke('fs:create', dir, name, isDirectory),
   renameEntry: (path, newName) => ipcRenderer.invoke('fs:rename', path, newName),
   trashEntry: (path) => ipcRenderer.invoke('fs:trash', path),
+  deletePermanently: (path) => ipcRenderer.invoke('fs:delete', path),
   runPython: (file, cwd, python) => ipcRenderer.invoke('run:start', file, cwd, python),
   stopRun: () => ipcRenderer.invoke('run:stop'),
   sendRunInput: (text) => ipcRenderer.invoke('run:input', text),

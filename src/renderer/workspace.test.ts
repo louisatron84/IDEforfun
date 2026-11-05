@@ -205,3 +205,21 @@ describe('Workspace: split into two groups', () => {
     expect(ws.docs.map((d) => d.name)).toEqual(['c.py'])
   })
 })
+
+describe('Workspace: opening several files quickly', () => {
+  it('keeps the tabs in the order they were opened, however long each read takes', async () => {
+    const delays: Record<string, number> = { '/p/a.py': 30, '/p/b.py': 0, '/p/c.py': 10 }
+    const ws = new Workspace({
+      readTextFile: (p) => new Promise((resolve) => setTimeout(() => resolve({ kind: 'text', text: p, encoding: 'utf8', size: 1 }), delays[p])),
+      writeTextFile: async () => {}
+    }, () => true)
+    await Promise.all(['/p/a.py', '/p/b.py', '/p/c.py'].map((p) => ws.open(p)))
+    expect(ws.docs.map((d) => d.name)).toEqual(['a.py', 'b.py', 'c.py'])
+    expect(ws.active?.name).toBe('c.py')
+  })
+  it('a failed open does not block the next one', async () => {
+    const { ws } = setup({ '/p/a.py': 'a' })
+    await expect(ws.open('/p/missing.py')).rejects.toThrow()
+    expect((await ws.open('/p/a.py')).name).toBe('a.py')
+  })
+})

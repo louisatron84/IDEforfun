@@ -91,6 +91,8 @@ export class Editor {
   private view: ViewState = this.viewFor(this.doc)
   /** A redraw requested because the shown file changed elsewhere (e.g. the other side of a split). */
   private passiveFrame = 0
+  /** Counts full redraws, so a requested background redraw can be skipped if one already happened. */
+  private renders = 0
   /** On-screen column to aim for when moving up/down (null = use current). */
   private goalVisual: number | null = null
   private charWidth = 8
@@ -127,9 +129,11 @@ export class Editor {
   /** Redraw on the next frame without scrolling (the change may have come from elsewhere). */
   private schedulePassiveRender(): void {
     if (this.passiveFrame) return
+    const before = this.renders
     this.passiveFrame = requestAnimationFrame(() => {
       this.passiveFrame = 0
-      if (this.hasDoc) this.render(true, 'none')
+      // Our own edits redraw straight away; only changes made elsewhere need this.
+      if (this.hasDoc && this.renders === before) this.render(true, 'none')
     })
   }
 
@@ -155,7 +159,8 @@ export class Editor {
       rowCount: () => this.foldMap.visibleCount(this.buffer.lineCount),
       lineAtRow: (row) => this.foldMap.bufferLine(row),
       getLine: (line) => this.buffer.getLine(line),
-      tokens: (line) => this.highlighter.tokensFor(line),
+      tokens: (line) => this.highlighter.tokensIfCached(line),
+      warmUp: (ms, upTo) => this.highlighter.warmUp(ms, upTo),
       scroll: () => ({ top: Math.max(0, this.root.scrollTop - PAD_TOP), height: this.root.clientHeight, rowHeight: this.lineHeight }),
       scrollToRow: (row) => {
         this.root.scrollTop = PAD_TOP + row * this.lineHeight - this.root.clientHeight / 2
@@ -1028,6 +1033,7 @@ export class Editor {
    * (used for jumps such as find results and error links).
    */
   private render(textChanged = true, scroll: 'nearest' | 'center' | 'none' = 'nearest'): void {
+    this.renders++
     if (textChanged) this.rebuildFolds()
     if (this.foldMap.isHidden(this.cursor.line)) {
       // The cursor moved into a folded block (e.g. go to line, find): open it.

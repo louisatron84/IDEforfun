@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
 import { buildMenu, type EditAction } from './menu'
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { realpath } from 'node:fs/promises'
 import { sortAndFilterEntries } from './dirEntries'
@@ -153,6 +153,7 @@ ipcMain.handle('fs:create', (_event, dir: string, name: string, isDirectory: boo
 ipcMain.handle('fs:rename', (_event, path: string, newName: string) => renameEntry(path, newName))
 // To the Recycle Bin (not a permanent delete), so mistakes can be undone.
 ipcMain.handle('fs:trash', (_event, path: string) => shell.trashItem(path))
+ipcMain.handle('fs:delete', (_event, path: string) => rm(path, { recursive: true }))
 ipcMain.handle('fs:listFiles', (_event, root: string) => listFiles(root))
 ipcMain.handle('lsp:start', (event) => {
   languageServer.start(event.sender)

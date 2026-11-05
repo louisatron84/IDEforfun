@@ -30,6 +30,8 @@ export interface ProjectSearchResult {
   }[]
   total: number
   truncated: boolean
+  /** Files not searched because they're too big (relative paths). */
+  skipped: string[]
   error?: string
 }
 
@@ -91,6 +93,8 @@ export interface IdeApi {
   renameEntry(path: string, newName: string): Promise<string>
   /** Move a file or folder to the Recycle Bin. */
   trashEntry(path: string): Promise<void>
+  /** Delete for good (when there's no trash). */
+  deletePermanently(path: string): Promise<void>
 
   /** Run a Python file (stops any program already running). */
   runPython(file: string, cwd: string, python?: string): Promise<void>
