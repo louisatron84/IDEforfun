@@ -27,6 +27,7 @@ import { wordStartAt } from './lsp/completionLogic'
 import { DEFAULT_SETTINGS, effectiveSettings, type ProjectSettings, type Settings } from '../shared/settings'
 import type { WorkspaceState } from '../shared/projectState'
 import { Shortcuts } from './shortcuts'
+import { normalizeRunFile, resolveConfiguration, resolveTask, RUN_FILE, starterRunFile, type LaunchSpec, type RunFile, type Task } from '../shared/runConfig'
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 
@@ -193,7 +194,8 @@ const watchedDocs = new WeakSet<Doc>()
 let session: DebugSession | null = null
 /** Where the paused program is (shown with a ▶ in the gutter and a highlighted line). */
 let pausedAt: { path: string; line: number } | null = null
-let debugFile: string | null = null
+/** What the last debug session ran (for Restart). */
+let lastDebugSpec: LaunchSpec | null = null
 
 const debugView = new DebugView({
   continue: () => void session?.continue(),
@@ -243,28 +245,40 @@ function toggleBreakpoint(line = editor.getCursor().line): void {
 const debugging = () => session?.active === true
 const debugPaused = () => session?.state === 'paused'
 
-async function startDebugging(path = workspace.active?.path): Promise<void> {
-  if (!path) return
-  if (session?.active) await stopDebugging()
-  panel.show('debug')
-  debugView.begin(path)
-  if (!path.toLowerCase().endsWith('.py')) {
-    debugView.error('Debugging works with Python files (.py).')
-    return
-  }
-  // Save every open file first: debugpy reads the files from disk.
+/** Save every changed file (programs read them from disk). Returns false if one couldn't be saved. */
+async function saveAllDirty(report: (message: string) => void): Promise<boolean> {
   for (const doc of workspace.docs.filter((d) => d.dirty)) {
     try {
       await workspace.save(doc)
       python.didSave(doc)
     } catch (err) {
-      debugView.error(`Debugging cancelled: couldn't save ${doc.name} (${String(err)})`)
-      return
+      report(`couldn't save ${doc.name} (${String(err)})`)
+      return false
     }
   }
-  const cwd = rootFolder ?? parentDir(path)
+  return true
+}
+
+async function startDebugging(given?: LaunchSpec): Promise<void> {
+  const resolved = given ?? launchSpec()
+  if (session?.active) await stopDebugging()
+  panel.show('debug')
+  if ('error' in resolved) {
+    debugView.begin('')
+    debugView.error(resolved.error)
+    return
+  }
+  const spec = resolved
+  debugView.begin(describeLaunch(spec))
+  if (spec.program && !spec.program.toLowerCase().endsWith('.py')) {
+    debugView.error('Debugging works with Python files (.py).')
+    return
+  }
+  // Save every open file first: debugpy reads the files from disk.
+  if (!(await saveAllDirty((m) => debugView.error(`Debugging cancelled: ${m}`)))) return
+  const cwd = spec.cwd
   debugView.setState('starting')
-  const prep = await window.api.debugPrepare(cwd, settings.pythonPath || undefined)
+  const prep = await window.api.debugPrepare(rootFolder ?? cwd, settings.pythonPath || undefined)
   if (!prep.python) {
     debugView.error(settings.pythonPath
       ? `The Python interpreter set in Settings wasn't found:\n  ${settings.pythonPath}\nFix it in Settings (Ctrl+,), or clear it to pick one automatically.`
@@ -292,7 +306,7 @@ async function startDebugging(path = workspace.active?.path): Promise<void> {
     }
   }
   debugView.started(prep.python)
-  debugFile = path
+  lastDebugSpec = spec
 
   const s: DebugSession = new DebugSession({
     send: (m) => window.api.debugSend(m),
@@ -322,7 +336,7 @@ async function startDebugging(path = workspace.active?.path): Promise<void> {
   session = s
   await window.api.debugStart(prep.python, cwd)
   try {
-    await s.start({ program: path, cwd, breakpoints: breakpoints.all() })
+    await s.start({ program: spec.program, module: spec.module, args: spec.args, env: spec.env, cwd, breakpoints: breakpoints.all() })
   } catch (err) {
     if (session !== s || !s.active) return
     debugView.error(`Couldn't start debugging: ${err instanceof Error ? err.message : String(err)}`)
@@ -350,9 +364,9 @@ async function stopDebugging(): Promise<void> {
 }
 
 async function restartDebugging(): Promise<void> {
-  const file = debugFile
+  const spec = lastDebugSpec
   await stopDebugging()
-  if (file) await startDebugging(file)
+  if (spec) await startDebugging(spec)
 }
 
 window.api.onDebugMessage((m) => session?.handleMessage(m))
@@ -670,6 +684,7 @@ async function saveActive(): Promise<boolean> {
     python.didSave(doc)
     if (shortcuts.path && samePath(doc.path, shortcuts.path)) void shortcuts.load()
     if (rootFolder && projectSettingsPath && samePath(doc.path, projectSettingsPath)) void loadProjectSettings(rootFolder)
+    if (rootFolder && runFilePath && samePath(doc.path, runFilePath)) void loadRunFile(rootFolder)
     void refreshGit()
     // Project search reads files from disk: refresh visible results after saving.
     if (!$('search-panel').hidden) searchView.refresh()
@@ -711,6 +726,9 @@ async function openFolderPath(folder: string): Promise<void> {
     folderName.classList.remove('muted')
     void window.api.recentAdd(folder).catch(() => {})
     await loadProjectSettings(folder, false)
+    runConfigName = null
+    lastTask = null
+    await loadRunFile(folder)
     await tree.setRoot(folder)
     workspace.notifyChanged()
     void refreshGit()
@@ -736,7 +754,8 @@ function captureState(): WorkspaceState {
     })),
     activeGroup: workspace.activeGroup,
     terminals: terminal.shellIds(),
-    panel: panel.activeView
+    panel: panel.activeView,
+    runConfig: runConfigName
   }
 }
 
@@ -773,6 +792,8 @@ async function restoreLayout(folder: string): Promise<void> {
       if (tab) editors[i]?.restoreView(doc, tab)
     }
   })
+  if (state.runConfig && runFile.configurations.some((c) => c.name === state.runConfig)) runConfigName = state.runConfig
+  scheduleStatus()
   terminal.setPending(state.terminals)
   if (state.panel) panel.show(state.panel)
 }
@@ -925,27 +946,121 @@ commands.register({ id: 'find.close', title: 'Close Find', keys: 'Escape', when:
 const parentDir = (path: string) => path.replace(/[\\/][^\\/]*$/, '')
 let lastRunId = 0
 
+/** Run the selected run configuration, or the open file (Ctrl+F5). */
 async function runCurrentFile(): Promise<void> {
-  const doc = workspace.active
-  if (!doc) {
-    panel.show('output')
+  panel.show('output')
+  const spec = launchSpec()
+  if ('error' in spec) {
     output.clear()
-    output.error(rootFolder ? 'Open a Python file first (pick one in the tree, or Ctrl+P).' : 'Open a folder (Ctrl+O) and a Python file first.')
+    output.error(spec.error)
     return
   }
-  panel.show('output')
-  output.begin(doc.path)
-  if (!doc.path.toLowerCase().endsWith('.py')) {
-    output.error('Run works with Python files (.py) for now.')
+  output.begin(describeLaunch(spec))
+  if (spec.program && !spec.program.toLowerCase().endsWith('.py')) {
+    output.error('Run works with Python files (.py). To run something else, add a task (Run Task… → Configure).')
     return
   }
   // Auto-save before running, so Python sees what's in the editor.
-  if (doc.dirty && !(await saveActive())) {
-    output.error('Run cancelled: the file could not be saved.')
-    return
-  }
-  await window.api.runPython(doc.path, rootFolder ?? parentDir(doc.path), settings.pythonPath || undefined)
+  if (!(await saveAllDirty((m) => output.error(`Run cancelled: ${m}`)))) return
+  await window.api.runPython({ ...spec, root: rootFolder ?? spec.cwd, python: settings.pythonPath || undefined })
   editor.focus()
+}
+
+// ---------- run configurations and tasks (.ideforfun/run.json) ----------
+
+let runFile: RunFile = { configurations: [], tasks: [] }
+let runFilePath: string | null = null
+/** The configuration Run and Debug use; null = the open file. */
+let runConfigName: string | null = null
+let lastTask: Task | null = null
+
+const selectedConfig = () => runFile.configurations.find((c) => c.name === runConfigName) ?? null
+
+/** What Run / Debug start: the selected configuration, or the open file. */
+function launchSpec(): LaunchSpec | { error: string } {
+  const file = workspace.active?.path ?? null
+  const cfg = selectedConfig()
+  if (cfg && rootFolder) return resolveConfiguration(cfg, { project: rootFolder, file })
+  if (!file) return { error: rootFolder ? 'Open a Python file first (pick one in the tree, or Ctrl+P), or pick a run configuration.' : 'Open a folder (Ctrl+O) and a Python file first.' }
+  return { program: file, module: null, args: [], env: {}, cwd: rootFolder ?? parentDir(file) }
+}
+
+/** "app.py --port 8000" or "-m flask run", for the Output / Debug headers. */
+function describeLaunch(spec: LaunchSpec): string {
+  const quote = (a: string) => (/[\s"]/.test(a) || a === '' ? JSON.stringify(a) : a)
+  const what = spec.program ?? `-m ${spec.module}`
+  const cfg = selectedConfig()
+  return [cfg ? `[${cfg.name}]` : '', what, ...spec.args.map(quote)].filter(Boolean).join(' ')
+}
+
+/** Can Run / Debug start something right now? */
+const canLaunch = () => hasDoc() || selectedConfig() !== null
+
+async function loadRunFile(folder: string): Promise<void> {
+  try {
+    const res = await window.api.readProjectFile(folder, RUN_FILE)
+    if (rootFolder !== folder) return
+    runFile = normalizeRunFile(res.value)
+    runFilePath = res.path
+    if (res.error) alert(`The project's run configurations couldn't be read, so none are used for now:\n${res.path}\n\n${res.error}`)
+  } catch {
+    runFile = { configurations: [], tasks: [] }
+  }
+  if (runConfigName && !selectedConfig()) runConfigName = null
+  scheduleStatus()
+}
+
+/** Open run.json, creating it with examples first if needed. */
+async function editRunFile(): Promise<void> {
+  if (!rootFolder) return
+  const folder = rootFolder
+  try {
+    const files = await window.api.listFiles(folder).catch(() => [])
+    const hasRequirements = files.some((f) => f.rel === 'requirements.txt')
+    const path = await window.api.ensureProjectFile(folder, RUN_FILE, starterRunFile(hasRequirements))
+    await tree.refreshAll()
+    await openFile(path)
+    await loadRunFile(folder)
+  } catch (err) {
+    alert(`Couldn't create the run configurations file: ${String(err)}`)
+  }
+}
+
+function pickRunConfig(): void {
+  const items = [
+    { label: 'Current file', detail: 'run whichever Python file is open', hint: runConfigName === null ? '✓' : undefined, run: () => setRunConfig(null) },
+    ...runFile.configurations.map((c) => ({
+      label: c.name,
+      detail: [c.module ? `-m ${c.module}` : c.file ?? '${file}', ...c.args].join(' '),
+      hint: c.name === runConfigName ? '✓' : undefined,
+      run: () => setRunConfig(c.name)
+    })),
+    { label: runFile.configurations.length ? 'Edit run configurations…' : 'Add a run configuration…', detail: '.ideforfun/run.json', run: () => void editRunFile() }
+  ]
+  palette.choose('Run configuration for F5 / Ctrl+F5', items)
+}
+
+function setRunConfig(name: string | null): void {
+  runConfigName = name
+  scheduleStatus()
+  saveStateSoon()
+}
+
+function runTask(task: Task): void {
+  if (!rootFolder) return
+  const res = resolveTask(task, { project: rootFolder, file: workspace.active?.path ?? null })
+  if ('error' in res) return alert(res.error)
+  lastTask = task
+  panel.show('terminal')
+  void terminal.runCommand(task.name, res.command, res.cwd)
+}
+
+function pickTask(): void {
+  const items = [
+    ...runFile.tasks.map((t) => ({ label: t.name, detail: t.command, run: () => runTask(t) })),
+    { label: runFile.tasks.length ? 'Edit tasks…' : 'Add a task…', detail: '.ideforfun/run.json', run: () => void editRunFile() }
+  ]
+  palette.choose(runFile.tasks.length ? 'Run a task (in a new terminal)' : 'No tasks yet: add some to .ideforfun/run.json', items)
 }
 
 window.api.onRunEvent((e) => {
@@ -959,7 +1074,7 @@ window.api.onRunEvent((e) => {
 
 commands.register({
   id: 'run.smart', title: 'Run (or Debug if there are breakpoints) / Continue', keys: 'F5',
-  when: () => hasDoc() || debugPaused(),
+  when: () => canLaunch() || debugPaused(),
   run: () => {
     if (debugPaused()) return void session!.continue()
     if (debugging()) return // starting or running: nothing to do
@@ -967,7 +1082,11 @@ commands.register({
     void runCurrentFile()
   }
 })
-commands.register({ id: 'run.file', title: 'Run Python File (without debugging)', keys: 'Ctrl+F5', when: hasDoc, run: runCurrentFile })
+commands.register({ id: 'run.file', title: 'Run Python File (without debugging)', keys: 'Ctrl+F5', when: canLaunch, run: runCurrentFile })
+commands.register({ id: 'run.selectConfig', title: 'Select Run Configuration…', when: () => rootFolder !== null, run: pickRunConfig })
+commands.register({ id: 'run.editConfigs', title: 'Edit Run Configurations and Tasks (run.json)', when: () => rootFolder !== null, run: () => void editRunFile() })
+commands.register({ id: 'tasks.run', title: 'Run Task…', keys: 'Ctrl+Shift+B', when: () => rootFolder !== null, run: pickTask })
+commands.register({ id: 'tasks.rerun', title: 'Run Last Task Again', when: () => lastTask !== null && rootFolder !== null, run: () => runTask(lastTask!) })
 commands.register({
   id: 'run.stop', title: 'Stop Running / Debugging', keys: 'Shift+F5',
   run: () => {
@@ -979,7 +1098,7 @@ commands.register({
     }
   }
 })
-commands.register({ id: 'debug.start', title: 'Start Debugging', when: () => hasDoc() && !debugging(), run: () => void startDebugging() })
+commands.register({ id: 'debug.start', title: 'Start Debugging', when: () => canLaunch() && !debugging(), run: () => void startDebugging() })
 commands.register({ id: 'debug.restart', title: 'Restart Debugging', keys: 'Ctrl+Shift+F5', when: debugging, run: () => void restartDebugging() })
 commands.register({ id: 'debug.stepOver', title: 'Step Over', keys: 'F10', when: debugPaused, run: () => void session!.stepOver() })
 commands.register({ id: 'debug.stepInto', title: 'Step Into', keys: 'F11', when: debugPaused, run: () => void session!.stepInto() })
@@ -1178,6 +1297,7 @@ function updateStatus(): void {
     }
   }
   set('sb-debug', session?.state === 'paused' ? '🐞 Paused' : session?.active ? '🐞 Debugging' : '')
+  set('sb-run', rootFolder ? `▶ ${runConfigName ?? 'Current file'}` : '')
 }
 
 function changeLineEndings(): void {
@@ -1234,6 +1354,7 @@ $('sb-encoding').addEventListener('click', () => {
 $('sb-cursor').addEventListener('click', () => void palette.open(':'))
 $('sb-indent').addEventListener('click', () => commands.run('settings.open'))
 $('sb-problems').addEventListener('click', () => panel.show('problems'))
+$('sb-run').addEventListener('click', () => commands.run('run.selectConfig'))
 python.onDiagnostics(scheduleStatus)
 updateStatus()
 

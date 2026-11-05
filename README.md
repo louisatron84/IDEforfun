@@ -60,6 +60,7 @@ your terminal has `ELECTRON_RUN_AS_NODE` set. Clear it first: `$env:ELECTRON_RUN
 | F9 or click a line number | Toggle a breakpoint |
 | F10 / F11 / Shift+F11 | Debugger: step over / step into / step out |
 | Ctrl+Shift+F5 | Restart debugging |
+| Ctrl+Shift+B | Run a task (in its own terminal) |
 | Ctrl+` / Ctrl+Shift+` | Toggle terminal / new terminal (pick a shell with ▾ in the terminal panel) |
 | Ctrl+J | Toggle bottom panel |
 | Ctrl+, | Settings |
@@ -95,6 +96,24 @@ the app's data folder, which you can also edit by hand ("Edit Keyboard Shortcuts
 ```
 
   A relative `pythonPath` is relative to the project folder.
+- Run configurations and tasks live in `.ideforfun/run.json` (Run → Edit Run Configurations).
+  Click **▶** in the status bar (or Run → Select Run Configuration) to choose what F5 /
+  Ctrl+F5 run; "Current file" is the default. Configurations work for debugging too.
+  Tasks are shell commands, each run in its own terminal (Ctrl+Shift+B).
+  `${file}`, `${fileDir}` and `${project}` can be used anywhere:
+
+```json
+{
+  "configurations": [
+    { "name": "Server", "file": "app/main.py", "args": ["--port", "8000"], "env": { "DEBUG": "1" }, "cwd": "${project}" },
+    { "name": "Flask", "module": "flask", "args": "run --debug" }
+  ],
+  "tasks": [
+    { "name": "Install requirements", "command": "python -m pip install -r requirements.txt" },
+    { "name": "Lint this file", "command": "ruff check ${file}" }
+  ]
+}
+```
 
 ## Layout
 - `src/main/`: Electron main process: file system, running Python (`python.ts`), terminals (`terminals.ts`), settings

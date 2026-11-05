@@ -35,7 +35,7 @@ const api: IdeApi = {
   renameEntry: (path, newName) => ipcRenderer.invoke('fs:rename', path, newName),
   trashEntry: (path) => ipcRenderer.invoke('fs:trash', path),
   deletePermanently: (path) => ipcRenderer.invoke('fs:delete', path),
-  runPython: (file, cwd, python) => ipcRenderer.invoke('run:start', file, cwd, python),
+  runPython: (spec) => ipcRenderer.invoke('run:start', spec),
   stopRun: () => ipcRenderer.invoke('run:stop'),
   sendRunInput: (text) => ipcRenderer.invoke('run:input', text),
   onRunEvent: (listener) => {
@@ -103,7 +103,9 @@ const api: IdeApi = {
   workspaceState: (root) => ipcRenderer.invoke('state:get', root),
   saveWorkspaceState: (root, state) => ipcRenderer.send('state:save', root, state),
   projectSettings: (root) => ipcRenderer.invoke('project:settings', root),
-  ensureProjectSettings: (root, initial) => ipcRenderer.invoke('project:ensureSettings', root, initial)
+  ensureProjectSettings: (root, initial) => ipcRenderer.invoke('project:ensureSettings', root, initial),
+  readProjectFile: (root, name) => ipcRenderer.invoke('project:readFile', root, name),
+  ensureProjectFile: (root, name, initial) => ipcRenderer.invoke('project:ensureFile', root, name, initial)
 }
 
 contextBridge.exposeInMainWorld('api', api)

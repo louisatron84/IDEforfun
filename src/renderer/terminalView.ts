@@ -28,6 +28,8 @@ class TerminalSession {
   readonly term: Terminal
   private readonly fit = new FitAddon()
   ptyId: number | null = null
+  /** A name to show instead of the shell's (e.g. the task it runs). */
+  label: string | null = null
   private starting = false
   private exited = false
 
@@ -80,7 +82,7 @@ class TerminalSession {
   }
 
   get name(): string {
-    return this.profile?.name ?? 'Terminal'
+    return this.label ?? this.profile?.name ?? 'Terminal'
   }
 
   handle(e: TerminalEvent): void {
@@ -252,15 +254,27 @@ export class TerminalView {
   }
 
   /** Open a new terminal (the default shell unless one is given). */
-  async newTerminal(profile?: ShellProfile): Promise<void> {
+  async newTerminal(profile?: ShellProfile, opts: { cwd?: string; label?: string } = {}): Promise<TerminalSession> {
     const shells = await this.loadShells()
     const chosen = profile ?? shells.find((s) => s.id === this.defaultShellId()) ?? shells[0] ?? null
-    const session = new TerminalSession(this.nextNumber++, chosen, this.getCwd, () => this.renderList())
+    const getCwd = opts.cwd ? () => opts.cwd! : this.getCwd
+    const session = new TerminalSession(this.nextNumber++, chosen, getCwd, () => this.renderList())
+    if (opts.label) session.label = opts.label
     if (this.fontSize !== null) session.applyTheme(this.fontSize)
     this.sessions.push(session)
     this.screens.append(session.el)
     this.activate(session)
     await session.start()
+    return session
+  }
+
+  /**
+   * Run a command (a task) in a new terminal named after it, in `cwd`. The
+   * terminal stays open afterwards so you can read the output or run it again.
+   */
+  async runCommand(label: string, command: string, cwd: string): Promise<void> {
+    const session = await this.newTerminal(undefined, { cwd, label })
+    if (session.ptyId !== null) window.api.terminalWrite(session.ptyId, command + '\r')
   }
 
   async newTerminalWithShell(): Promise<void> {

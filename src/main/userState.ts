@@ -127,6 +127,24 @@ export async function readProjectSettings(root: string): Promise<{ settings: Pro
   return { settings: normalizeProjectSettings(res.value), path, exists: !res.missing, error: res.error }
 }
 
+/** Files the window may read or create in <project>/.ideforfun (nothing else). */
+const PROJECT_FILES = new Set(['run.json'])
+
+/** A project file's JSON (missing = exists false, unreadable = error). */
+export async function readProjectFile(root: string, name: string): Promise<{ value: unknown; path: string; exists: boolean; error?: string }> {
+  if (!PROJECT_FILES.has(name)) throw new Error(`Not a project file: ${name}`)
+  const path = join(root, PROJECT_SETTINGS_DIR, name)
+  const res = await readJson(path)
+  return { value: res.value, path, exists: !res.missing, error: res.error }
+}
+
+export async function ensureProjectFile(root: string, name: string, initial: unknown): Promise<string> {
+  if (!PROJECT_FILES.has(name)) throw new Error(`Not a project file: ${name}`)
+  const path = join(root, PROJECT_SETTINGS_DIR, name)
+  if ((await readJson(path)).missing) await writeJson(path, initial)
+  return path
+}
+
 /** Create the project settings file (with `initial` in it) if it doesn't exist yet. */
 export async function ensureProjectSettings(root: string, initial: ProjectSettings): Promise<string> {
   const path = projectSettingsPath(root)

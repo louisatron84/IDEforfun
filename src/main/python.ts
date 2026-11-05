@@ -6,6 +6,7 @@
  * streams stdout/stderr back to the window that asked.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
+import type { RunSpec } from '../shared/api'
 import { access } from 'node:fs/promises'
 import { win32, posix } from 'node:path'
 import type { WebContents } from 'electron'
@@ -31,7 +32,8 @@ export class PythonRunner {
   private child: ChildProcess | null = null
   private runId = 0
 
-  async run(sender: WebContents, file: string, cwd: string, configured?: string): Promise<void> {
+  async run(sender: WebContents, spec: RunSpec): Promise<void> {
+    const { root, python: configured } = spec
     this.stop()
     // Every event carries the run's id, so the window can ignore late events
     // from a previous run (e.g. its "exited" message after a restart).
@@ -42,7 +44,7 @@ export class PythonRunner {
 
     // An interpreter chosen in Settings is used as-is: if it's wrong, say so rather
     // than quietly running some other Python.
-    const candidates = configured ? [configured] : pythonCandidates(cwd, process.platform)
+    const candidates = configured ? [configured] : pythonCandidates(root, process.platform)
     for (const python of candidates) {
       // Paths (virtualenvs) must exist; bare commands are found on PATH by spawn.
       if (!isBareCommand(python)) {
@@ -52,7 +54,7 @@ export class PythonRunner {
           continue
         }
       }
-      const started = await this.trySpawn(python, file, cwd, send)
+      const started = await this.trySpawn(python, spec, send)
       if (started) return
     }
     send({
@@ -65,12 +67,14 @@ export class PythonRunner {
   }
 
   /** Resolves true once the process has started, false if this interpreter doesn't exist. */
-  private trySpawn(python: string, file: string, cwd: string, send: (e: RunEventBody) => void): Promise<boolean> {
+  private trySpawn(python: string, spec: RunSpec, send: (e: RunEventBody) => void): Promise<boolean> {
+    const file = spec.module ? `-m ${spec.module}` : spec.program ?? ''
     return new Promise((resolve) => {
       const startedAt = Date.now()
-      const child = spawn(python, ['-u', file], {
-        cwd,
-        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
+      const target = spec.module ? ['-m', spec.module] : [spec.program ?? '']
+      const child = spawn(python, ['-u', ...target, ...spec.args], {
+        cwd: spec.cwd,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1', ...spec.env },
         windowsHide: true
       })
       let started = false

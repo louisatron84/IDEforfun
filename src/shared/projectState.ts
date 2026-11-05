@@ -26,6 +26,8 @@ export interface WorkspaceState {
   terminals: string[]
   /** Bottom panel view that was open, or null if the panel was closed. */
   panel: string | null
+  /** The run configuration picked for Run / Debug (null = the open file). */
+  runConfig: string | null
 }
 
 const isWinPath = (p: string) => /^[a-zA-Z]:/.test(p) || p.startsWith('\\\\')
@@ -80,6 +82,7 @@ export function normalizeWorkspaceState(raw: unknown): WorkspaceState {
     groups,
     activeGroup: Math.min(int(r.activeGroup), groups.length - 1),
     terminals,
-    panel: typeof r.panel === 'string' && /^[\w-]+$/.test(r.panel) ? r.panel : null
+    panel: typeof r.panel === 'string' && /^[\w-]+$/.test(r.panel) ? r.panel : null,
+    runConfig: typeof r.runConfig === 'string' && r.runConfig ? r.runConfig : null
   }
 }

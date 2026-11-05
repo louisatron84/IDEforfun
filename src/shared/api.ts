@@ -4,6 +4,19 @@ import type { WorkspaceState } from './projectState'
 import type { FindOptions } from './regex'
 import type { Encoding, TextFileResult } from './encoding'
 
+/** What to run: a script or module, with arguments, environment and working folder. */
+export interface RunSpec {
+  /** The project folder (where a .venv is looked for). */
+  root: string
+  program: string | null
+  module: string | null
+  args: string[]
+  env: Record<string, string>
+  cwd: string
+  /** Interpreter from Settings; empty = automatic. */
+  python?: string
+}
+
 export interface DirEntry {
   name: string
   path: string
@@ -99,7 +112,8 @@ export interface IdeApi {
   deletePermanently(path: string): Promise<void>
 
   /** Run a Python file (stops any program already running). */
-  runPython(file: string, cwd: string, python?: string): Promise<void>
+  /** Run a Python file or module (Run / Ctrl+F5); output arrives as run events. */
+  runPython(spec: RunSpec): Promise<void>
   stopRun(): Promise<void>
   /** Send text to the running program's stdin (for input()). */
   sendRunInput(text: string): Promise<void>
@@ -169,4 +183,7 @@ export interface IdeApi {
   projectSettings(root: string): Promise<{ settings: ProjectSettings; path: string; exists: boolean; error?: string }>
   /** Create the project settings file if needed; returns its path. */
   ensureProjectSettings(root: string, initial: ProjectSettings): Promise<string>
+  /** Another file in <project>/.ideforfun (e.g. run.json): its JSON, or why it can't be read. */
+  readProjectFile(root: string, name: string): Promise<{ value: unknown; path: string; exists: boolean; error?: string }>
+  ensureProjectFile(root: string, name: string, initial: unknown): Promise<string>
 }

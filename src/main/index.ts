@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
 import { buildMenu, type EditAction, type MenuState } from './menu'
-import { ensureProjectSettings, readProjectSettings, UserState } from './userState'
+import { ensureProjectFile, ensureProjectSettings, readProjectFile, readProjectSettings, UserState } from './userState'
 import type { KeyOverrides } from '../shared/keybindings'
 import type { ProjectSettings } from '../shared/settings'
 import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
@@ -11,7 +11,7 @@ import { listFiles } from './listFiles'
 import { createEntry, renameEntry } from './fileOps'
 import { readTextFile, writeTextFile } from './textFile'
 import { Backups } from './backups'
-import type { BackupData } from '../shared/api'
+import type { BackupData, RunSpec } from '../shared/api'
 import type { Encoding } from '../shared/encoding'
 import { searchProject } from './search'
 import { gitStatus } from './git'
@@ -181,9 +181,7 @@ ipcMain.handle('fs:writeFile', async (_event, path: string, text: string) => {
   await writeFile(path, text, 'utf8')
 })
 
-ipcMain.handle('run:start', (event, file: string, cwd: string, python?: string) =>
-  runner.run(event.sender, file, cwd, python)
-)
+ipcMain.handle('run:start', (event, spec: RunSpec) => runner.run(event.sender, spec))
 ipcMain.handle('run:stop', () => runner.stop())
 ipcMain.handle('run:input', (_event, text: string) => runner.sendInput(text))
 
@@ -236,6 +234,8 @@ ipcMain.on('state:save', (_event, root: string, state: unknown) => {
 })
 ipcMain.handle('project:settings', (_event, root: string) => readProjectSettings(root))
 ipcMain.handle('project:ensureSettings', (_event, root: string, initial: ProjectSettings) => ensureProjectSettings(root, initial))
+ipcMain.handle('project:readFile', (_event, root: string, name: string) => readProjectFile(root, name))
+ipcMain.handle('project:ensureFile', (_event, root: string, name: string, initial: unknown) => ensureProjectFile(root, name, initial))
 
 // ---------- settings (userData/settings.json) ----------
 const settingsFile = () => join(app.getPath('userData'), 'settings.json')

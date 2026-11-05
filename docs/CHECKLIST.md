@@ -46,8 +46,8 @@ to real source code or runtime behaviour.
 - [x] Recent projects (v0.26: File → Open Recent, Ctrl+R, listed in the sidebar with no folder open)
 - [x] Workspace persistence (restore tabs, terminal sessions and layout) (v0.26: tabs, split, cursors, terminals' shells, bottom panel; last project reopens at startup)
 - [x] Project-specific settings (v0.26: .ideforfun/settings.json can set tabSize, pythonPath, shell)
-- [ ] Task runner for predefined project commands
-- [ ] Run configurations (arguments, environment variables and working directory)
+- [x] Task runner for predefined project commands (v0.27: tasks in .ideforfun/run.json, Ctrl+Shift+B, each in its own terminal)
+- [x] Run configurations (arguments, environment variables and working directory) (v0.27: file or module, for Run and Debug, picked in the status bar)
 - [ ] Python environment management (create, select and manage virtual environments)
 - [ ] Dependency management integration (pip, requirements.txt, pyproject.toml)
 - [ ] Test runner integration (pytest, unittest)
