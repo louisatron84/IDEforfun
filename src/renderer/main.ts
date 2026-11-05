@@ -5,6 +5,8 @@ import { Workspace } from './workspace'
 import { TabBar } from './tabBar'
 import { CommandRegistry } from './keymap'
 import { FindBar } from './findBar'
+import { Panel } from './panel'
+import { OutputView } from './outputView'
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 
@@ -19,6 +21,13 @@ const tabBar = new TabBar($('tabs'), workspace)
 const tree = new FileTree($('sidebar'), (entry) => void openFile(entry.path))
 export const commands = new CommandRegistry()
 const findBar = new FindBar($('editor-pane'), editor)
+const panel = new Panel($('editor-pane'))
+const output = new OutputView(
+  (path, line) => void openFile(path, line - 1),
+  (text) => void window.api.sendRunInput(text),
+  { run: () => void runCurrentFile(), stop: () => void window.api.stopRun() }
+)
+panel.addView('output', 'Output', output.body, output.actions)
 
 // Keep the editor, tabs, tree highlight and window title in sync with the workspace.
 workspace.subscribe(() => {
@@ -89,6 +98,45 @@ commands.register({ id: 'find.open', title: 'Find', keys: 'Ctrl+F', when: hasDoc
 commands.register({ id: 'find.replace', title: 'Find and Replace', keys: 'Ctrl+H', when: hasDoc, run: () => findBar.open(true) })
 commands.register({ id: 'find.close', title: 'Close Find', keys: 'Escape', when: () => findBar.isOpen, run: () => findBar.close() })
 
+// ---------- running Python ----------
+
+const parentDir = (path: string) => path.replace(/[\\/][^\\/]*$/, '')
+let lastRunId = 0
+
+async function runCurrentFile(): Promise<void> {
+  const doc = workspace.active
+  if (!doc) return
+  panel.show('output')
+  output.begin(doc.path)
+  if (!doc.path.toLowerCase().endsWith('.py')) {
+    output.error('Run works with Python files (.py) for now.')
+    return
+  }
+  // Auto-save before running, so Python sees what's in the editor.
+  if (doc.dirty && !(await saveActive())) {
+    output.error('Run cancelled: the file could not be saved.')
+    return
+  }
+  await window.api.runPython(doc.path, rootFolder ?? parentDir(doc.path))
+  editor.focus()
+}
+
+window.api.onRunEvent((e) => {
+  if (e.runId < lastRunId) return // late event from a run we already replaced
+  lastRunId = e.runId
+  if (e.type === 'start') output.started(e.python)
+  else if (e.type === 'output') output.append(e.stream, e.text)
+  else if (e.type === 'error') output.error(e.message)
+  else if (e.type === 'exit') output.finished(e.code, e.ms, e.signal)
+})
+
+commands.register({ id: 'run.file', title: 'Run Python File', keys: 'F5', when: hasDoc, run: runCurrentFile })
+commands.register({ id: 'run.stop', title: 'Stop Running', keys: 'Shift+F5', run: () => void window.api.stopRun() })
+commands.register({ id: 'panel.toggle', title: 'Toggle Bottom Panel', keys: 'Ctrl+J', run: () => panel.toggle() })
+commands.register({ id: 'panel.output', title: 'Show Output', run: () => panel.show('output') })
+
+$('run-file').addEventListener('click', () => void runCurrentFile())
+$('stop-run').addEventListener('click', () => void window.api.stopRun())
 $('open-folder').addEventListener('click', () => void openFolder())
 
 // Global shortcuts. Capture phase, so they win over the editor's own key handling.

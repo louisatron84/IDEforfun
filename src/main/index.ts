@@ -2,6 +2,9 @@ import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { sortAndFilterEntries } from './dirEntries'
+import { PythonRunner } from './python'
+
+const runner = new PythonRunner()
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -58,6 +61,14 @@ ipcMain.handle('fs:readFile', async (_event, path: string) => readFile(path, 'ut
 ipcMain.handle('fs:writeFile', async (_event, path: string, text: string) => {
   await writeFile(path, text, 'utf8')
 })
+
+ipcMain.handle('run:start', (event, file: string, cwd: string, python?: string) =>
+  runner.run(event.sender, file, cwd, python)
+)
+ipcMain.handle('run:stop', () => runner.stop())
+ipcMain.handle('run:input', (_event, text: string) => runner.sendInput(text))
+
+app.on('before-quit', () => runner.stop())
 
 app.whenReady().then(() => {
   createWindow()
