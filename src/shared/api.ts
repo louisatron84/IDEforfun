@@ -63,6 +63,14 @@ export interface ShellProfile {
 export interface IdeApi {
   /** Show the folder picker: the folder, null if cancelled, or why it can't be opened. */
   openFolder(): Promise<string | { error: string } | null>
+  /** Menu bar: run a command (an id from the keymap). */
+  onMenuCommand(listener: (id: string) => void): () => void
+  /** Menu bar: an Edit action (undo, copy, paste...). */
+  onMenuEdit(listener: (action: 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'selectAll') => void): () => void
+  /** Do an edit action natively in whatever has focus (text boxes; paste into the editor). */
+  nativeEdit(action: 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'selectAll'): void
+  /** Ask "save changes to <name>?" (blocks until answered). */
+  askUnsaved(name: string, detail?: string): 'save' | 'discard' | 'cancel'
   /** Check a typed folder path: the real path, or why it can't be opened. */
   checkFolder(path: string): Promise<string | { error: string }>
   /** The file-system path of a file/folder dropped onto the window ('' if none). */

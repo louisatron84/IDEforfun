@@ -1,0 +1,149 @@
+/**
+ * The app's menu bar. Every item runs the same command as its shortcut in
+ * the window (src/renderer/keymap.ts), so the menu and the keyboard can't
+ * disagree. Shortcuts are shown next to items but not registered here
+ * (registerAccelerator: false): the window handles the keys itself, so
+ * nothing fires twice and stock shortcuts like Ctrl+W can't close the window.
+ */
+import { app, BrowserWindow, dialog, Menu, type MenuItemConstructorOptions } from 'electron'
+
+/** Edit actions: the window decides whether they go to our editor or to a text box. */
+export type EditAction = 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'selectAll'
+
+export function buildMenu(): Menu {
+  const send = (channel: string, ...args: unknown[]) => {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+    win?.webContents.send(channel, ...args)
+  }
+  const cmd = (label: string, id: string, accelerator?: string): MenuItemConstructorOptions => ({
+    label,
+    accelerator,
+    registerAccelerator: false,
+    click: () => send('menu:command', id)
+  })
+  const edit = (label: string, action: EditAction, accelerator: string): MenuItemConstructorOptions => ({
+    label,
+    accelerator,
+    registerAccelerator: false,
+    click: () => send('menu:edit', action)
+  })
+  const sep: MenuItemConstructorOptions = { type: 'separator' }
+
+  const template: MenuItemConstructorOptions[] = [
+    {
+      label: '&File',
+      submenu: [
+        cmd('New File…', 'file.new', 'CmdOrCtrl+N'),
+        cmd('New Folder…', 'file.newFolder'),
+        sep,
+        cmd('Open Folder…', 'file.openFolder', 'CmdOrCtrl+O'),
+        cmd('Open Folder by Path…', 'file.openFolderByPath'),
+        sep,
+        cmd('Save', 'file.save', 'CmdOrCtrl+S'),
+        cmd('Save with Encoding…', 'file.saveEncoding'),
+        cmd('Change Line Endings…', 'file.lineEndings'),
+        sep,
+        cmd('Rename File…', 'file.rename'),
+        cmd('Delete File', 'file.delete'),
+        sep,
+        cmd('Close Tab', 'tab.close', 'CmdOrCtrl+W'),
+        sep,
+        cmd('Settings', 'settings.open', 'CmdOrCtrl+,'),
+        sep,
+        { label: 'Exit', role: 'quit' }
+      ]
+    },
+    {
+      label: '&Edit',
+      submenu: [
+        edit('Undo', 'undo', 'CmdOrCtrl+Z'),
+        edit('Redo', 'redo', 'CmdOrCtrl+Y'),
+        sep,
+        edit('Cut', 'cut', 'CmdOrCtrl+X'),
+        edit('Copy', 'copy', 'CmdOrCtrl+C'),
+        edit('Paste', 'paste', 'CmdOrCtrl+V'),
+        edit('Select All', 'selectAll', 'CmdOrCtrl+A'),
+        sep,
+        cmd('Find', 'find.open', 'CmdOrCtrl+F'),
+        cmd('Replace', 'find.replace', 'CmdOrCtrl+H'),
+        cmd('Search in Project', 'search.project', 'CmdOrCtrl+Shift+F'),
+        sep,
+        cmd('Toggle Comment', 'editor.toggleComment', 'CmdOrCtrl+/'),
+        cmd('Fold All', 'editor.foldAll'),
+        cmd('Unfold All', 'editor.unfoldAll')
+      ]
+    },
+    {
+      label: '&View',
+      submenu: [
+        cmd('Command Palette…', 'palette.commands', 'CmdOrCtrl+Shift+P'),
+        cmd('Go to File…', 'palette.files', 'CmdOrCtrl+P'),
+        cmd('Go to Line…', 'palette.line', 'CmdOrCtrl+G'),
+        cmd('Go to Definition', 'nav.definition', 'F12'),
+        cmd('Go Back', 'nav.back', 'Alt+Left'),
+        sep,
+        cmd('Files', 'view.files', 'CmdOrCtrl+Shift+E'),
+        cmd('Problems', 'panel.problems', 'CmdOrCtrl+Shift+M'),
+        cmd('Output', 'panel.output'),
+        cmd('Debug Panel', 'panel.debug'),
+        cmd('Toggle Bottom Panel', 'panel.toggle', 'CmdOrCtrl+J'),
+        sep,
+        cmd('Split Editor', 'view.split', 'CmdOrCtrl+\\'),
+        cmd('Move Tab to the Other Side', 'view.moveToOtherGroup'),
+        cmd('Toggle Minimap', 'editor.toggleMinimap'),
+        sep,
+        cmd('Bigger Font', 'view.zoomIn', 'CmdOrCtrl+='),
+        cmd('Smaller Font', 'view.zoomOut', 'CmdOrCtrl+-'),
+        cmd('Toggle Light/Dark Theme', 'view.toggleTheme'),
+        sep,
+        { label: 'Toggle Developer Tools', role: 'toggleDevTools' }
+      ]
+    },
+    {
+      label: '&Run',
+      submenu: [
+        cmd('Run / Continue', 'run.smart', 'F5'),
+        cmd('Run Without Debugging', 'run.file', 'CmdOrCtrl+F5'),
+        cmd('Start Debugging', 'debug.start'),
+        cmd('Stop', 'run.stop', 'Shift+F5'),
+        cmd('Restart Debugging', 'debug.restart', 'CmdOrCtrl+Shift+F5'),
+        sep,
+        cmd('Step Over', 'debug.stepOver', 'F10'),
+        cmd('Step Into', 'debug.stepInto', 'F11'),
+        cmd('Step Out', 'debug.stepOut', 'Shift+F11'),
+        sep,
+        cmd('Toggle Breakpoint', 'debug.toggleBreakpoint', 'F9'),
+        cmd('Remove All Breakpoints', 'debug.clearBreakpoints')
+      ]
+    },
+    {
+      label: '&Terminal',
+      submenu: [
+        cmd('New Terminal', 'terminal.new', 'CmdOrCtrl+Shift+`'),
+        cmd('New Terminal with Shell…', 'terminal.newWithShell'),
+        cmd('Toggle Terminal', 'terminal.toggle', 'CmdOrCtrl+`'),
+        cmd('Kill Terminal', 'terminal.kill')
+      ]
+    },
+    {
+      label: '&Help',
+      submenu: [
+        cmd('All Commands and Shortcuts', 'palette.commands', 'CmdOrCtrl+Shift+P'),
+        {
+          label: 'About IDEforfun',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow()
+            const opts = {
+              type: 'info' as const,
+              title: 'About IDEforfun',
+              message: `IDEforfun ${app.getVersion()}`,
+              detail: `A hobby IDE for Python, with a hand-written editor.\n\nElectron ${process.versions.electron} · Node ${process.versions.node} · Chromium ${process.versions.chrome}`
+            }
+            void (win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts))
+          }
+        }
+      ]
+    }
+  ]
+  return Menu.buildFromTemplate(template)
+}

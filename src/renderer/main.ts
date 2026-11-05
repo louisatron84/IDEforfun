@@ -29,11 +29,26 @@ import { DEFAULT_SETTINGS, type Settings } from '../shared/settings'
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 
 const folderName = $('folder-name')
+const PLACEHOLDER_START = 'Open a folder to start: Ctrl+O, File → Open Folder, or drop a folder here.'
+const PLACEHOLDER_FOLDER = 'Pick a file in the tree, Ctrl+P to find one, or Ctrl+N for a new file.'
 let rootFolder: string | null = null
 
-const workspace = new Workspace(window.api, (doc: Doc) =>
-  confirm(`${doc.name} has unsaved changes. Close it without saving?`)
-)
+/**
+ * Closing a file with unsaved changes: Save / Don't Save / Cancel.
+ * Returns true if the tab may close now. "Save" saves first and then
+ * closes it (so this returns false and closes it once saved).
+ */
+const workspace: Workspace = new Workspace(window.api, (doc: Doc) => {
+  const choice = window.api.askUnsaved(doc.name)
+  if (choice === 'discard') return true
+  if (choice === 'save') {
+    void workspace.save(doc).then(
+      () => workspace.close(doc),
+      (err) => alert(`Couldn't save ${doc.name}:\n${String(err)}`)
+    )
+  }
+  return false
+})
 // ---------- editors (one per tab group; two when the view is split) ----------
 
 /** Callbacks for the editor of group `index`. */
@@ -531,7 +546,7 @@ workspace.subscribe(() => {
     if (g.active !== ed.currentDoc || !g.active) {
       // Only the active side takes keyboard focus.
       if (g.active) ed.show(g.active, i === workspace.activeGroup)
-      else ed.showPlaceholder(rootFolder ? 'Pick a file from the tree' : 'Open a folder and pick a file')
+      else ed.showPlaceholder(rootFolder ? PLACEHOLDER_FOLDER : PLACEHOLDER_START)
     }
   })
   const doc = workspace.active
@@ -671,6 +686,15 @@ async function offerRestore(folder: string): Promise<void> {
 const hasDoc = () => workspace.active !== null
 
 commands.register({ id: 'file.openFolder', title: 'Open Folder…', keys: 'Ctrl+O', run: openFolder })
+commands.register({ id: 'editor.toggleComment', title: 'Toggle Comment', when: hasDoc, run: () => editor.toggleComment() })
+
+// Menu bar: commands by id, and Edit actions for the editor or whatever text box has focus.
+window.api.onMenuCommand((id) => commands.run(id))
+window.api.onMenuEdit((action) => {
+  const ed = editors.find((e) => e.hasFocus)
+  if (!ed || action === 'paste') return window.api.nativeEdit(action) // paste arrives in the editor as a normal paste
+  ed[action]()
+})
 commands.register({ id: 'file.openFolderByPath', title: 'Open Folder by Path…', run: openFolderByPath })
 
 // Drop a folder (or a file) onto the window to open it.
@@ -726,7 +750,12 @@ let lastRunId = 0
 
 async function runCurrentFile(): Promise<void> {
   const doc = workspace.active
-  if (!doc) return
+  if (!doc) {
+    panel.show('output')
+    output.clear()
+    output.error(rootFolder ? 'Open a Python file first (pick one in the tree, or Ctrl+P).' : 'Open a folder (Ctrl+O) and a Python file first.')
+    return
+  }
   panel.show('output')
   output.begin(doc.path)
   if (!doc.path.toLowerCase().endsWith('.py')) {
@@ -764,7 +793,14 @@ commands.register({
 commands.register({ id: 'run.file', title: 'Run Python File (without debugging)', keys: 'Ctrl+F5', when: hasDoc, run: runCurrentFile })
 commands.register({
   id: 'run.stop', title: 'Stop Running / Debugging', keys: 'Shift+F5',
-  run: () => (debugging() ? void stopDebugging() : void window.api.stopRun())
+  run: () => {
+    if (debugging()) void stopDebugging()
+    else if (output.isRunning) void window.api.stopRun()
+    else {
+      panel.show('output')
+      output.error('Nothing is running.')
+    }
+  }
 })
 commands.register({ id: 'debug.start', title: 'Start Debugging', when: () => hasDoc() && !debugging(), run: () => void startDebugging() })
 commands.register({ id: 'debug.restart', title: 'Restart Debugging', keys: 'Ctrl+Shift+F5', when: debugging, run: () => void restartDebugging() })

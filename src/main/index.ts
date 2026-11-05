@@ -1,4 +1,5 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
+import { buildMenu, type EditAction } from './menu'
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { realpath } from 'node:fs/promises'
@@ -87,6 +88,25 @@ ipcMain.handle('dialog:openFolder', async (event) => {
   const picked = result.filePaths[0]
   if (!picked) return { error: "The folder dialog didn't return a folder. Try selecting it with the mouse, or use Open Folder by Path (Ctrl+Shift+P)." }
   return checkFolder(picked)
+})
+// Edit menu actions for text boxes (and pasting into the editor): done natively by Chromium.
+ipcMain.on('edit:native', (event, action: EditAction) => {
+  if (['undo', 'redo', 'cut', 'copy', 'paste', 'selectAll'].includes(action)) event.sender[action]()
+})
+// "Save changes?" with real buttons. Synchronous, because closing a tab asks and answers in one step.
+ipcMain.on('dialog:unsaved', (event, name: string, detail?: string) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const opts = {
+    type: 'warning' as const,
+    buttons: ['Save', "Don't Save", 'Cancel'],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true,
+    message: `Do you want to save the changes you made to ${name}?`,
+    detail: detail ?? "Your changes will be lost if you don't save them."
+  }
+  const choice = win ? dialog.showMessageBoxSync(win, opts) : dialog.showMessageBoxSync(opts)
+  event.returnValue = (['save', 'discard', 'cancel'] as const)[choice] ?? 'cancel'
 })
 ipcMain.handle('fs:checkFolder', (_event, path: string) => checkFolder(path))
 
@@ -199,6 +219,7 @@ app.on('before-quit', () => {
 })
 
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(buildMenu())
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

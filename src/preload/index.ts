@@ -4,6 +4,18 @@ import type { IdeApi, RunEvent, TerminalEvent } from '../shared/api'
 const api: IdeApi = {
   openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
   checkFolder: (path) => ipcRenderer.invoke('fs:checkFolder', path),
+  onMenuCommand: (listener) => {
+    const handler = (_e: unknown, id: string) => listener(id)
+    ipcRenderer.on('menu:command', handler)
+    return () => ipcRenderer.removeListener('menu:command', handler)
+  },
+  onMenuEdit: (listener) => {
+    const handler = (_e: unknown, action: Parameters<typeof listener>[0]) => listener(action)
+    ipcRenderer.on('menu:edit', handler)
+    return () => ipcRenderer.removeListener('menu:edit', handler)
+  },
+  nativeEdit: (action) => ipcRenderer.send('edit:native', action),
+  askUnsaved: (name, detail) => ipcRenderer.sendSync('dialog:unsaved', name, detail),
   pathForFile: (file) => {
     try {
       return webUtils.getPathForFile(file)
