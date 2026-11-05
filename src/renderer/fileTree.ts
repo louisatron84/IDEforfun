@@ -1,4 +1,5 @@
 import type { DirEntry } from '../shared/api'
+import { samePath } from './workspace'
 
 const INDENT_PX = 12
 
@@ -8,15 +9,17 @@ const INDENT_PX = 12
  */
 export class FileTree {
   private selected: HTMLElement | null = null
+  /** File rows currently in the tree, so the active tab's file can be highlighted. */
+  private readonly fileRows = new Map<string, HTMLElement>()
 
   constructor(
     private readonly container: HTMLElement,
-    /** Resolves to false if the file wasn't opened (e.g. user kept unsaved changes). */
-    private readonly onOpenFile: (entry: DirEntry) => Promise<boolean>
+    private readonly onOpenFile: (entry: DirEntry) => void
   ) {}
 
   async setRoot(rootPath: string): Promise<void> {
     this.selected = null
+    this.fileRows.clear()
     const list = document.createElement('div')
     this.container.replaceChildren(list)
     await this.renderChildren(list, rootPath, 0)
@@ -68,11 +71,20 @@ export class FileTree {
         }
       })
     } else {
-      row.addEventListener('click', async () => {
-        if (await this.onOpenFile(entry)) this.select(row)
-      })
+      this.fileRows.set(entry.path, row)
+      row.addEventListener('click', () => this.onOpenFile(entry))
     }
     return wrapper
+  }
+
+  /** Highlight the row for this file (if its folder is expanded). */
+  highlight(path: string | null): void {
+    for (const [p, row] of this.fileRows) {
+      if (path && samePath(p, path)) {
+        if (row.isConnected) this.select(row)
+        return
+      }
+    }
   }
 
   private select(row: HTMLElement): void {

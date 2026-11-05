@@ -14,14 +14,12 @@
  *   we read what was typed, insert it into the buffer and clear the textarea.
  */
 import type { Position } from './textBuffer'
-import { TextBuffer, comparePositions } from './textBuffer'
+import { comparePositions } from './textBuffer'
 import * as cmd from './commands'
 import * as sel from './selection'
 import type { EditKind } from './history'
-import { History } from './history'
-import { Highlighter } from './highlighter'
+import { Doc } from './document'
 
-const TAB_SIZE = 4
 const PAD_TOP = 4 // space above the first line
 const PAD_LEFT = 12 // must match .editor .lines padding-left in styles.css
 const PAD_RIGHT = 24
@@ -30,8 +28,8 @@ const GUTTER_PAD = 28 // gutter's left + right padding around the numbers
 const OVERSCAN = 5
 
 export interface EditorOptions {
-  /** Called whenever the dirty (unsaved) state changes. */
-  onDirtyChange?: (dirty: boolean) => void
+  /** Called after every edit (and undo/redo) to the shown document. */
+  onEdit?: (doc: Doc) => void
 }
 
 export class Editor {
@@ -45,17 +43,24 @@ export class Editor {
   private readonly cursorEl: HTMLDivElement
   private readonly input: HTMLTextAreaElement
 
-  private buffer = new TextBuffer('')
-  private history = new History(this.buffer)
-  private highlighter = new Highlighter(this.buffer)
-  /** The cursor is the selection's head; `anchor` is where the selection started. */
-  private cursor: Position = { line: 0, col: 0 }
-  private anchor: Position = { line: 0, col: 0 }
+  /** The document being shown (an empty placeholder when no file is open). */
+  private doc: Doc = new Doc('', '')
+  private hasDoc = false
   /** On-screen column to aim for when moving up/down (null = use current). */
   private goalVisual: number | null = null
   private charWidth = 8
   private lineHeight = 20
-  private _dirty = false
+  private _tabSize = 4
+
+  // The document's state, accessed through short names to keep the code readable.
+  private get buffer() { return this.doc.buffer }
+  private get history() { return this.doc.history }
+  private get highlighter() { return this.doc.highlighter }
+  /** The cursor is the selection's head; `anchor` is where the selection started. */
+  private get cursor() { return this.doc.cursor }
+  private set cursor(p: Position) { this.doc.cursor = p }
+  private get anchor() { return this.doc.anchor }
+  private set anchor(p: Position) { this.doc.anchor = p }
 
   constructor(container: HTMLElement, private readonly opts: EditorOptions = {}) {
     this.root = el('div', 'editor')
@@ -90,32 +95,55 @@ export class Editor {
     this.showPlaceholder('Open a folder and pick a file')
   }
 
-  get dirty(): boolean {
-    return this._dirty
-  }
-
-  open(text: string): void {
-    this.buffer = new TextBuffer(text)
-    this.history = new History(this.buffer)
-    this.highlighter = new Highlighter(this.buffer)
-    this.cursor = this.anchor = { line: 0, col: 0 }
+  /** Show a document, remembering the scroll position of the one being left. */
+  show(doc: Doc): void {
+    this.rememberScroll()
+    this.doc = doc
+    this.hasDoc = true
     this.goalVisual = null
     this.root.className = 'editor'
     this.root.replaceChildren(this.gutter, this.textArea)
     this.measure()
-    this.setDirty(false)
-    this.render()
-    this.root.scrollTo(0, 0)
+    this.updateSize()
+    this.root.scrollTop = doc.scrollTop
+    this.root.scrollLeft = doc.scrollLeft
+    this.renderLines()
+    this.renderSelection()
+    this.positionCursor()
     this.focus()
   }
 
-  getText(): string {
-    return this.buffer.getText()
+  get currentDoc(): Doc | null {
+    return this.hasDoc ? this.doc : null
   }
 
-  markSaved(): void {
-    this.history.markSaved()
-    this.setDirty(false)
+  get tabSize(): number {
+    return this._tabSize
+  }
+
+  /** Apply new font/tab settings: re-measure and redraw. */
+  refreshLayout(tabSize: number): void {
+    this._tabSize = tabSize
+    if (!this.hasDoc) return
+    this.measure()
+    this.render()
+  }
+
+  /** Move the cursor to a line (1-based column optional), e.g. from a traceback link. */
+  goTo(line: number, col = 0): void {
+    const pos = this.buffer.clamp({ line, col })
+    this.cursor = this.anchor = pos
+    this.goalVisual = null
+    this.render(false, 'center')
+    this.focus()
+  }
+
+  /** Select a range (used by find). */
+  select(anchor: Position, head: Position): void {
+    this.anchor = anchor
+    this.cursor = head
+    this.goalVisual = null
+    this.render(false, 'center')
   }
 
   focus(): void {
@@ -123,8 +151,17 @@ export class Editor {
   }
 
   showPlaceholder(message: string): void {
+    this.rememberScroll()
+    this.hasDoc = false
+    this.doc = new Doc('', '')
     this.root.className = 'editor empty'
     this.root.textContent = message
+  }
+
+  private rememberScroll(): void {
+    if (!this.hasDoc) return
+    this.doc.scrollTop = this.root.scrollTop
+    this.doc.scrollLeft = this.root.scrollLeft
   }
 
   // ---------- selection helpers ----------
@@ -216,7 +253,7 @@ export class Editor {
             return wordStart
           }
         }
-        else edit = () => cmd.backspace(b, pos, TAB_SIZE)
+        else edit = () => cmd.backspace(b, pos, this._tabSize)
         break
       case 'Delete':
         kind = 'delete'
@@ -226,7 +263,7 @@ export class Editor {
         break
       case 'Enter':
         kind = 'newline'
-        edit = () => cmd.newline(b, replaceSelection(), TAB_SIZE)
+        edit = () => cmd.newline(b, replaceSelection(), this._tabSize)
         break
       case 'Tab': {
         if (ctrl) return // leave Ctrl+Tab for future tab switching
@@ -236,13 +273,13 @@ export class Editor {
           // Indent/dedent whole lines and keep the selection.
           let result: sel.Selection = s
           this.history.transact('other', pos, () => {
-            result = shift ? sel.dedentLines(b, s, TAB_SIZE) : sel.indentLines(b, s, TAB_SIZE)
+            result = shift ? sel.dedentLines(b, s, this._tabSize) : sel.indentLines(b, s, this._tabSize)
             return result.head
           })
           this.afterEdit(result.head, result.anchor)
           return
         }
-        edit = () => cmd.insertTab(b, replaceSelection(), TAB_SIZE)
+        edit = () => cmd.insertTab(b, replaceSelection(), this._tabSize)
         break
       }
       default:
@@ -303,8 +340,8 @@ export class Editor {
     this.cursor = cursor
     this.anchor = anchor
     this.goalVisual = null
-    this.setDirty(this.history.isDirty())
     this.render(true)
+    this.opts.onEdit?.(this.doc)
   }
 
   // ---------- mouse ----------
@@ -353,14 +390,14 @@ export class Editor {
     if (rawLine < 0) return { line: 0, col: 0 }
     if (rawLine >= this.buffer.lineCount) return this.buffer.clamp({ line: Infinity, col: Infinity })
     const visual = Math.round((e.clientX - rect.left - PAD_LEFT) / this.charWidth)
-    return { line: rawLine, col: cmd.colFromVisual(this.buffer.getLine(rawLine), Math.max(visual, 0), TAB_SIZE) }
+    return { line: rawLine, col: cmd.colFromVisual(this.buffer.getLine(rawLine), Math.max(visual, 0), this._tabSize) }
   }
 
   private vertical(delta: number): Position {
     if (this.goalVisual === null) {
-      this.goalVisual = cmd.visualCol(this.buffer.getLine(this.cursor.line), this.cursor.col, TAB_SIZE)
+      this.goalVisual = cmd.visualCol(this.buffer.getLine(this.cursor.line), this.cursor.col, this._tabSize)
     }
-    return cmd.moveVertical(this.buffer, this.cursor, delta, this.goalVisual, TAB_SIZE)
+    return cmd.moveVertical(this.buffer, this.cursor, delta, this.goalVisual, this._tabSize)
   }
 
   private pageLines(): number {
@@ -368,12 +405,6 @@ export class Editor {
   }
 
   // ---------- rendering ----------
-
-  private setDirty(dirty: boolean): void {
-    if (dirty === this._dirty) return
-    this._dirty = dirty
-    this.opts.onDirtyChange?.(dirty)
-  }
 
   /** Measure the monospace font so we can map line/column ↔ pixels. */
   private measure(): void {
@@ -384,10 +415,16 @@ export class Editor {
     this.lineHeight = parseFloat(getComputedStyle(this.content).lineHeight) || 20
   }
 
-  private render(textChanged = true): void {
+  /**
+   * Redraw after a change. `scroll` decides how to bring the cursor into view:
+   * 'nearest' scrolls as little as possible, 'center' puts it mid-screen
+   * (used for jumps such as find results and error links).
+   */
+  private render(textChanged = true, scroll: 'nearest' | 'center' = 'nearest'): void {
     if (textChanged) this.updateSize()
+    const { x, y } = this.positionCursor()
+    this.scrollIntoView(x, y, scroll)
     this.renderLines()
-    this.placeCursor()
     this.renderSelection()
   }
 
@@ -396,7 +433,7 @@ export class Editor {
     const lines = this.buffer.getLines()
     let widest = 0
     for (const line of lines) {
-      const cols = line.includes('\t') ? cmd.visualCol(line, line.length, TAB_SIZE) : line.length
+      const cols = line.includes('\t') ? cmd.visualCol(line, line.length, this._tabSize) : line.length
       if (cols > widest) widest = cols
     }
     const height = `calc(${PAD_TOP + lines.length * this.lineHeight}px + 40vh)` // 40vh: let the last line scroll up
@@ -447,38 +484,60 @@ export class Editor {
     return lineEl
   }
 
-  /** Draw highlight boxes for the selected text, only for lines currently on screen. */
+  /** Ranges to highlight besides the selection (find matches). Sorted by position. */
+  private matches: { start: Position; end: Position }[] = []
+
+  setMatches(matches: { start: Position; end: Position }[]): void {
+    this.matches = matches
+    this.renderSelection()
+  }
+
+  /**
+   * Draw highlight boxes for find matches and the selection, only for lines
+   * currently on screen.
+   */
   private renderSelection(): void {
-    if (!this.hasSelection()) {
-      if (this.selectionLayer.firstChild) this.selectionLayer.replaceChildren()
-      return
-    }
-    const { start, end } = sel.selectionRange(this.selection)
     const firstVisible = Math.floor((this.root.scrollTop - PAD_TOP) / this.lineHeight) - 1
     const lastVisible = firstVisible + Math.ceil(this.root.clientHeight / this.lineHeight) + 2
-    const from = Math.max(start.line, firstVisible)
-    const to = Math.min(end.line, lastVisible)
-
     const boxes: HTMLElement[] = []
-    for (let line = from; line <= to; line++) {
-      const text = this.buffer.getLine(line)
-      const x1 = line === start.line ? cmd.visualCol(text, start.col, TAB_SIZE) : 0
-      // Lines that continue past the selection end get one extra cell to show the line break.
-      const x2 = line === end.line
-        ? cmd.visualCol(text, end.col, TAB_SIZE)
-        : cmd.visualCol(text, text.length, TAB_SIZE) + 1
-      if (x2 <= x1) continue
-      const box = el('div', 'sel')
-      box.style.transform = `translate(${PAD_LEFT + x1 * this.charWidth}px, ${PAD_TOP + line * this.lineHeight}px)`
-      box.style.width = `${(x2 - x1) * this.charWidth}px`
-      boxes.push(box)
+
+    for (const m of this.matches) {
+      if (m.end.line < firstVisible) continue
+      if (m.start.line > lastVisible) break
+      this.addBoxes(boxes, m.start, m.end, 'match', firstVisible, lastVisible)
+    }
+    if (this.hasSelection()) {
+      const { start, end } = sel.selectionRange(this.selection)
+      this.addBoxes(boxes, start, end, 'sel', firstVisible, lastVisible)
     }
     this.selectionLayer.replaceChildren(...boxes)
   }
 
-  private placeCursor(): void {
+  private addBoxes(
+    boxes: HTMLElement[], start: Position, end: Position, className: string,
+    firstVisible: number, lastVisible: number
+  ): void {
+    const from = Math.max(start.line, firstVisible)
+    const to = Math.min(end.line, lastVisible)
+    for (let line = from; line <= to; line++) {
+      const text = this.buffer.getLine(line)
+      const x1 = line === start.line ? cmd.visualCol(text, start.col, this._tabSize) : 0
+      // Lines that continue past the range end get one extra cell to show the line break.
+      const x2 = line === end.line
+        ? cmd.visualCol(text, end.col, this._tabSize)
+        : cmd.visualCol(text, text.length, this._tabSize) + 1
+      if (x2 <= x1) continue
+      const box = el('div', className)
+      box.style.transform = `translate(${PAD_LEFT + x1 * this.charWidth}px, ${PAD_TOP + line * this.lineHeight}px)`
+      box.style.width = `${(x2 - x1) * this.charWidth}px`
+      boxes.push(box)
+    }
+  }
+
+  /** Put the cursor (and hidden textarea) at the cursor position; returns its pixel position. */
+  private positionCursor(): { x: number; y: number } {
     const { line, col } = this.cursor
-    const x = PAD_LEFT + cmd.visualCol(this.buffer.getLine(line), col, TAB_SIZE) * this.charWidth
+    const x = PAD_LEFT + cmd.visualCol(this.buffer.getLine(line), col, this._tabSize) * this.charWidth
     const y = PAD_TOP + line * this.lineHeight
     for (const node of [this.cursorEl, this.input]) {
       node.style.transform = `translate(${x}px, ${y}px)`
@@ -487,13 +546,16 @@ export class Editor {
     this.cursorEl.style.animation = 'none'
     void this.cursorEl.offsetWidth
     this.cursorEl.style.animation = ''
-    this.scrollIntoView(x, y)
+    return { x, y }
   }
 
-  private scrollIntoView(x: number, y: number): void {
+  private scrollIntoView(x: number, y: number, mode: 'nearest' | 'center'): void {
     const view = this.root
     const margin = this.lineHeight
-    if (y - margin < view.scrollTop) view.scrollTop = Math.max(0, y - margin)
+    const offscreen = y < view.scrollTop || y + this.lineHeight > view.scrollTop + view.clientHeight
+    if (mode === 'center' && offscreen) {
+      view.scrollTop = Math.max(0, y - view.clientHeight / 2)
+    } else if (y - margin < view.scrollTop) view.scrollTop = Math.max(0, y - margin)
     else if (y + this.lineHeight + margin > view.scrollTop + view.clientHeight) {
       view.scrollTop = y + this.lineHeight + margin - view.clientHeight
     }

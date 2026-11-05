@@ -76,7 +76,6 @@ body { display: flex; flex-direction: column; }
 
 /* ---- editor ---- */
 #editor-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-#file-title { padding: 4px 12px; border-bottom: 1px solid var(--border); min-height: 25px; }
 #editor { flex: 1; min-height: 0; }
 
 .editor {
@@ -164,7 +163,6 @@ body { display: flex; flex-direction: column; }
   font-family: var(--font-ui);
   cursor: default;
 }
-#file-title.dirty { color: var(--fg); }
 
 /* ---- selection ---- */
 :root { --selection: #214283; --selection-unfocused: #3a3d44; }
@@ -203,3 +201,56 @@ body { display: flex; flex-direction: column; }
 .tok-string { color: var(--tok-string); }
 .tok-number { color: var(--tok-number); }
 .tok-comment { color: var(--tok-comment); font-style: italic; }
+
+/* ---- tabs ---- */
+#tabs {
+  display: flex;
+  min-height: 34px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  scrollbar-width: none;
+}
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px 0 12px;
+  border-right: 1px solid var(--border);
+  color: var(--fg-muted);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  border-top: 2px solid transparent;
+}
+.tab:hover { background: var(--bg-hover); }
+.tab.active { background: var(--bg); color: var(--fg); border-top-color: var(--accent); }
+.tab-close {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+  line-height: 20px;
+  cursor: pointer;
+}
+.tab-close::before { content: '×'; visibility: hidden; }
+.tab:hover .tab-close::before, .tab.active .tab-close::before { visibility: visible; }
+.tab.dirty .tab-close::before { content: '●'; visibility: visible; font-size: 10px; }
+.tab.dirty .tab-close:hover::before { content: '×'; font-size: 14px; }
+.tab-close:hover { background: var(--bg-active); }
+
+/* ---- find matches ---- */
+:root { --match: rgba(230, 180, 60, 0.28); }
+.editor .match {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: var(--line-height);
+  background: var(--match);
+  border-radius: 2px;
+}

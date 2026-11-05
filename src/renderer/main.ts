@@ -1,80 +1,104 @@
 import { FileTree } from './fileTree'
 import { Editor } from './editor/editor'
+import type { Doc } from './editor/document'
+import { Workspace } from './workspace'
+import { TabBar } from './tabBar'
+import { CommandRegistry } from './keymap'
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 
 const folderName = $('folder-name')
-const fileTitle = $('file-title')
+let rootFolder: string | null = null
 
-let currentFile: string | null = null
+const workspace = new Workspace(window.api, (doc: Doc) =>
+  confirm(`${doc.name} has unsaved changes. Close it without saving?`)
+)
+const editor = new Editor($('editor'), { onEdit: () => workspace.notifyChanged() })
+const tabBar = new TabBar($('tabs'), workspace)
+const tree = new FileTree($('sidebar'), (entry) => void openFile(entry.path))
+export const commands = new CommandRegistry()
 
-const editor = new Editor($('editor'), { onDirtyChange: () => updateTitle() })
+// Keep the editor, tabs, tree highlight and window title in sync with the workspace.
+workspace.subscribe(() => {
+  tabBar.render()
+  const doc = workspace.active
+  if (doc !== editor.currentDoc) {
+    if (doc) editor.show(doc)
+    else editor.showPlaceholder(rootFolder ? 'Pick a file from the tree' : 'Open a folder and pick a file')
+  }
+  tree.highlight(doc?.path ?? null)
+  const folder = rootFolder?.split(/[\\/]/).pop()
+  document.title = [doc ? (doc.dirty ? '● ' : '') + doc.name : null, folder, 'IDEforfun']
+    .filter(Boolean).join(' — ')
+})
 
-function updateTitle(): void {
-  fileTitle.textContent = currentFile ? (editor.dirty ? '● ' : '') + currentFile : ''
-  fileTitle.classList.toggle('dirty', editor.dirty)
-}
-
-/** Ask before throwing away unsaved edits. Returns true if it's OK to continue. */
-function confirmDiscard(): boolean {
-  if (!editor.dirty || !currentFile) return true
-  const name = currentFile.split(/[\\/]/).pop()
-  return confirm(`${name} has unsaved changes. Discard them?`)
-}
-
-async function save(): Promise<void> {
-  if (!currentFile) return
+export async function openFile(path: string, line?: number): Promise<Doc | null> {
   try {
-    await window.api.writeFile(currentFile, editor.getText())
-    editor.markSaved()
+    const doc = await workspace.open(path)
+    if (line !== undefined) editor.goTo(line)
+    return doc
   } catch (err) {
-    alert(`Couldn't save ${currentFile}:\n${String(err)}`)
+    alert(`Can't open ${path}:\n${String(err)}`)
+    return null
   }
 }
 
-const tree = new FileTree($('sidebar'), async (entry) => {
-  if (entry.path === currentFile) {
-    editor.focus()
-    return true
-  }
-  if (!confirmDiscard()) return false
+async function saveActive(): Promise<boolean> {
+  const doc = workspace.active
+  if (!doc) return false
   try {
-    const text = await window.api.readFile(entry.path)
-    currentFile = entry.path
-    editor.open(text)
-    updateTitle()
+    await workspace.save(doc)
     return true
   } catch (err) {
-    alert(`Can't open ${entry.path}:\n${String(err)}`)
+    alert(`Couldn't save ${doc.path}:\n${String(err)}`)
     return false
   }
-})
+}
 
-$('open-folder').addEventListener('click', async () => {
-  if (!confirmDiscard()) return
+async function openFolder(): Promise<void> {
+  if (!workspace.closeAll()) return
   const folder = await window.api.openFolder()
-  if (!folder) return
+  if (!folder) {
+    workspace.notifyChanged()
+    return
+  }
+  rootFolder = folder
   folderName.textContent = folder
   folderName.classList.remove('muted')
-  document.title = `${folder.split(/[\\/]/).pop()} — IDEforfun`
-  currentFile = null
-  editor.markSaved()
-  updateTitle()
-  editor.showPlaceholder('Pick a file from the tree')
   await tree.setRoot(folder)
-})
+  workspace.notifyChanged()
+}
 
-window.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-    e.preventDefault()
-    void save()
-  }
+// ---------- commands ----------
+
+const hasDoc = () => workspace.active !== null
+
+commands.register({ id: 'file.openFolder', title: 'Open Folder…', keys: 'Ctrl+O', run: openFolder })
+commands.register({ id: 'file.save', title: 'Save', keys: 'Ctrl+S', when: hasDoc, run: () => void saveActive() })
+commands.register({
+  id: 'tab.close', title: 'Close Tab', keys: 'Ctrl+W', when: hasDoc,
+  run: () => { if (workspace.active) workspace.close(workspace.active) }
 })
+commands.register({ id: 'tab.next', title: 'Next Tab', keys: 'Ctrl+Tab', when: hasDoc, run: () => workspace.next(1) })
+commands.register({ id: 'tab.prev', title: 'Previous Tab', keys: 'Ctrl+Shift+Tab', when: hasDoc, run: () => workspace.next(-1) })
+
+$('open-folder').addEventListener('click', () => void openFolder())
+
+// Global shortcuts. Capture phase, so they win over the editor's own key handling.
+window.addEventListener('keydown', (e) => {
+  if (commands.handleKey(e)) {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+}, { capture: true })
 
 // Block closing the window with unsaved changes; the main process then asks the user.
 window.addEventListener('beforeunload', (e) => {
-  if (editor.dirty) {
+  if (workspace.anyDirty) {
     e.preventDefault()
     e.returnValue = ''
   }
 })
+
+export { workspace, editor, saveActive }
+export const getRootFolder = () => rootFolder

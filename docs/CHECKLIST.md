@@ -14,7 +14,7 @@ The roadmap. Work through it roughly top to bottom; each tier builds on the one 
 - [x] Scrolling that only renders the visible lines (so big files stay fast) (v0.5: 50k lines opens in ~80ms)
 
 ## Tier 2: it's an IDE
-- [ ] Tabs for several open files
+- [x] Tabs for several open files (v0.6)
 - [x] Python syntax highlighting (our own tokenizer) (v0.5)
 - [ ] Find/replace in the file
 - [ ] Run the current Python file and show its output in a panel
