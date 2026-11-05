@@ -5,6 +5,27 @@ A hobby IDE built with Electron + TypeScript. The text editor (buffer, cursor, s
 
 See [docs/CHECKLIST.md](docs/CHECKLIST.md) for the roadmap.
 
+## Before you install
+You need **Node.js 22+** and **Python 3** (for running and debugging your code).
+
+The integrated terminal uses [node-pty](https://github.com/microsoft/node-pty), a native module.
+On **Windows** and **macOS** it comes prebuilt, so `npm install` just works. On **Linux** it's compiled
+during `npm install`, so you need a C++ toolchain first:
+
+```sh
+# Debian / Ubuntu
+sudo apt install build-essential python3 make g++
+# Fedora
+sudo dnf install gcc-c++ make python3
+# Arch
+sudo pacman -S base-devel python
+```
+
+If `npm install` fails with `gyp ERR!` or `node-pty` in the error, this is the missing piece.
+On macOS, if it does need building, run `xcode-select --install` first.
+
+Optional: the debugger uses `debugpy` (`pip install debugpy`). The IDE offers to install it the first time you debug.
+
 ## Run it
 ```sh
 npm install

@@ -38,6 +38,8 @@ export class Palette {
   /** When set, the palette shows these choices instead of files/commands. */
   private choices: { label: string; detail?: string; hint?: string; run: () => void }[] | null = null
   private choicePrompt = ''
+  /** In prompt mode: what to do with the typed text. */
+  private textSubmit: ((text: string) => void) | null = null
 
   constructor(private readonly deps: PaletteDeps) {
     this.overlay = document.createElement('div')
@@ -72,9 +74,18 @@ export class Palette {
     return !this.overlay.hidden
   }
 
+  /** Ask for a line of text (e.g. a folder path); Enter calls `submit` with it. */
+  prompt(placeholder: string, submit: (text: string) => void, initial = ''): void {
+    this.choose(placeholder, [])
+    this.textSubmit = submit
+    this.input.value = initial
+    this.update()
+  }
+
   /** Show a list of choices (e.g. encodings); picking one runs it. */
   choose(prompt: string, choices: { label: string; detail?: string; hint?: string; run: () => void }[]): void {
     if (!this.isOpen) this.returnFocus = document.activeElement as HTMLElement | null
+    this.textSubmit = null
     this.choices = choices
     this.choicePrompt = prompt
     this.overlay.hidden = false
@@ -86,6 +97,7 @@ export class Palette {
   /** Open with an initial prefix: '>' commands, ':' go to line, '' files. */
   async open(prefix: '>' | ':' | ''): Promise<void> {
     this.choices = null
+    this.textSubmit = null
     if (!this.isOpen) this.returnFocus = document.activeElement as HTMLElement | null
     this.overlay.hidden = false
     this.input.value = prefix
@@ -101,11 +113,21 @@ export class Palette {
     if (!this.isOpen) return
     this.overlay.hidden = true
     this.choices = null
+    this.textSubmit = null
     this.returnFocus?.focus()
   }
 
   private update(): void {
     const value = this.input.value
+    if (this.textSubmit) {
+      const submit = this.textSubmit
+      const text = value.trim()
+      this.items = [{ label: text ? `Open "${text}"` : 'Type a path and press Enter', positions: [], run: () => { if (text) submit(text) } }]
+      this.selected = 0
+      this.input.placeholder = this.choicePrompt
+      this.renderList()
+      return
+    }
     if (this.choices) {
       this.items = fuzzyFilter(value.trim(), this.choices, (c) => c.label, MAX_ITEMS).map(({ item, match }) => ({
         label: item.label, positions: match.positions, detail: item.detail, hint: item.hint, run: item.run

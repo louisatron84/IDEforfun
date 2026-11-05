@@ -79,6 +79,7 @@ export class PythonRunner {
         }
         send({ type: 'error', message: err.message })
       })
+      child.stdin?.on('error', () => {}) // typing input after the program ended: nothing to do
       child.stdout?.setEncoding('utf8')
       child.stderr?.setEncoding('utf8')
       child.stdout?.on('data', (text: string) => send({ type: 'output', stream: 'stdout', text }))

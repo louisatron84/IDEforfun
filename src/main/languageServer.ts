@@ -43,6 +43,8 @@ export class LanguageServer {
       if (gen === this.generation && !sender.isDestroyed()) sender.send('lsp:message', message)
     })
     proc.stdout?.on('data', (chunk: Buffer) => reader.feed(chunk))
+    // Writing to a server that just exited fails with EPIPE: ignore it (the exit is handled below).
+    proc.stdin?.on('error', () => {})
     proc.stderr?.on('data', (chunk: Buffer) => {
       if (process.env['IDEFORFUN_LSP_LOG']) process.stderr.write(chunk)
     })

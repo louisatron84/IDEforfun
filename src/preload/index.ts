@@ -1,8 +1,16 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { IdeApi, RunEvent, TerminalEvent } from '../shared/api'
 
 const api: IdeApi = {
   openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
+  checkFolder: (path) => ipcRenderer.invoke('fs:checkFolder', path),
+  pathForFile: (file) => {
+    try {
+      return webUtils.getPathForFile(file)
+    } catch {
+      return ''
+    }
+  },
   readDir: (path) => ipcRenderer.invoke('fs:readDir', path),
   readFile: (path) => ipcRenderer.invoke('fs:readFile', path),
   writeFile: (path, text) => ipcRenderer.invoke('fs:writeFile', path, text),

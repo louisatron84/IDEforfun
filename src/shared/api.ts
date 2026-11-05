@@ -61,7 +61,12 @@ export interface ShellProfile {
 }
 
 export interface IdeApi {
-  openFolder(): Promise<string | null>
+  /** Show the folder picker: the folder, null if cancelled, or why it can't be opened. */
+  openFolder(): Promise<string | { error: string } | null>
+  /** Check a typed folder path: the real path, or why it can't be opened. */
+  checkFolder(path: string): Promise<string | { error: string }>
+  /** The file-system path of a file/folder dropped onto the window ('' if none). */
+  pathForFile(file: File): string
   readDir(path: string): Promise<DirEntry[]>
   readFile(path: string): Promise<string>
   writeFile(path: string, text: string): Promise<void>

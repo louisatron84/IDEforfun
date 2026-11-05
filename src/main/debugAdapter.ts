@@ -68,6 +68,7 @@ export class DebugAdapter {
     })
     let stderr = ''
     proc.stdout.on('data', (chunk: Buffer) => reader.feed(chunk))
+    proc.stdin.on('error', () => {}) // EPIPE after the adapter exits: handled by 'exit'
     proc.stderr.on('data', (chunk: Buffer) => {
       stderr = (stderr + chunk.toString('utf8')).slice(-4000)
     })

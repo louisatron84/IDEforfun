@@ -592,12 +592,28 @@ async function saveActive(): Promise<boolean> {
 }
 
 async function openFolder(): Promise<void> {
-  if (!workspace.closeAll()) return
-  const folder = await window.api.openFolder()
-  if (!folder) {
-    workspace.notifyChanged()
+  const picked = await window.api.openFolder()
+  if (!picked) return // cancelled
+  if (typeof picked !== 'string') {
+    alert(picked.error)
     return
   }
+  await openFolderPath(picked)
+}
+
+/** Ask for a folder path to type (or paste) instead of using the dialog. */
+function openFolderByPath(): void {
+  palette.prompt('Folder to open, e.g. C:\\Users\\me\\project or ~/project', (text) => {
+    void window.api.checkFolder(text).then((res) => {
+      if (typeof res === 'string') void openFolderPath(res)
+      else alert(res.error)
+    })
+  }, rootFolder ?? '')
+}
+
+/** Open a folder that's known to exist. */
+async function openFolderPath(folder: string): Promise<void> {
+  if (!workspace.closeAll()) return
   rootFolder = folder
   folderName.textContent = folder
   folderName.classList.remove('muted')
@@ -655,6 +671,23 @@ async function offerRestore(folder: string): Promise<void> {
 const hasDoc = () => workspace.active !== null
 
 commands.register({ id: 'file.openFolder', title: 'Open Folder…', keys: 'Ctrl+O', run: openFolder })
+commands.register({ id: 'file.openFolderByPath', title: 'Open Folder by Path…', run: openFolderByPath })
+
+// Drop a folder (or a file) onto the window to open it.
+window.addEventListener('dragover', (e) => {
+  if (e.dataTransfer?.types.includes('Files')) e.preventDefault()
+})
+window.addEventListener('drop', (e) => {
+  const file = e.dataTransfer?.files[0]
+  if (!file) return
+  e.preventDefault()
+  const path = window.api.pathForFile(file)
+  if (!path) return
+  void window.api.checkFolder(path).then((res) => {
+    if (typeof res === 'string') void openFolderPath(res)
+    else void openFile(path) // not a folder: open it as a file
+  })
+})
 commands.register({ id: 'file.save', title: 'Save', keys: 'Ctrl+S', when: hasDoc, run: () => void saveActive() })
 const hasFolder = () => rootFolder !== null
 /** New items go next to the open file, or wherever is selected in the tree. */

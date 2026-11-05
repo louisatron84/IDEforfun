@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
+import { realpath } from 'node:fs/promises'
 import { sortAndFilterEntries } from './dirEntries'
 import { listFiles } from './listFiles'
 import { createEntry, renameEntry } from './fileOps'
@@ -81,15 +82,46 @@ ipcMain.handle('dialog:openFolder', async (event) => {
   const win = BrowserWindow.fromWebContents(event.sender)
   const opts = { properties: ['openDirectory' as const] }
   const result = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
-  return result.canceled ? null : result.filePaths[0]
+  if (result.canceled) return null
+  // Some Linux dialogs return nothing when a path is typed and Enter pressed: say so instead of doing nothing.
+  const picked = result.filePaths[0]
+  if (!picked) return { error: "The folder dialog didn't return a folder. Try selecting it with the mouse, or use Open Folder by Path (Ctrl+Shift+P)." }
+  return checkFolder(picked)
 })
+ipcMain.handle('fs:checkFolder', (_event, path: string) => checkFolder(path))
+
+/** A folder path that exists (symlinks resolved), or why it can't be opened. */
+async function checkFolder(path: string): Promise<string | { error: string }> {
+  const trimmed = path.trim().replace(/^["']|["']$/g, '')
+  if (!trimmed) return { error: 'Type the path of a folder.' }
+  const full = resolve(trimmed.replace(/^~(?=$|[\\/])/, app.getPath('home')))
+  try {
+    const st = await stat(full)
+    if (!st.isDirectory()) return { error: `That's a file, not a folder:\n${full}` }
+    await readdir(full) // can we read it?
+    return await realpath(full)
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    const why = code === 'ENOENT' ? "doesn't exist" : code === 'EACCES' || code === 'EPERM' ? "can't be read (permission denied)" : `can't be opened (${code ?? String(err)})`
+    return { error: `The folder ${why}:\n${full}` }
+  }
+}
 
 ipcMain.handle('fs:readDir', async (_event, dir: string) => {
   const dirents = await readdir(dir, { withFileTypes: true })
-  return sortAndFilterEntries(
-    dir,
-    dirents.map((d) => ({ name: d.name, isDirectory: d.isDirectory() }))
-  )
+  const raw = await Promise.all(dirents.map(async (d) => {
+    // A symlink shows as what it points to; a broken one shows as a file (opening it explains).
+    let isDirectory = d.isDirectory()
+    if (d.isSymbolicLink()) {
+      try {
+        isDirectory = (await stat(join(dir, d.name))).isDirectory()
+      } catch {
+        isDirectory = false
+      }
+    }
+    return { name: d.name, isDirectory }
+  }))
+  return sortAndFilterEntries(dir, raw)
 })
 
 ipcMain.handle('fs:readText', (_event, path: string, opts?: { force?: boolean; encoding?: Encoding }) => readTextFile(path, opts))
