@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+    />
+    <title>IDEforfun</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header id="toolbar">
+      <button id="open-folder">Open Folder</button>
+      <span id="folder-name" class="muted">No folder open</span>
+      <span class="spacer"></span>
+      <button id="run-file" class="secondary" title="Run current Python file (Ctrl+F5, or F5 when there are no breakpoints)">▶ Run</button>
+      <button id="debug-file" class="secondary" title="Debug current Python file (F5 when there are breakpoints)">🐞 Debug</button>
+      <button id="stop-run" class="secondary" title="Stop (Shift+F5)">■ Stop</button>
+      <button id="open-settings" class="secondary icon" title="Settings (Ctrl+,)" aria-label="Settings">⚙</button>
+    </header>
+    <div id="workspace">
+      <aside id="sidebar">
+        <div id="sidebar-tabs" role="tablist" aria-label="Sidebar">
+          <button role="tab" data-view="files" aria-selected="true" title="Files">Files</button>
+          <button role="tab" data-view="search" aria-selected="false" title="Search in project (Ctrl+Shift+F)">Search</button>
+        </div>
+        <div id="file-tree" class="sidebar-view"></div>
+        <div id="search-panel" class="sidebar-view" hidden></div>
+      </aside>
+      <main id="editor-pane">
+        <div id="groups">
+          <div class="group active" id="group-0">
+            <div id="tabs" class="tabs" role="tablist"></div>
+            <div id="editor" class="editor-slot"></div>
+          </div>
+        </div>
+      </main>
+    </div>
+    <footer id="statusbar" aria-label="Status bar">
+      <button id="sb-problems" class="sb-item" title="Problems (Ctrl+Shift+M)"></button>
+      <span id="sb-debug" class="sb-item"></span>
+      <span class="spacer"></span>
+      <button id="sb-cursor" class="sb-item" title="Go to line (Ctrl+G)"></button>
+      <button id="sb-indent" class="sb-item" title="Indentation: change in Settings (Ctrl+,)"></button>
+      <button id="sb-encoding" class="sb-item" title="Encoding: reopen or save with another one"></button>
+      <button id="sb-eol" class="sb-item" title="Line endings: click to change"></button>
+      <span id="sb-lang" class="sb-item"></span>
+    </footer>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
