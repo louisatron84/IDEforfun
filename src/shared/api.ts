@@ -71,6 +71,15 @@ export interface IdeApi {
   /** Git status of files under a folder; null if it isn't a git repository. */
   gitStatus(folder: string): Promise<GitStatusMap | null>
 
+  /** Start (or restart) the Python language server. */
+  lspStart(): Promise<void>
+  /** Send a JSON-RPC message to the language server. */
+  lspSend(message: unknown): void
+  onLspMessage(listener: (message: unknown) => void): () => void
+  onLspExit(listener: (code: number | null) => void): () => void
+  /** The interpreter Pyright should analyse with (configured, or the project's venv). */
+  resolvePythonForAnalysis(root: string, configured?: string): Promise<string | undefined>
+
   getSettings(): Promise<Settings>
   saveSettings(settings: Settings): Promise<void>
 }

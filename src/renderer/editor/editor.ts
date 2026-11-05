@@ -30,6 +30,17 @@ const OVERSCAN = 5
 export interface EditorOptions {
   /** Called after every edit (and undo/redo) to the shown document. */
   onEdit?: (doc: Doc) => void
+  /** Mouse moved over the text: the character under it (null if over empty space). */
+  onMouseMove?: (pos: Position | null, e: MouseEvent) => void
+  onMouseLeave?: () => void
+}
+
+/** An underlined range, e.g. an error from the language server. */
+export interface Squiggle {
+  start: Position
+  end: Position
+  /** 1 error, 2 warning, 3 info, 4 hint (hints are not drawn) */
+  severity: number
 }
 
 export class Editor {
@@ -87,6 +98,10 @@ export class Editor {
     this.input.addEventListener('focus', () => this.root.classList.add('focused'))
     this.input.addEventListener('blur', () => this.root.classList.remove('focused'))
     this.textArea.addEventListener('mousedown', (e) => this.onMouseDown(e))
+    this.textArea.addEventListener('mousemove', (e) => {
+      if (this.hasDoc) this.opts.onMouseMove?.(this.hitTest(e.clientX, e.clientY), e)
+    })
+    this.textArea.addEventListener('mouseleave', () => this.opts.onMouseLeave?.())
     this.root.addEventListener('scroll', () => {
       this.renderLines()
       this.renderSelection()
@@ -503,10 +518,45 @@ export class Editor {
 
   /** Ranges to highlight besides the selection (find matches). Sorted by position. */
   private matches: { start: Position; end: Position }[] = []
+  private squiggles: Squiggle[] = []
 
   setMatches(matches: { start: Position; end: Position }[]): void {
     this.matches = matches
     this.renderSelection()
+  }
+
+  /** Underline ranges (errors/warnings). Replaces the previous set. */
+  setSquiggles(squiggles: Squiggle[]): void {
+    this.squiggles = squiggles.filter((s) => s.severity <= 3)
+    if (this.hasDoc) this.renderSelection()
+  }
+
+  /** The character under a screen point, or null if it's past the end of a line or below the text. */
+  hitTest(clientX: number, clientY: number): Position | null {
+    if (!this.hasDoc) return null
+    const rect = this.content.getBoundingClientRect()
+    const line = Math.floor((clientY - rect.top - PAD_TOP) / this.lineHeight)
+    if (line < 0 || line >= this.buffer.lineCount) return null
+    const text = this.buffer.getLine(line)
+    const visual = Math.floor((clientX - rect.left - PAD_LEFT) / this.charWidth)
+    if (visual < 0 || visual >= cmd.visualCol(text, text.length, this._tabSize)) return null
+    // colFromVisual rounds to the nearest boundary; we want the character the point is inside.
+    let col = cmd.colFromVisual(text, visual, this._tabSize)
+    if (cmd.visualCol(text, col, this._tabSize) > visual) col--
+    return { line, col: Math.max(0, col) }
+  }
+
+  /** Screen coordinates of a position (for popups such as autocomplete). */
+  coordsAt(pos: Position): { left: number; top: number; bottom: number } {
+    const rect = this.content.getBoundingClientRect()
+    const x = PAD_LEFT + cmd.visualCol(this.buffer.getLine(pos.line), pos.col, this._tabSize) * this.charWidth
+    const y = PAD_TOP + pos.line * this.lineHeight
+    return { left: rect.left + x, top: rect.top + y, bottom: rect.top + y + this.lineHeight }
+  }
+
+  /** The cursor's position in the current document. */
+  getCursor(): Position {
+    return this.cursor
   }
 
   /**
@@ -523,6 +573,10 @@ export class Editor {
       if (m.start.line > lastVisible) break
       this.addBoxes(boxes, m.start, m.end, 'match', firstVisible, lastVisible)
     }
+    for (const s of this.squiggles) {
+      if (s.end.line < firstVisible || s.start.line > lastVisible) continue
+      this.addBoxes(boxes, s.start, s.end, `squiggle sev-${s.severity}`, firstVisible, lastVisible, true)
+    }
     if (this.hasSelection()) {
       const { start, end } = sel.selectionRange(this.selection)
       this.addBoxes(boxes, start, end, 'sel', firstVisible, lastVisible)
@@ -532,7 +586,7 @@ export class Editor {
 
   private addBoxes(
     boxes: HTMLElement[], start: Position, end: Position, className: string,
-    firstVisible: number, lastVisible: number
+    firstVisible: number, lastVisible: number, atLeastOneChar = false
   ): void {
     const from = Math.max(start.line, firstVisible)
     const to = Math.min(end.line, lastVisible)
@@ -543,10 +597,12 @@ export class Editor {
       const x2 = line === end.line
         ? cmd.visualCol(text, end.col, this._tabSize)
         : cmd.visualCol(text, text.length, this._tabSize) + 1
-      if (x2 <= x1) continue
+      // Zero-width ranges (e.g. "expected expression" at a line end) still get one cell.
+      const width = atLeastOneChar ? Math.max(x2 - x1, 1) : x2 - x1
+      if (width <= 0) continue
       const box = el('div', className)
       box.style.transform = `translate(${PAD_LEFT + x1 * this.charWidth}px, ${PAD_TOP + line * this.lineHeight}px)`
-      box.style.width = `${(x2 - x1) * this.charWidth}px`
+      box.style.width = `${width * this.charWidth}px`
       boxes.push(box)
     }
   }

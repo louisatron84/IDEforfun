@@ -73,6 +73,12 @@ export class Panel {
     this.views.set(id, { tab, body, actions, onShow })
   }
 
+  /** Change a tab's label, e.g. "Problems (3)". */
+  setTitle(id: string, title: string): void {
+    const v = this.views.get(id)
+    if (v) v.tab.textContent = title
+  }
+
   show(id: string): void {
     this.root.hidden = false
     this.activeId = id

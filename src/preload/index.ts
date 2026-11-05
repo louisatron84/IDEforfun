@@ -27,6 +27,19 @@ const api: IdeApi = {
   listFiles: (root) => ipcRenderer.invoke('fs:listFiles', root),
   searchProject: (root, query, opts) => ipcRenderer.invoke('search:project', root, query, opts),
   gitStatus: (folder) => ipcRenderer.invoke('git:status', folder),
+  lspStart: () => ipcRenderer.invoke('lsp:start'),
+  lspSend: (message) => ipcRenderer.send('lsp:send', message),
+  onLspMessage: (listener) => {
+    const handler = (_e: Electron.IpcRendererEvent, message: unknown) => listener(message)
+    ipcRenderer.on('lsp:message', handler)
+    return () => ipcRenderer.removeListener('lsp:message', handler)
+  },
+  onLspExit: (listener) => {
+    const handler = (_e: Electron.IpcRendererEvent, code: number | null) => listener(code)
+    ipcRenderer.on('lsp:exit', handler)
+    return () => ipcRenderer.removeListener('lsp:exit', handler)
+  },
+  resolvePythonForAnalysis: (root, configured) => ipcRenderer.invoke('lsp:resolvePython', root, configured),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings)
 }

@@ -607,3 +607,68 @@ body { display: flex; flex-direction: column; }
 .tree-row[data-git="conflict"] { color: var(--git-conflict); }
 .git-badge { margin-left: auto; padding-left: 8px; font-size: 11px; font-weight: 600; opacity: 0.9; }
 .tree-row.git-dirty .tree-name::after { content: ' •'; color: var(--git-modified); }
+
+/* ---- diagnostics: squiggly underlines ---- */
+:root { --sev-1: #f14c4c; --sev-2: #cca700; --sev-3: #3794ff; }
+:root[data-theme="light"] { --sev-1: #e51400; --sev-2: #bf8803; --sev-3: #1a85ff; }
+.editor .squiggle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: var(--line-height);
+  pointer-events: none;
+  /* a zigzag along the bottom of the line, drawn with two gradients */
+  background:
+    linear-gradient(135deg, transparent 37%, var(--squiggle) 37% 63%, transparent 63%) 0 100% / 6px 3px repeat-x,
+    linear-gradient(45deg, transparent 37%, var(--squiggle) 37% 63%, transparent 63%) 3px 100% / 6px 3px repeat-x;
+}
+.editor .squiggle.sev-1 { --squiggle: var(--sev-1); }
+.editor .squiggle.sev-2 { --squiggle: var(--sev-2); }
+.editor .squiggle.sev-3 { --squiggle: var(--sev-3); }
+
+/* ---- tooltip ---- */
+.tooltip {
+  position: fixed;
+  z-index: 200;
+  max-width: min(560px, calc(100vw - 16px));
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  color: var(--fg);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+  font: 12px / 1.5 var(--font-ui);
+  white-space: pre-wrap;
+  pointer-events: none;
+}
+.tooltip[hidden] { display: none; }
+.tooltip-section + .tooltip-section { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+.tooltip-section.error::before { content: '✖ '; color: var(--sev-1); }
+.tooltip-section.warning::before { content: '⚠ '; color: var(--sev-2); }
+.tooltip-section.info::before { content: 'ℹ '; color: var(--sev-3); }
+.tooltip-section.code { font-family: var(--font-code); }
+
+/* ---- problems panel ---- */
+.problems-view { position: absolute; inset: 0; overflow: auto; padding: 4px 0; background: var(--bg); }
+.problems-empty { padding: 8px 14px; color: var(--fg-muted); }
+.problem-file-header { display: flex; align-items: center; gap: 8px; padding: 4px 12px; font-weight: 500; }
+.problem {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 2px 12px 2px 28px;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font: 12px var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+.problem:hover { background: var(--bg-hover); }
+.problem-icon { width: 14px; flex-shrink: 0; }
+.problem.sev-1 .problem-icon { color: var(--sev-1); }
+.problem.sev-2 .problem-icon { color: var(--sev-2); }
+.problem.sev-3 .problem-icon { color: var(--sev-3); }
+.problem-message { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.problem-where { flex-shrink: 0; color: var(--fg-muted); font-family: var(--font-code); }

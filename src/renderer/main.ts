@@ -11,6 +11,10 @@ import { TerminalView } from './terminalView'
 import { SettingsView } from './settingsView'
 import { Palette } from './palette'
 import { SearchView } from './searchView'
+import { LspClient } from './lsp/client'
+import { PythonLanguage, type Diagnostic } from './lsp/python'
+import { ProblemsView } from './problemsView'
+import { Tooltip } from './tooltip'
 import { DEFAULT_SETTINGS, type Settings } from '../shared/settings'
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
@@ -21,7 +25,14 @@ let rootFolder: string | null = null
 const workspace = new Workspace(window.api, (doc: Doc) =>
   confirm(`${doc.name} has unsaved changes. Close it without saving?`)
 )
-const editor = new Editor($('editor'), { onEdit: () => workspace.notifyChanged() })
+const editor = new Editor($('editor'), {
+  onEdit: (doc) => {
+    workspace.notifyChanged()
+    python.docChanged(doc)
+  },
+  onMouseMove: (pos, e) => onEditorHover(pos, e),
+  onMouseLeave: () => hideHover()
+})
 const tabBar = new TabBar($('tabs'), workspace)
 const tree = new FileTree($('file-tree'), (entry) => void openFile(entry.path))
 export const commands = new CommandRegistry()
@@ -36,12 +47,106 @@ panel.addView('output', 'Output', output.body, output.actions)
 const terminal = new TerminalView(() => rootFolder)
 panel.addView('terminal', 'Terminal', terminal.body, terminal.actions, () => terminal.show())
 
+// ---------- Python language server (Pyright) ----------
+
+const lsp = new LspClient((m) => window.api.lspSend(m))
+window.api.onLspMessage((m) => lsp.handleMessage(m))
+const python = new PythonLanguage(lsp)
+const problems = new ProblemsView(
+  (path, d) => void openFile(path).then((doc) => {
+    if (doc) editor.select(d.start, d.end)
+    editor.focus()
+  }),
+  (path) => {
+    // Compare ignoring slash direction and case (Windows), then show the part inside the folder.
+    const norm = (p: string) => p.replace(/\\/g, '/').toLowerCase()
+    return rootFolder && norm(path).startsWith(norm(rootFolder) + '/') ? path.slice(rootFolder.length + 1) : path
+  }
+)
+panel.addView('problems', 'Problems', problems.body, problems.actions)
+
+function showDiagnostics(): void {
+  const doc = workspace.active
+  editor.setSquiggles(doc ? python.diagnosticsFor(doc.path) : [])
+  const count = problems.render(python.allDiagnostics())
+  panel.setTitle('problems', count ? `Problems (${count})` : 'Problems')
+}
+python.onDiagnostics(showDiagnostics)
+
+let lspRestarts = 0
+async function startLanguageServer(): Promise<void> {
+  if (!rootFolder) return
+  lsp.dispose('Python language server restarting')
+  python.stopped()
+  problems.setStatus('Starting Python language server (Pyright)…')
+  showDiagnostics()
+  try {
+    await window.api.lspStart()
+    const py = await window.api.resolvePythonForAnalysis(rootFolder, settings.pythonPath || undefined)
+    await python.start(rootFolder, py)
+    python.syncDocs(workspace.docs)
+    problems.setStatus('')
+  } catch (err) {
+    problems.setStatus(`Python language server failed to start: ${String(err)}`)
+  }
+  showDiagnostics()
+}
+window.api.onLspExit((code) => {
+  lsp.dispose('Python language server stopped')
+  python.stopped()
+  // Restart after an unexpected crash, but don't loop forever.
+  if (lspRestarts++ < 3) void startLanguageServer()
+  else {
+    problems.setStatus(`Python language server stopped (exit code ${code}). Reopen the folder to retry.`)
+    showDiagnostics()
+  }
+})
+
+// ---------- hover tooltips (errors under the mouse) ----------
+
+const tooltip = new Tooltip()
+let hoverTimer: number | undefined
+let hoverKey = ''
+const SEVERITY_LABEL: Record<number, string> = { 1: 'error', 2: 'warning', 3: 'info', 4: 'hint' }
+
+function hideHover(): void {
+  window.clearTimeout(hoverTimer)
+  hoverKey = ''
+  tooltip.hide()
+}
+
+function covers(d: Diagnostic, pos: { line: number; col: number }): boolean {
+  const afterStart = pos.line > d.start.line || (pos.line === d.start.line && pos.col >= d.start.col)
+  const zeroWidth = d.start.line === d.end.line && d.start.col === d.end.col
+  const beforeEnd = pos.line < d.end.line || (pos.line === d.end.line && (pos.col < d.end.col || (zeroWidth && pos.col === d.end.col)))
+  return afterStart && beforeEnd
+}
+
+function onEditorHover(pos: { line: number; col: number } | null, e: MouseEvent): void {
+  const doc = workspace.active
+  const hits = pos && doc ? python.diagnosticsFor(doc.path).filter((d) => d.severity <= 3 && covers(d, pos)) : []
+  const key = hits.map((d) => d.message).join('|')
+  if (key === hoverKey) return
+  hideHover()
+  if (!hits.length) return
+  hoverKey = key
+  const anchor = { left: e.clientX, top: e.clientY - 10, bottom: e.clientY + 10 }
+  hoverTimer = window.setTimeout(() => {
+    tooltip.show(hits.map((d) => ({
+      kind: SEVERITY_LABEL[d.severity],
+      text: `${d.message}${d.code ? `  (${d.code})` : ''}`
+    })), anchor)
+  }, 350)
+}
+
 // ---------- settings ----------
 
 let settings: Settings = DEFAULT_SETTINGS
 
 function applySettings(s: Settings): void {
+  const pythonChanged = s.pythonPath !== settings.pythonPath
   settings = s
+  if (pythonChanged && rootFolder) void startLanguageServer()
   const root = document.documentElement
   root.style.setProperty('--code-size', `${s.fontSize}px`)
   root.style.setProperty('--line-height', `${Math.round(s.fontSize * 1.45)}px`)
@@ -70,6 +175,8 @@ workspace.subscribe(() => {
   }
   tree.highlight(doc?.path ?? null)
   findBar.refresh()
+  python.syncDocs(workspace.docs)
+  showDiagnostics()
   const folder = rootFolder?.split(/[\\/]/).pop()
   document.title = [doc ? (doc.dirty ? '● ' : '') + doc.name : null, folder, 'IDEforfun']
     .filter(Boolean).join(' — ')
@@ -91,6 +198,7 @@ async function saveActive(): Promise<boolean> {
   if (!doc) return false
   try {
     await workspace.save(doc)
+    python.didSave(doc)
     void refreshGit()
     // Project search reads files from disk: refresh visible results after saving.
     if (!$('search-panel').hidden) searchView.refresh()
@@ -114,6 +222,8 @@ async function openFolder(): Promise<void> {
   await tree.setRoot(folder)
   workspace.notifyChanged()
   void refreshGit()
+  lspRestarts = 0
+  void startLanguageServer()
 }
 
 // ---------- commands ----------
@@ -169,6 +279,8 @@ commands.register({ id: 'run.file', title: 'Run Python File', keys: 'F5', when: 
 commands.register({ id: 'run.stop', title: 'Stop Running', keys: 'Shift+F5', run: () => void window.api.stopRun() })
 commands.register({ id: 'panel.toggle', title: 'Toggle Bottom Panel', keys: 'Ctrl+J', run: () => panel.toggle() })
 commands.register({ id: 'panel.output', title: 'Show Output', run: () => panel.show('output') })
+commands.register({ id: 'panel.problems', title: 'Show Problems', keys: 'Ctrl+Shift+M', run: () => panel.show('problems') })
+commands.register({ id: 'python.restartServer', title: 'Restart Python Language Server', when: () => rootFolder !== null, run: () => { lspRestarts = 0; void startLanguageServer() } })
 commands.register({
   id: 'terminal.toggle', title: 'Toggle Terminal', keys: 'Ctrl+`',
   run: () => {
