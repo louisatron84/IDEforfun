@@ -184,6 +184,7 @@ export function buildMenu(state: MenuState = { keys: {}, recent: [] }): Menu {
     {
       label: '&Help',
       submenu: [
+        cmd('Welcome', 'help.welcome'),
         cmd('All Commands and Shortcuts', 'palette.commands', 'CmdOrCtrl+Shift+P'),
         {
           label: 'About IDEforfun',

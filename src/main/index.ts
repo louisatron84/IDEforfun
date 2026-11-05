@@ -122,6 +122,32 @@ ipcMain.on('dialog:unsaved', (event, name: string, detail?: string) => {
   event.returnValue = (['save', 'discard', 'cancel'] as const)[choice] ?? 'cancel'
 })
 ipcMain.handle('fs:checkFolder', (_event, path: string) => checkFolder(path))
+// New File with no folder open: pick where it goes, create it empty (an existing file is left as it is).
+ipcMain.handle('dialog:newFile', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const opts = {
+    title: 'New File',
+    buttonLabel: 'Create',
+    defaultPath: join(app.getPath('documents'), 'untitled.py'),
+    filters: [{ name: 'Python', extensions: ['py'] }, { name: 'All files', extensions: ['*'] }]
+  }
+  const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+  if (res.canceled || !res.filePath) return null
+  try {
+    await writeFile(res.filePath, '', { flag: 'wx' })
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') return { error: `Couldn't create ${res.filePath}:\n${String(err)}` }
+  }
+  return res.filePath
+})
+// New Folder with no folder open: where the new project folder should go.
+ipcMain.handle('dialog:pickParent', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const opts = { title: 'Where should the new folder go?', buttonLabel: 'Choose', properties: ['openDirectory' as const, 'createDirectory' as const] }
+  const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+  if (res.canceled || !res.filePaths[0]) return null
+  return checkFolder(res.filePaths[0])
+})
 
 /** A folder path that exists (symlinks resolved), or why it can't be opened. */
 async function checkFolder(path: string): Promise<string | { error: string }> {

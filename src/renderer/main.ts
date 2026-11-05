@@ -29,6 +29,7 @@ import type { WorkspaceState } from '../shared/projectState'
 import { Shortcuts } from './shortcuts'
 import { PythonEnv, type PythonTool } from './pythonEnv'
 import { TestView } from './testView'
+import { WelcomePage } from './welcome'
 import { isTestFile } from '../shared/tests'
 import { normalizeRunFile, resolveConfiguration, resolveTask, RUN_FILE, starterRunFile, type LaunchSpec, type RunFile, type Task } from '../shared/runConfig'
 
@@ -174,6 +175,56 @@ const tree = new FileTree($('file-tree'), {
   error: (message) => alert(message)
 })
 export const commands = new CommandRegistry()
+
+// ---------- Welcome page (no files open, or Help → Welcome) ----------
+
+const welcome = new WelcomePage({
+  commands,
+  folder: () => rootFolder,
+  recent: () => window.api.recentList(),
+  openRecent: (folder) => void openRecentFolder(folder),
+  removeRecent: async (folder) => {
+    await window.api.recentRemove(folder)
+    refreshRecentSidebar()
+  },
+  showWhenEmpty: () => userSettings.showWelcome,
+  setShowWhenEmpty: (on) => {
+    updateUserSettings({ showWelcome: on })
+    updateWelcome()
+  },
+  canClose: () => workspace.docs.length > 0,
+  close: () => closeWelcomePage()
+})
+$('groups').append(welcome.el)
+/** Help → Welcome over open files (until a file is picked or it's closed). */
+let welcomeForced = false
+
+function updateWelcome(): void {
+  const show = welcomeForced || (workspace.docs.length === 0 && userSettings.showWelcome)
+  if (show && !welcome.isVisible) {
+    welcome.show()
+    // Keys mustn't go to a hidden editor behind the page.
+    if (editors.some((ed) => ed.hasFocus)) (document.activeElement as HTMLElement | null)?.blur()
+  } else if (!show && welcome.isVisible) welcome.hide()
+}
+
+function showWelcomePage(): void {
+  welcomeForced = true
+  updateWelcome()
+  welcome.refresh()
+}
+
+function closeWelcomePage(): void {
+  welcomeForced = false
+  updateWelcome()
+  if (!welcome.isVisible) editor.focus()
+}
+
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !welcomeForced || !welcome.isVisible) return
+  if (palette.isOpen || settingsView.isOpen) return // Escape closes those first
+  closeWelcomePage()
+})
 const findBar = new FindBar($('editor-pane'), editor)
 const panel = new Panel($('editor-pane'))
 const output = new OutputView(
@@ -629,7 +680,13 @@ async function loadProjectSettings(folder: string, restartLsp = true): Promise<v
 }
 
 // Keep the editor, tabs, tree highlight and window title in sync with the workspace.
+let lastActiveDoc: Doc | null = null
 workspace.subscribe(() => {
+  if (workspace.active !== lastActiveDoc) {
+    if (workspace.active) welcomeForced = false // a file was opened or picked
+    lastActiveDoc = workspace.active
+  }
+  updateWelcome()
   syncGroups()
   workspace.groups.forEach((g, i) => {
     tabBars[i].render()
@@ -748,6 +805,7 @@ async function openFolderPath(folder: string): Promise<void> {
   } finally {
     restoringState = false
   }
+  welcome.refresh()
   await offerRestore(folder)
 }
 
@@ -834,6 +892,7 @@ function showRecentPicker(): void {
 
 /** With no folder open, the sidebar lists recent folders. */
 function refreshRecentSidebar(): void {
+  welcome.refresh()
   if (rootFolder) return
   void window.api.recentList().then((list) => tree.showRecent(list, (f) => void openRecentFolder(f))).catch(() => {})
 }
@@ -927,8 +986,30 @@ const newItem = (isDirectory: boolean) => {
   showSidebar('files')
   void tree.startCreate(isDirectory)
 }
-commands.register({ id: 'file.new', title: 'New File…', keys: 'Ctrl+N', when: hasFolder, run: () => newItem(false) })
-commands.register({ id: 'file.newFolder', title: 'New Folder…', when: hasFolder, run: () => newItem(true) })
+/** New File with no folder open: choose where to save it, then open it. */
+async function newFileAnywhere(): Promise<void> {
+  const res = await window.api.newFileDialog()
+  if (!res) return
+  if (typeof res !== 'string') return alert(res.error)
+  await openFile(res)
+}
+
+/** New Folder with no folder open: make a project folder somewhere and open it. */
+async function newProjectFolder(): Promise<void> {
+  const parent = await window.api.pickParentFolder()
+  if (!parent) return
+  if (typeof parent !== 'string') return alert(parent.error)
+  palette.prompt(`Name of the new folder (inside ${parent})`, (name) => {
+    void window.api.createEntry(parent, name, true).then(
+      (path) => openFolderPath(path),
+      (err) => alert(err instanceof Error ? err.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(err))
+    )
+  }, '', 'Create')
+}
+
+commands.register({ id: 'file.new', title: 'New File…', keys: 'Ctrl+N', run: () => (hasFolder() ? newItem(false) : void newFileAnywhere()) })
+commands.register({ id: 'file.newFolder', title: 'New Folder…', run: () => (hasFolder() ? newItem(true) : void newProjectFolder()) })
+commands.register({ id: 'help.welcome', title: 'Welcome', run: () => (welcome.isVisible && welcomeForced ? closeWelcomePage() : showWelcomePage()) })
 commands.register({
   id: 'file.rename', title: 'Rename Current File…', when: hasDoc,
   run: () => {
@@ -1539,6 +1620,7 @@ void window.api.getSettings().then(async (s) => {
   userSettings = s
   settingsView.set(s)
   applyEffective()
+  updateWelcome()
   // Reopen the last project (with its tabs), unless that's turned off or it's gone.
   if (s.reopenLastProject && !rootFolder) {
     try {

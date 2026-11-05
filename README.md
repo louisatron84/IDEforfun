@@ -45,7 +45,7 @@ your terminal has `ELECTRON_RUN_AS_NODE` set. Clear it first: `$env:ELECTRON_RUN
 | Ctrl+P | Go to file |
 | Ctrl+G | Go to line |
 | Ctrl+O / Ctrl+R | Open folder / open a recent folder (also File → Open Recent) |
-| Ctrl+N | New file (type `pkg/app.py` to make folders too); right-click the tree for New Folder / Rename / Delete |
+| Ctrl+N | New file (with no folder open it asks where to save it) (type `pkg/app.py` to make folders too); right-click the tree for New Folder / Rename / Delete |
 | F2 / Delete (in the file tree) | Rename / delete (to the Recycle Bin) |
 | Ctrl+S | Save |
 | Ctrl+W / Ctrl+Tab / Ctrl+Shift+Tab | Close tab / next tab / previous tab |
@@ -86,6 +86,9 @@ the app's data folder, which you can also edit by hand ("Edit Keyboard Shortcuts
 ```
 
 ## Projects
+- The **Welcome page** shows when no file is open (and from Help → Welcome): new file or folder,
+  open a folder, recent folders, project actions and the main shortcuts. New Folder with no
+  folder open makes a new project folder and opens it. Turn it off with the tick box at the bottom.
 - The last project reopens at startup with its tabs, split, cursor positions, terminals
   and bottom panel (turn this off in Settings). Each project remembers its own layout.
 - A project can override some settings in `.ideforfun/settings.json`

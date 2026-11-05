@@ -10,6 +10,8 @@ export interface Settings {
   shell: string
   /** Open the last project again when the app starts. */
   reopenLastProject: boolean
+  /** Show the Welcome page when no files are open. */
+  showWelcome: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -18,7 +20,8 @@ export const DEFAULT_SETTINGS: Settings = {
   tabSize: 4,
   pythonPath: '',
   shell: '',
-  reopenLastProject: true
+  reopenLastProject: true,
+  showWelcome: true
 }
 
 export const FONT_SIZE_MIN = 10
@@ -36,6 +39,7 @@ export function normalizeSettings(raw: unknown): Settings {
   if (typeof r.pythonPath === 'string') s.pythonPath = r.pythonPath.trim()
   if (typeof r.shell === 'string' && /^[\w.-]*$/.test(r.shell)) s.shell = r.shell
   if (typeof r.reopenLastProject === 'boolean') s.reopenLastProject = r.reopenLastProject
+  if (typeof r.showWelcome === 'boolean') s.showWelcome = r.showWelcome
   return s
 }
 

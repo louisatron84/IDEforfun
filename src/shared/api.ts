@@ -110,6 +110,10 @@ export interface ShellProfile {
 export interface IdeApi {
   /** Show the folder picker: the folder, null if cancelled, or why it can't be opened. */
   openFolder(): Promise<string | { error: string } | null>
+  /** Save dialog for a new file anywhere; creates it empty. null = cancelled. */
+  newFileDialog(): Promise<string | { error: string } | null>
+  /** Pick the folder a new project folder goes in. null = cancelled. */
+  pickParentFolder(): Promise<string | { error: string } | null>
   /** Menu bar: run a command (an id from the keymap). */
   onMenuCommand(listener: (id: string) => void): () => void
   /** Menu bar: an Edit action (undo, copy, paste...). */

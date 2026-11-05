@@ -91,7 +91,56 @@ body { display: flex; flex-direction: column; }
 
 /* ---- editor ---- */
 #editor-pane { position: relative; flex: 1; display: flex; flex-direction: column; min-width: 0; }
-#groups { flex: 1; min-height: 0; display: flex; }
+#groups { position: relative; flex: 1; min-height: 0; display: flex; }
+
+/* Welcome page: covers the editors when no file is open (or Help → Welcome) */
+.welcome {
+  position: absolute; inset: 0; z-index: 5;
+  overflow: auto; background: var(--bg);
+}
+.welcome-page { max-width: 920px; margin: 0 auto; padding: 48px 40px 32px; }
+.welcome-head { position: relative; margin-bottom: 28px; }
+.welcome-head h1 { margin: 0; font-size: 34px; font-weight: 300; letter-spacing: 0.01em; }
+.welcome-head p { margin: 4px 0 0; color: var(--fg-muted); font-size: 15px; }
+.welcome-close {
+  position: absolute; top: 4px; right: 0;
+  padding: 4px 10px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg-panel); color: var(--fg); font: inherit; cursor: pointer;
+}
+.welcome-close:hover { background: var(--bg-hover); }
+.welcome-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 48px; }
+@media (max-width: 760px) { .welcome-cols { grid-template-columns: 1fr; } .welcome-page { padding: 28px 16px; } }
+.welcome-section { margin-bottom: 22px; }
+.welcome-section h2 {
+  margin: 0 0 6px; font-size: 13px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-muted);
+}
+.welcome-link {
+  display: flex; align-items: baseline; gap: 10px; width: 100%;
+  padding: 4px 6px; margin-left: -6px; border: 0; border-radius: 4px;
+  background: none; color: var(--accent); font: inherit; text-align: left; cursor: pointer;
+}
+.welcome-link:hover:not(:disabled), .welcome-link:focus-visible { background: var(--bg-hover); outline: none; }
+.welcome-link:disabled { color: var(--fg-muted); cursor: default; }
+.welcome-label { flex-shrink: 0; }
+.welcome-detail {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--fg-muted); font-size: 12px;
+}
+.welcome-section > p.welcome-detail { white-space: normal; margin: 4px 0; }
+.welcome-link kbd {
+  margin-left: auto; padding: 1px 6px; border: 1px solid var(--border); border-radius: 3px;
+  background: var(--bg-panel); color: var(--fg); font-family: var(--font-code); font-size: 11px;
+}
+.welcome-recent { display: flex; align-items: center; }
+.welcome-recent .welcome-link { flex: 1; min-width: 0; }
+.welcome-remove {
+  visibility: hidden; border: 0; background: none; color: var(--fg-muted);
+  font-size: 16px; cursor: pointer; padding: 0 6px;
+}
+.welcome-recent:hover .welcome-remove, .welcome-remove:focus-visible { visibility: visible; }
+.welcome-remove:hover { color: var(--fg); }
+.welcome-foot { display: flex; align-items: center; gap: 6px; margin-top: 12px; color: var(--fg-muted); font-size: 12px; cursor: pointer; }
 .group { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }
 .group + .group { border-left: 1px solid var(--border); }
 .editor-slot { flex: 1; min-height: 0; }

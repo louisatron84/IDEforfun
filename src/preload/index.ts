@@ -3,6 +3,8 @@ import type { IdeApi, RunEvent, TerminalEvent } from '../shared/api'
 
 const api: IdeApi = {
   openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
+  newFileDialog: () => ipcRenderer.invoke('dialog:newFile'),
+  pickParentFolder: () => ipcRenderer.invoke('dialog:pickParent'),
   checkFolder: (path) => ipcRenderer.invoke('fs:checkFolder', path),
   onMenuCommand: (listener) => {
     const handler = (_e: unknown, id: string) => listener(id)
