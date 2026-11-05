@@ -39,7 +39,7 @@ your terminal has `ELECTRON_RUN_AS_NODE` set. Clear it first: `$env:ELECTRON_RUN
 | F9 or click a line number | Toggle a breakpoint |
 | F10 / F11 / Shift+F11 | Debugger: step over / step into / step out |
 | Ctrl+Shift+F5 | Restart debugging |
-| Ctrl+` | Toggle terminal |
+| Ctrl+` / Ctrl+Shift+` | Toggle terminal / new terminal (pick a shell with ▾ in the terminal panel) |
 | Ctrl+J | Toggle bottom panel |
 | Ctrl+, | Settings |
 | Ctrl+= / Ctrl+- | Bigger / smaller code font |

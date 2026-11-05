@@ -23,7 +23,9 @@ export function keyString(e: KeyboardEvent): string {
   if (e.ctrlKey || e.metaKey) parts.push('Ctrl')
   if (e.shiftKey) parts.push('Shift')
   if (e.altKey) parts.push('Alt')
-  parts.push(e.key.length === 1 ? e.key.toUpperCase() : e.key)
+  // The key left of 1 is ` whatever Shift makes it type (~ on US keyboards, ¬ on UK ones).
+  const key = e.code === 'Backquote' ? '`' : e.key
+  parts.push(key.length === 1 ? key.toUpperCase() : key)
   return parts.join('+')
 }
 

@@ -6,13 +6,16 @@ export interface Settings {
   tabSize: 2 | 4 | 8
   /** Python interpreter to use for Run; '' = automatic (project .venv, then PATH). */
   pythonPath: string
+  /** Shell for new terminals (an id like 'powershell', 'gitbash'); '' = the system default. */
+  shell: string
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   fontSize: 14,
   theme: 'dark',
   tabSize: 4,
-  pythonPath: ''
+  pythonPath: '',
+  shell: ''
 }
 
 export const FONT_SIZE_MIN = 10
@@ -28,5 +31,6 @@ export function normalizeSettings(raw: unknown): Settings {
   if (r.theme === 'dark' || r.theme === 'light') s.theme = r.theme
   if (r.tabSize === 2 || r.tabSize === 4 || r.tabSize === 8) s.tabSize = r.tabSize
   if (typeof r.pythonPath === 'string') s.pythonPath = r.pythonPath.trim()
+  if (typeof r.shell === 'string' && /^[\w.-]*$/.test(r.shell)) s.shell = r.shell
   return s
 }

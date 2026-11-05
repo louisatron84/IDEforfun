@@ -135,9 +135,10 @@ ipcMain.handle('debug:start', (event, python: string, cwd: string) => debugAdapt
 ipcMain.on('debug:send', (_event, message: unknown) => debugAdapter.send(message))
 ipcMain.handle('debug:stop', () => debugAdapter.stop())
 
-ipcMain.handle('term:create', (event, cwd: string | null, cols: number, rows: number) =>
-  terminals.create(event.sender, cwd, cols, rows)
+ipcMain.handle('term:create', (event, cwd: string | null, cols: number, rows: number, profileId?: string) =>
+  terminals.create(event.sender, cwd, cols, rows, profileId)
 )
+ipcMain.handle('term:shells', () => terminals.shells())
 ipcMain.on('term:write', (_event, id: number, data: string) => terminals.write(id, data))
 ipcMain.on('term:resize', (_event, id: number, cols: number, rows: number) => terminals.resize(id, cols, rows))
 ipcMain.on('term:kill', (_event, id: number) => terminals.kill(id))

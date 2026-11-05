@@ -154,7 +154,11 @@ const output = new OutputView(
   { run: () => void runCurrentFile(), stop: () => void window.api.stopRun() }
 )
 panel.addView('output', 'Output', output.body, output.actions)
-const terminal = new TerminalView(() => rootFolder)
+const terminal = new TerminalView(
+  () => rootFolder,
+  (shells, pick) => palette.choose('Shell for the new terminal', shells.map((s) => ({ label: s.name, detail: s.file, run: () => pick(s) }))),
+  () => settings.shell
+)
 panel.addView('terminal', 'Terminal', terminal.body, terminal.actions, () => terminal.show())
 
 // ---------- debugger (debugpy over the Debug Adapter Protocol) ----------
@@ -963,6 +967,22 @@ $('sb-problems').addEventListener('click', () => panel.show('problems'))
 python.onDiagnostics(scheduleStatus)
 updateStatus()
 
+commands.register({
+  id: 'terminal.new', title: 'New Terminal', keys: 'Ctrl+Shift+`',
+  run: () => {
+    panel.show('terminal')
+    void terminal.newTerminal()
+  }
+})
+commands.register({
+  id: 'terminal.newWithShell', title: 'New Terminal with Shell…',
+  run: () => {
+    panel.show('terminal')
+    void terminal.newTerminalWithShell()
+  }
+})
+commands.register({ id: 'terminal.kill', title: 'Kill Terminal', when: () => panel.activeView === 'terminal', run: () => terminal.killActive() })
+commands.register({ id: 'terminal.next', title: 'Next Terminal', when: () => panel.activeView === 'terminal', run: () => terminal.next() })
 commands.register({ id: 'palette.commands', title: 'Show All Commands', keys: 'Ctrl+Shift+P', run: () => void palette.open('>') })
 commands.register({ id: 'palette.files', title: 'Go to File…', keys: 'Ctrl+P', when: () => rootFolder !== null, run: () => void palette.open('') })
 commands.register({ id: 'palette.line', title: 'Go to Line…', keys: 'Ctrl+G', when: hasDoc, run: () => void palette.open(':') })
@@ -975,7 +995,7 @@ $('open-folder').addEventListener('click', () => void openFolder())
 
 // While typing in the terminal, keys belong to the shell (Ctrl+C, Ctrl+W, Ctrl+F...).
 // Only these IDE shortcuts still work there.
-const TERMINAL_PASSTHROUGH = new Set(['Ctrl+`', 'Ctrl+J', 'Ctrl+Shift+P', 'Ctrl+Tab', 'Ctrl+Shift+Tab', 'F5', 'Shift+F5', 'Ctrl+,', 'Ctrl+F5', 'Ctrl+Shift+F5', 'F9', 'F10', 'F11', 'Shift+F11'])
+const TERMINAL_PASSTHROUGH = new Set(['Ctrl+Shift+`', 'Ctrl+`', 'Ctrl+J', 'Ctrl+Shift+P', 'Ctrl+Tab', 'Ctrl+Shift+Tab', 'F5', 'Shift+F5', 'Ctrl+,', 'Ctrl+F5', 'Ctrl+Shift+F5', 'F9', 'F10', 'F11', 'Shift+F11'])
 
 // Global shortcuts. Capture phase, so they win over the editor's own key handling.
 window.addEventListener('keydown', (e) => {

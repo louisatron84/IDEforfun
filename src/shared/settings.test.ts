@@ -8,8 +8,11 @@ describe('normalizeSettings', () => {
     expect(normalizeSettings({})).toEqual(DEFAULT_SETTINGS)
   })
   it('keeps valid values', () => {
-    const s = { fontSize: 18, theme: 'light', tabSize: 2, pythonPath: 'C:\\Py\\python.exe' }
+    const s = { fontSize: 18, theme: 'light', tabSize: 2, pythonPath: 'C:\\Py\\python.exe', shell: 'gitbash' }
     expect(normalizeSettings(s)).toEqual(s)
+  })
+  it('only accepts plain shell ids', () => {
+    expect(normalizeSettings({ shell: 'rm -rf /' }).shell).toBe('')
   })
   it('clamps the font size and rounds it', () => {
     expect(normalizeSettings({ fontSize: 3 }).fontSize).toBe(10)

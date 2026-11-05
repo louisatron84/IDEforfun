@@ -40,8 +40,8 @@ to real source code or runtime behaviour.
 - [x] Integrated terminal (xterm.js + node-pty, Ctrl+`, v0.9)
 - [x] Command palette (Ctrl+Shift+P), quick open (Ctrl+P), go to line (Ctrl+G) (v0.11)
 - [x] Settings (font size, theme, tab width, Python interpreter, Ctrl+= / Ctrl+-) (v0.10)
-- [ ] Multiple terminal sessions
-- [ ] Terminal profiles and shell selection
+- [x] Multiple terminal sessions (v0.25: + / ▾ / 🗑 buttons, list on the right, Ctrl+Shift+`)
+- [x] Terminal profiles and shell selection (v0.25: finds PowerShell, PowerShell 7, Command Prompt, Git Bash, WSL / bash, zsh, fish; default in Settings)
 - [ ] Configurable keyboard shortcuts
 - [ ] Recent projects
 - [ ] Workspace persistence (restore tabs, terminal sessions and layout)

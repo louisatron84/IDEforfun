@@ -123,11 +123,30 @@ export class SettingsView {
     pyRow.classList.add('stacked')
     pyRow.querySelector('label')!.htmlFor = py.id
 
+    // Terminal shell
+    const shell = document.createElement('select')
+    shell.id = 'setting-shell'
+    shell.className = 'setting-select'
+    const fill = (shells: { id: string; name: string }[]) => {
+      shell.replaceChildren(...[{ id: '', name: 'System default' }, ...shells].map((o) => {
+        const opt = document.createElement('option')
+        opt.value = o.id
+        opt.textContent = o.name
+        return opt
+      }))
+      shell.value = s.shell
+    }
+    fill([])
+    void window.api.terminalShells().then(fill).catch(() => {})
+    shell.addEventListener('change', () => this.update({ shell: shell.value }))
+    const shellRow = this.row('Terminal shell', 'Used for new terminals', shell)
+    shellRow.querySelector('label')!.htmlFor = shell.id
+
     const footer = document.createElement('p')
     footer.className = 'settings-footer'
     footer.textContent = 'Changes apply immediately and are saved automatically.'
 
-    this.dialog.append(header, fontRow, themeRow, tabRow, pyRow, footer)
+    this.dialog.append(header, fontRow, themeRow, tabRow, pyRow, shellRow, footer)
   }
 
   private row(label: string, hint: string, ...controls: HTMLElement[]): HTMLDivElement {

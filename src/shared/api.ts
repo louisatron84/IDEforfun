@@ -52,6 +52,14 @@ export interface BackupData {
   time: number
 }
 
+/** A shell the integrated terminal can run. */
+export interface ShellProfile {
+  id: string
+  name: string
+  file: string
+  args: string[]
+}
+
 export interface IdeApi {
   openFolder(): Promise<string | null>
   readDir(path: string): Promise<DirEntry[]>
@@ -80,7 +88,9 @@ export interface IdeApi {
   onRunEvent(listener: (event: RunEvent) => void): () => void
 
   /** Start a shell in a pseudo-terminal; returns its id. */
-  terminalCreate(cwd: string | null, cols: number, rows: number): Promise<number>
+  terminalCreate(cwd: string | null, cols: number, rows: number, profileId?: string): Promise<number>
+  /** Shells installed on this machine, default first. */
+  terminalShells(): Promise<ShellProfile[]>
   terminalWrite(id: number, data: string): void
   terminalResize(id: number, cols: number, rows: number): void
   terminalKill(id: number): void
