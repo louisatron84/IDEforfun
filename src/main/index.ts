@@ -1,8 +1,9 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { sortAndFilterEntries } from './dirEntries'
 import { listFiles } from './listFiles'
+import { createEntry, renameEntry } from './fileOps'
 import { searchProject } from './search'
 import { gitStatus } from './git'
 import { LanguageServer, resolvePythonForAnalysis } from './languageServer'
@@ -78,6 +79,10 @@ ipcMain.handle('fs:readDir', async (_event, dir: string) => {
   )
 })
 
+ipcMain.handle('fs:create', (_event, dir: string, name: string, isDirectory: boolean) => createEntry(dir, name, isDirectory))
+ipcMain.handle('fs:rename', (_event, path: string, newName: string) => renameEntry(path, newName))
+// To the Recycle Bin (not a permanent delete), so mistakes can be undone.
+ipcMain.handle('fs:trash', (_event, path: string) => shell.trashItem(path))
 ipcMain.handle('fs:listFiles', (_event, root: string) => listFiles(root))
 ipcMain.handle('lsp:start', (event) => {
   languageServer.start(event.sender)

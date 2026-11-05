@@ -24,6 +24,8 @@ your terminal has `ELECTRON_RUN_AS_NODE` set. Clear it first: `$env:ELECTRON_RUN
 | Ctrl+P | Go to file |
 | Ctrl+G | Go to line |
 | Ctrl+O | Open folder |
+| Ctrl+N | New file (type `pkg/app.py` to make folders too); right-click the tree for New Folder / Rename / Delete |
+| F2 / Delete (in the file tree) | Rename / delete (to the Recycle Bin) |
 | Ctrl+S | Save |
 | Ctrl+W / Ctrl+Tab / Ctrl+Shift+Tab | Close tab / next tab / previous tab |
 | Ctrl+F / Ctrl+H | Find / find and replace (Alt+C case, Alt+W word, Alt+R regex) |

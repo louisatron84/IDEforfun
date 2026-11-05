@@ -42,7 +42,38 @@ const editor = new Editor($('editor'), {
   onMouseLeave: () => hideHover()
 })
 const tabBar = new TabBar($('tabs'), workspace)
-const tree = new FileTree($('file-tree'), (entry) => void openFile(entry.path))
+const tree = new FileTree($('file-tree'), {
+  openFile: (path) => void openFile(path),
+  created: (path, isDirectory) => {
+    if (!isDirectory) void openFile(path).then(() => editor.focus())
+    void refreshGit()
+  },
+  renamed: (oldPath, newPath) => {
+    // The language server knows files by path: close the old ones, reopen under the new name.
+    const moved = workspace.docsUnder(oldPath)
+    python.syncDocs(workspace.docs.filter((d) => !moved.includes(d)))
+    workspace.pathRenamed(oldPath, newPath)
+    void refreshGit()
+  },
+  delete: async (path, isDirectory) => {
+    const name = path.split(/[\\/]/).pop()
+    const open = workspace.docsUnder(path)
+    const unsaved = open.filter((d) => d.dirty).length
+    const what = isDirectory ? `the folder "${name}" and everything in it` : `"${name}"`
+    const warn = unsaved ? `\n\n${unsaved} open file${unsaved > 1 ? 's have' : ' has'} unsaved changes that will be lost.` : ''
+    if (!confirm(`Delete ${what}?\nIt goes to the Recycle Bin, so you can get it back.${warn}`)) return false
+    try {
+      await window.api.trashEntry(path)
+    } catch (err) {
+      alert(`Couldn't delete ${path}:\n${String(err)}`)
+      return false
+    }
+    workspace.discard(open)
+    void refreshGit()
+    return true
+  },
+  error: (message) => alert(message)
+})
 export const commands = new CommandRegistry()
 const findBar = new FindBar($('editor-pane'), editor)
 const panel = new Panel($('editor-pane'))
@@ -225,7 +256,7 @@ void window.api.getSettings().then((s) => {
 workspace.subscribe(() => {
   tabBar.render()
   const doc = workspace.active
-  if (doc !== editor.currentDoc) {
+  if (doc !== editor.currentDoc || !doc) {
     if (doc) editor.show(doc)
     else editor.showPlaceholder(rootFolder ? 'Pick a file from the tree' : 'Open a folder and pick a file')
   }
@@ -289,6 +320,25 @@ const hasDoc = () => workspace.active !== null
 
 commands.register({ id: 'file.openFolder', title: 'Open Folder…', keys: 'Ctrl+O', run: openFolder })
 commands.register({ id: 'file.save', title: 'Save', keys: 'Ctrl+S', when: hasDoc, run: () => void saveActive() })
+const hasFolder = () => rootFolder !== null
+/** New items go next to the open file, or wherever is selected in the tree. */
+const newItem = (isDirectory: boolean) => {
+  showSidebar('files')
+  void tree.startCreate(isDirectory)
+}
+commands.register({ id: 'file.new', title: 'New File…', keys: 'Ctrl+N', when: hasFolder, run: () => newItem(false) })
+commands.register({ id: 'file.newFolder', title: 'New Folder…', when: hasFolder, run: () => newItem(true) })
+commands.register({
+  id: 'file.rename', title: 'Rename Current File…', when: hasDoc,
+  run: () => {
+    showSidebar('files')
+    void tree.startRename(workspace.active!.path)
+  }
+})
+commands.register({
+  id: 'file.delete', title: 'Delete Current File', when: hasDoc,
+  run: () => void tree.deleteEntry({ name: workspace.active!.name, path: workspace.active!.path, isDirectory: false })
+})
 commands.register({
   id: 'tab.close', title: 'Close Tab', keys: 'Ctrl+W', when: hasDoc,
   run: () => { if (workspace.active) workspace.close(workspace.active) }

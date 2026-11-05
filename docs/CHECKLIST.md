@@ -4,6 +4,7 @@ The roadmap. Work through it roughly top to bottom; each tier builds on the one 
 
 ## Tier 1: core (it's an editor)
 - [x] Open a folder, show the file tree, expand/collapse folders (v0.1)
+- [x] Create, rename and delete files and folders from the tree (v0.16)
 - [x] Open a file and render its text with line numbers in a monospace font (v0.1, read-only)
 - [x] Text buffer model: insert, delete, line/column ↔ offset
 - [x] Cursor: arrows, Home/End, PgUp/PgDn, click to place

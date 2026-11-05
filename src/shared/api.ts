@@ -46,6 +46,12 @@ export interface IdeApi {
   readDir(path: string): Promise<DirEntry[]>
   readFile(path: string): Promise<string>
   writeFile(path: string, text: string): Promise<void>
+  /** Create an empty file or folder in `dir` ("pkg/mod.py" makes "pkg" too). Returns its path. */
+  createEntry(dir: string, name: string, isDirectory: boolean): Promise<string>
+  /** Rename in place; returns the new path. */
+  renameEntry(path: string, newName: string): Promise<string>
+  /** Move a file or folder to the Recycle Bin. */
+  trashEntry(path: string): Promise<void>
 
   /** Run a Python file (stops any program already running). */
   runPython(file: string, cwd: string, python?: string): Promise<void>

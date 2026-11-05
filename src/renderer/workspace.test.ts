@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Workspace, samePath } from './workspace'
+import { Workspace, isInside, samePath } from './workspace'
 import type { Doc } from './editor/document'
 
 function setup(files: Record<string, string>, allowDiscard = true) {
@@ -97,5 +97,47 @@ describe('samePath', () => {
   it('ignores slash direction and case for Windows paths only', () => {
     expect(samePath('C:\\X\\a.py', 'c:/x/A.py')).toBe(true)
     expect(samePath('/home/a.py', '/home/A.py')).toBe(false)
+  })
+})
+
+describe('isInside', () => {
+  it('matches the path itself and anything below it', () => {
+    expect(isInside('C:\\p\\pkg', 'C:\\p\\pkg')).toBe(true)
+    expect(isInside('C:\\p\\pkg\\a.py', 'c:/p/PKG')).toBe(true)
+    expect(isInside('C:\\p\\pkg2\\a.py', 'C:\\p\\pkg')).toBe(false)
+    expect(isInside('/home/u/pkg/a.py', '/home/u/pkg')).toBe(true)
+    expect(isInside('/home/u/pkg2', '/home/u/pkg')).toBe(false)
+  })
+})
+
+describe('Workspace: files renamed or deleted on disk', () => {
+  const files = { 'C:\\p\\pkg\\a.py': 'a', 'C:\\p\\pkg\\b.py': 'b', 'C:\\p\\main.py': 'm' }
+
+  it('renaming a folder moves its open tabs to the new paths', async () => {
+    const { ws } = setup(files)
+    const a = await ws.open('C:\\p\\pkg\\a.py')
+    const m = await ws.open('C:\\p\\main.py')
+    const moved = ws.pathRenamed('C:\\p\\pkg', 'C:\\p\\lib')
+    expect(moved).toEqual([a])
+    expect(a.path).toBe('C:\\p\\lib\\a.py')
+    expect(m.path).toBe('C:\\p\\main.py')
+  })
+  it('renaming a file renames its tab', async () => {
+    const { ws } = setup(files)
+    const m = await ws.open('C:\\p\\main.py')
+    ws.pathRenamed('C:\\p\\main.py', 'C:\\p\\app.py')
+    expect(m.name).toBe('app.py')
+  })
+  it('deleting closes the affected tabs without asking, even unsaved ones', async () => {
+    const { ws, asked } = setup(files, false)
+    await ws.open('C:\\p\\pkg\\a.py')
+    const b = await ws.open('C:\\p\\pkg\\b.py')
+    const m = await ws.open('C:\\p\\main.py')
+    b.buffer.insert({ line: 0, col: 0 }, 'x')
+    ws.activate(b)
+    ws.discard(ws.docsUnder('C:\\p\\pkg'))
+    expect(ws.docs).toEqual([m])
+    expect(ws.active).toBe(m)
+    expect(asked).toEqual([])
   })
 })

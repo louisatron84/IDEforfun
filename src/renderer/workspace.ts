@@ -17,6 +17,16 @@ export function samePath(a: string, b: string): boolean {
   return norm(a) === norm(b)
 }
 
+/** True if `path` is `parent` itself or somewhere inside it. */
+export function isInside(path: string, parent: string): boolean {
+  if (samePath(path, parent)) return true
+  const isWin = /^[a-zA-Z]:/.test(path) || /^[a-zA-Z]:/.test(parent)
+  const norm = (p: string) => (isWin ? p.replace(/\//g, '\\').toLowerCase() : p)
+  const sep = isWin ? '\\' : '/'
+  const base = norm(parent)
+  return norm(path).startsWith(base.endsWith(sep) ? base : base + sep)
+}
+
 export class Workspace {
   docs: Doc[] = []
   active: Doc | null = null
@@ -102,6 +112,30 @@ export class Workspace {
     if (!this.active || this.docs.length < 2) return
     const i = this.docs.indexOf(this.active)
     this.activate(this.docs[(i + delta + this.docs.length) % this.docs.length])
+  }
+
+  /** Open docs for this file, or for files inside this folder. */
+  docsUnder(path: string): Doc[] {
+    return this.docs.filter((d) => isInside(d.path, path))
+  }
+
+  /** A file or folder was renamed on disk: point the affected tabs at the new paths. */
+  pathRenamed(oldPath: string, newPath: string): Doc[] {
+    const moved = this.docsUnder(oldPath)
+    for (const doc of moved) doc.path = newPath + doc.path.slice(oldPath.length)
+    if (moved.length) this.notifyChanged()
+    return moved
+  }
+
+  /** Close tabs without asking (their files were deleted). */
+  discard(docs: Doc[]): void {
+    if (!docs.length) return
+    const activeIndex = this.active ? this.docs.indexOf(this.active) : -1
+    this.docs = this.docs.filter((d) => !docs.includes(d))
+    if (this.active && docs.includes(this.active)) {
+      this.active = this.docs[Math.min(activeIndex, this.docs.length - 1)] ?? null
+    }
+    this.notifyChanged()
   }
 
   get anyDirty(): boolean {

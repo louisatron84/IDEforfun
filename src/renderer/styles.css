@@ -724,3 +724,87 @@ body { display: flex; flex-direction: column; }
   word-break: break-word;
 }
 .tooltip { max-height: 50vh; overflow: hidden; }
+
+/* ---- file tree: new / rename / delete ---- */
+#file-tree { padding-top: 0; outline: none; }
+#file-tree:focus-visible .tree-row.selected { outline: 1px solid var(--accent); outline-offset: -1px; }
+.tree-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  gap: 2px;
+  padding: 4px 6px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+.tree-header[hidden] { display: none; }
+.tree-header-button {
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.tree-header-button:hover { background: var(--bg-hover); color: var(--fg); }
+.tree-list { padding: 4px 0; }
+.tree-row.editing { flex-wrap: wrap; height: auto; min-height: 22px; cursor: default; }
+.tree-input {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  padding: 0 4px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  outline: none;
+}
+.tree-input.invalid { border-color: var(--sev-1); }
+.tree-input-error {
+  flex-basis: 100%;
+  margin: 2px 0 4px 16px;
+  padding: 3px 6px;
+  border: 1px solid var(--sev-1);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+  white-space: normal;
+}
+.tree-input-error[hidden] { display: none; }
+
+.context-menu {
+  position: fixed;
+  z-index: 300;
+  min-width: 200px;
+  padding: 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.context-menu[hidden] { display: none; }
+.context-menu button {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  width: 100%;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.context-menu button:hover { background: var(--accent); color: #fff; }
+.context-menu-keys { color: var(--fg-muted); font-size: 12px; }
+.context-menu button:hover .context-menu-keys { color: inherit; }
+.context-menu-sep { height: 1px; margin: 4px 6px; background: var(--border); }
