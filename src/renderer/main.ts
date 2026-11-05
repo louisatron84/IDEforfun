@@ -1425,7 +1425,10 @@ commands.register({
   id: 'run.stop', title: 'Stop Running / Debugging', keys: 'Shift+F5',
   run: () => {
     if (debugging()) void stopDebugging()
-    else if (output.isRunning) void window.api.stopRun()
+    else if (output.isRunning) {
+      void window.api.stopRun()
+      output.discardWaiting()
+    } else if (output.hasWaiting) output.discardWaiting() // the program ended but its output is still being shown
     else {
       panel.show('output')
       output.error('Nothing is running.')
@@ -1800,7 +1803,7 @@ commands.register({ id: 'palette.line', title: 'Go to Line…', keys: 'Ctrl+G', 
 $('open-settings').addEventListener('click', () => settingsView.open())
 $('run-file').addEventListener('click', () => void runCurrentFile())
 $('debug-file').addEventListener('click', () => void startDebugging())
-$('stop-run').addEventListener('click', () => void window.api.stopRun())
+$('stop-run').addEventListener('click', () => commands.run('run.stop'))
 $('open-folder').addEventListener('click', () => void openFolder())
 
 // While typing in the terminal, keys belong to the shell (Ctrl+C, Ctrl+W, Ctrl+F...).
