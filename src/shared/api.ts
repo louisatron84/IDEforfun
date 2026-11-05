@@ -13,6 +13,11 @@ export type RunEventBody =
 
 export type RunEvent = RunEventBody & { runId: number }
 
+/** Messages from an integrated terminal's shell. */
+export type TerminalEvent =
+  | { type: 'data'; id: number; data: string }
+  | { type: 'exit'; id: number; code: number }
+
 /** The only bridge between the UI (renderer) and the OS (main process). */
 export interface IdeApi {
   openFolder(): Promise<string | null>
@@ -27,4 +32,11 @@ export interface IdeApi {
   sendRunInput(text: string): Promise<void>
   /** Listen for output/exit events; returns a function that stops listening. */
   onRunEvent(listener: (event: RunEvent) => void): () => void
+
+  /** Start a shell in a pseudo-terminal; returns its id. */
+  terminalCreate(cwd: string | null, cols: number, rows: number): Promise<number>
+  terminalWrite(id: number, data: string): void
+  terminalResize(id: number, cols: number, rows: number): void
+  terminalKill(id: number): void
+  onTerminalEvent(listener: (event: TerminalEvent) => void): () => void
 }

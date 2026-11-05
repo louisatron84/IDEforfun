@@ -3,8 +3,10 @@ import { readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { sortAndFilterEntries } from './dirEntries'
 import { PythonRunner } from './python'
+import { Terminals } from './terminals'
 
 const runner = new PythonRunner()
+const terminals = new Terminals()
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -19,6 +21,10 @@ function createWindow(): void {
       sandbox: true
     }
   })
+
+  // A reload or closed window abandons its terminals: don't leave shells running.
+  win.webContents.on('did-start-loading', () => terminals.killAll())
+  win.on('closed', () => terminals.killAll())
 
   // The renderer blocks closing (beforeunload) when there are unsaved changes;
   // ask the user here whether to close anyway.
@@ -68,7 +74,17 @@ ipcMain.handle('run:start', (event, file: string, cwd: string, python?: string) 
 ipcMain.handle('run:stop', () => runner.stop())
 ipcMain.handle('run:input', (_event, text: string) => runner.sendInput(text))
 
-app.on('before-quit', () => runner.stop())
+ipcMain.handle('term:create', (event, cwd: string | null, cols: number, rows: number) =>
+  terminals.create(event.sender, cwd, cols, rows)
+)
+ipcMain.on('term:write', (_event, id: number, data: string) => terminals.write(id, data))
+ipcMain.on('term:resize', (_event, id: number, cols: number, rows: number) => terminals.resize(id, cols, rows))
+ipcMain.on('term:kill', (_event, id: number) => terminals.kill(id))
+
+app.on('before-quit', () => {
+  runner.stop()
+  terminals.killAll()
+})
 
 app.whenReady().then(() => {
   createWindow()

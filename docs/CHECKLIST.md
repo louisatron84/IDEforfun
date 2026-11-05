@@ -18,7 +18,7 @@ The roadmap. Work through it roughly top to bottom; each tier builds on the one 
 - [x] Python syntax highlighting (our own tokenizer) (v0.5)
 - [x] Find/replace in the file (v0.7: case, whole word, regex with $1 groups)
 - [x] Run the current Python file and show its output in a panel (v0.8: F5, auto-save, venv detection, input(), clickable tracebacks)
-- [ ] Integrated terminal (xterm.js + node-pty, the one part we don't write ourselves)
+- [x] Integrated terminal (xterm.js + node-pty, the one part we don't write ourselves) (v0.9: Ctrl+`)
 - [ ] Command palette (Ctrl+Shift+P)
 - [ ] Settings (font size, theme, tab width)
 

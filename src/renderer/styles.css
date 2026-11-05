@@ -379,3 +379,8 @@ body { display: flex; flex-direction: column; }
   outline: none;
 }
 .output-input:focus { border-color: var(--accent); }
+
+/* ---- terminal ---- */
+.terminal-view { position: absolute; inset: 0; padding: 4px 0 0 10px; background: var(--bg); }
+.terminal-view .xterm { height: 100%; }
+.terminal-view .xterm-viewport { background: transparent !important; }

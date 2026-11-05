@@ -3,10 +3,11 @@ import { Editor } from './editor/editor'
 import type { Doc } from './editor/document'
 import { Workspace } from './workspace'
 import { TabBar } from './tabBar'
-import { CommandRegistry } from './keymap'
+import { CommandRegistry, keyString } from './keymap'
 import { FindBar } from './findBar'
 import { Panel } from './panel'
 import { OutputView } from './outputView'
+import { TerminalView } from './terminalView'
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 
@@ -28,6 +29,8 @@ const output = new OutputView(
   { run: () => void runCurrentFile(), stop: () => void window.api.stopRun() }
 )
 panel.addView('output', 'Output', output.body, output.actions)
+const terminal = new TerminalView(() => rootFolder)
+panel.addView('terminal', 'Terminal', terminal.body, terminal.actions, () => terminal.show())
 
 // Keep the editor, tabs, tree highlight and window title in sync with the workspace.
 workspace.subscribe(() => {
@@ -134,13 +137,27 @@ commands.register({ id: 'run.file', title: 'Run Python File', keys: 'F5', when: 
 commands.register({ id: 'run.stop', title: 'Stop Running', keys: 'Shift+F5', run: () => void window.api.stopRun() })
 commands.register({ id: 'panel.toggle', title: 'Toggle Bottom Panel', keys: 'Ctrl+J', run: () => panel.toggle() })
 commands.register({ id: 'panel.output', title: 'Show Output', run: () => panel.show('output') })
+commands.register({
+  id: 'terminal.toggle', title: 'Toggle Terminal', keys: 'Ctrl+`',
+  run: () => {
+    if (panel.activeView === 'terminal' && terminal.hasFocus) {
+      panel.hide()
+      editor.focus()
+    } else panel.show('terminal')
+  }
+})
 
 $('run-file').addEventListener('click', () => void runCurrentFile())
 $('stop-run').addEventListener('click', () => void window.api.stopRun())
 $('open-folder').addEventListener('click', () => void openFolder())
 
+// While typing in the terminal, keys belong to the shell (Ctrl+C, Ctrl+W, Ctrl+F...).
+// Only these IDE shortcuts still work there.
+const TERMINAL_PASSTHROUGH = new Set(['Ctrl+`', 'Ctrl+J', 'Ctrl+Shift+P', 'Ctrl+Tab', 'Ctrl+Shift+Tab', 'F5', 'Shift+F5', 'Ctrl+,'])
+
 // Global shortcuts. Capture phase, so they win over the editor's own key handling.
 window.addEventListener('keydown', (e) => {
+  if (terminal.hasFocus && !TERMINAL_PASSTHROUGH.has(keyString(e))) return
   if (commands.handleKey(e)) {
     e.preventDefault()
     e.stopPropagation()

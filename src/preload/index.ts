@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { IdeApi, RunEvent } from '../shared/api'
+import type { IdeApi, RunEvent, TerminalEvent } from '../shared/api'
 
 const api: IdeApi = {
   openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
@@ -13,6 +13,16 @@ const api: IdeApi = {
     const handler = (_e: Electron.IpcRendererEvent, event: RunEvent) => listener(event)
     ipcRenderer.on('run:event', handler)
     return () => ipcRenderer.removeListener('run:event', handler)
+  },
+  terminalCreate: (cwd, cols, rows) => ipcRenderer.invoke('term:create', cwd, cols, rows),
+  // Keystrokes and resizes are fire-and-forget (send, not invoke) to keep typing snappy.
+  terminalWrite: (id, data) => ipcRenderer.send('term:write', id, data),
+  terminalResize: (id, cols, rows) => ipcRenderer.send('term:resize', id, cols, rows),
+  terminalKill: (id) => ipcRenderer.send('term:kill', id),
+  onTerminalEvent: (listener) => {
+    const handler = (_e: Electron.IpcRendererEvent, event: TerminalEvent) => listener(event)
+    ipcRenderer.on('term:event', handler)
+    return () => ipcRenderer.removeListener('term:event', handler)
   }
 }
 
