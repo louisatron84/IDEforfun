@@ -225,6 +225,27 @@ export class Editor {
     if (focus) this.focus()
   }
 
+  /** Where this editor's cursor and scroll are in `doc` (for remembering the layout). */
+  viewInfo(doc: Doc): { line: number; col: number; scrollTop: number } | null {
+    if (this.hasDoc && this.doc === doc) this.rememberScroll()
+    const v = this.views.get(doc)
+    return v ? { line: v.cursor.line, col: v.cursor.col, scrollTop: Math.round(v.scrollTop) } : null
+  }
+
+  /** Put the cursor and scroll back where they were in an earlier session. */
+  restoreView(doc: Doc, info: { line: number; col: number; scrollTop: number }): void {
+    const v = this.viewFor(doc)
+    const pos = doc.buffer.clamp({ line: info.line, col: info.col })
+    v.cursor = pos
+    v.anchor = pos
+    v.extras = []
+    v.scrollTop = info.scrollTop
+    if (this.hasDoc && this.doc === doc) {
+      this.root.scrollTop = info.scrollTop
+      this.render(false, 'none')
+    }
+  }
+
   get currentDoc(): Doc | null {
     return this.hasDoc ? this.doc : null
   }

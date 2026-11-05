@@ -24,7 +24,9 @@ import { Completion } from './completion'
 import { hoverSections } from './lsp/markdown'
 import type { TooltipSection } from './tooltip'
 import { wordStartAt } from './lsp/completionLogic'
-import { DEFAULT_SETTINGS, type Settings } from '../shared/settings'
+import { DEFAULT_SETTINGS, effectiveSettings, type ProjectSettings, type Settings } from '../shared/settings'
+import type { WorkspaceState } from '../shared/projectState'
+import { Shortcuts } from './shortcuts'
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 
@@ -533,12 +535,18 @@ async function goBack(): Promise<void> {
 
 // ---------- settings ----------
 
+/** The settings in effect: yours, with the open project's overrides on top. */
 let settings: Settings = DEFAULT_SETTINGS
+/** Your own settings (settings.json), as shown in the Settings dialog. */
+let userSettings: Settings = DEFAULT_SETTINGS
+/** What the open project's .ideforfun/settings.json overrides. */
+let projectSettings: ProjectSettings = {}
+let projectSettingsPath: string | null = null
 
-function applySettings(s: Settings): void {
+function applySettings(s: Settings, restartLsp = true): void {
   const pythonChanged = s.pythonPath !== settings.pythonPath
   settings = s
-  if (pythonChanged && rootFolder) void startLanguageServer()
+  if (pythonChanged && rootFolder && restartLsp) void startLanguageServer()
   const root = document.documentElement
   root.style.setProperty('--code-size', `${s.fontSize}px`)
   root.style.setProperty('--line-height', `${Math.round(s.fontSize * 1.45)}px`)
@@ -548,14 +556,57 @@ function applySettings(s: Settings): void {
   terminal.applyTheme(s.fontSize)
 }
 
+/** A relative interpreter path in project settings (.venv/bin/python) is relative to the project. */
+function resolveInProject(path: string | undefined): string | undefined {
+  if (!path || !rootFolder || /^([a-zA-Z]:|[\\/]|~)/.test(path) || !/[\\/]/.test(path)) return path
+  const sep = rootFolder.includes('\\') ? '\\' : '/'
+  return rootFolder.replace(/[\\/]+$/, '') + sep + path.replace(/^\.[\\/]/, '')
+}
+
+const SETTING_NAMES: Record<string, string> = { tabSize: 'Tab width', pythonPath: 'Python interpreter', shell: 'Terminal shell' }
+
+/** Recompute the settings in effect after yours or the project's change. */
+function applyEffective(restartLsp = true): void {
+  const project = { ...projectSettings }
+  if (project.pythonPath !== undefined) project.pythonPath = resolveInProject(project.pythonPath) ?? ''
+  applySettings(effectiveSettings(userSettings, project), restartLsp)
+  const keys = Object.keys(projectSettings)
+  settingsView.setProjectNote(
+    keys.length
+      ? `This project's .ideforfun/settings.json sets: ${keys.map((k) => SETTING_NAMES[k] ?? k).join(', ')}. ` +
+        'Those rows show your own setting; the project\'s value is used while it is open.'
+      : rootFolder ? 'A project can set tabSize, pythonPath and shell in .ideforfun/settings.json (Project Settings below).' : null
+  )
+}
+
+/** Change your own settings (and save them). */
+function updateUserSettings(patch: Partial<Settings>): void {
+  userSettings = { ...userSettings, ...patch }
+  settingsView.set(userSettings)
+  applyEffective()
+  void window.api.saveSettings(userSettings)
+}
+
 const settingsView = new SettingsView(settings, (s) => {
-  applySettings(s)
+  userSettings = s
+  applyEffective()
   void window.api.saveSettings(s)
 })
-void window.api.getSettings().then((s) => {
-  applySettings(s)
-  settingsView.set(s)
-})
+
+/** Read <project>/.ideforfun/settings.json (a missing file means no overrides). */
+async function loadProjectSettings(folder: string, restartLsp = true): Promise<void> {
+  let res
+  try {
+    res = await window.api.projectSettings(folder)
+  } catch {
+    return
+  }
+  if (rootFolder !== folder) return
+  projectSettings = res.settings
+  projectSettingsPath = res.path
+  if (res.error) alert(`This project's settings file couldn't be read, so it's ignored for now:\n${res.path}\n\n${res.error}`)
+  applyEffective(restartLsp)
+}
 
 // Keep the editor, tabs, tree highlight and window title in sync with the workspace.
 workspace.subscribe(() => {
@@ -579,6 +630,7 @@ workspace.subscribe(() => {
   completion.syncDoc()
   python.syncDocs(workspace.docs.filter((d) => !d.large))
   backups.sync(workspace.docs)
+  saveStateSoon()
   scheduleStatus()
   showDiagnostics()
   const folder = rootFolder?.split(/[\\/]/).pop()
@@ -616,6 +668,8 @@ async function saveActive(): Promise<boolean> {
   try {
     await workspace.save(doc)
     python.didSave(doc)
+    if (shortcuts.path && samePath(doc.path, shortcuts.path)) void shortcuts.load()
+    if (rootFolder && projectSettingsPath && samePath(doc.path, projectSettingsPath)) void loadProjectSettings(rootFolder)
     void refreshGit()
     // Project search reads files from disk: refresh visible results after saving.
     if (!$('search-panel').hidden) searchView.refresh()
@@ -646,19 +700,114 @@ function openFolderByPath(): void {
   }, rootFolder ?? '')
 }
 
-/** Open a folder that's known to exist. */
+/** Open a folder that's known to exist, with the tabs and layout it had last time. */
 async function openFolderPath(folder: string): Promise<void> {
-  if (!workspace.closeAll()) return
-  rootFolder = folder
-  folderName.textContent = folder
-  folderName.classList.remove('muted')
-  await tree.setRoot(folder)
-  workspace.notifyChanged()
-  void refreshGit()
-  lspRestarts = 0
-  void startLanguageServer()
+  saveStateNow() // the project being left
+  restoringState = true
+  try {
+    if (!workspace.closeAll()) return
+    rootFolder = folder
+    folderName.textContent = folder
+    folderName.classList.remove('muted')
+    void window.api.recentAdd(folder).catch(() => {})
+    await loadProjectSettings(folder, false)
+    await tree.setRoot(folder)
+    workspace.notifyChanged()
+    void refreshGit()
+    lspRestarts = 0
+    void startLanguageServer()
+    await restoreLayout(folder)
+  } finally {
+    restoringState = false
+  }
   await offerRestore(folder)
 }
+
+// ---------- remembering each project's tabs, layout and terminals ----------
+
+let restoringState = false
+let stateTimer: number | undefined
+
+function captureState(): WorkspaceState {
+  return {
+    groups: workspace.groups.map((g, i) => ({
+      tabs: g.docs.map((d) => ({ path: d.path, ...(editors[i]?.viewInfo(d) ?? { line: 0, col: 0, scrollTop: 0 }) })),
+      active: g.active?.path ?? null
+    })),
+    activeGroup: workspace.activeGroup,
+    terminals: terminal.shellIds(),
+    panel: panel.activeView
+  }
+}
+
+/** Save the layout a moment after it changes (tabs opened, closed, moved...). */
+function saveStateSoon(): void {
+  if (!rootFolder || restoringState) return
+  window.clearTimeout(stateTimer)
+  stateTimer = window.setTimeout(saveStateNow, 1000)
+}
+
+function saveStateNow(): void {
+  window.clearTimeout(stateTimer)
+  if (!rootFolder || restoringState) return
+  try {
+    window.api.saveWorkspaceState(rootFolder, captureState())
+  } catch { /* not worth bothering the user about */ }
+}
+
+/** Reopen the tabs, split, cursor positions, terminals and panel the project had last time. */
+async function restoreLayout(folder: string): Promise<void> {
+  let state: WorkspaceState | null = null
+  try {
+    state = await window.api.workspaceState(folder)
+  } catch { /* unreadable: start fresh */ }
+  if (!state || rootFolder !== folder) return
+  // Only files inside the project come back (the state could be from a renamed or moved folder).
+  const layout = state.groups.map((g) => ({ paths: g.tabs.map((t) => t.path).filter((p) => isInside(p, folder)), active: g.active }))
+  await workspace.restore(layout, state.activeGroup)
+  // Cursor and scroll position of each tab (preferring the same side it was on).
+  workspace.groups.forEach((g, i) => {
+    for (const doc of g.docs) {
+      const tab = state.groups[i]?.tabs.find((t) => samePath(t.path, doc.path)) ??
+        state.groups.flatMap((sg) => sg.tabs).find((t) => samePath(t.path, doc.path))
+      if (tab) editors[i]?.restoreView(doc, tab)
+    }
+  })
+  terminal.setPending(state.terminals)
+  if (state.panel) panel.show(state.panel)
+}
+
+// ---------- recent folders ----------
+
+/** Open a folder from the recent list; offer to forget it if it's gone. */
+async function openRecentFolder(folder: string): Promise<void> {
+  const res = await window.api.checkFolder(folder)
+  if (typeof res === 'string') return openFolderPath(res)
+  if (confirm(`${res.error}\n\nRemove it from the recent folders?`)) {
+    await window.api.recentRemove(folder)
+    refreshRecentSidebar()
+  }
+}
+
+const folderLabel = (folder: string) => folder.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || folder
+
+function showRecentPicker(): void {
+  void window.api.recentList().then((list) => {
+    palette.choose(list.length ? 'Open a recent folder' : 'No recent folders yet', list.map((folder) => ({
+      label: folderLabel(folder),
+      detail: folder,
+      run: () => void openRecentFolder(folder)
+    })))
+  })
+}
+
+/** With no folder open, the sidebar lists recent folders. */
+function refreshRecentSidebar(): void {
+  if (rootFolder) return
+  void window.api.recentList().then((list) => tree.showRecent(list, (f) => void openRecentFolder(f))).catch(() => {})
+}
+
+window.api.onMenuOpenRecent((folder) => void openRecentFolder(folder))
 
 // ---------- crash recovery ----------
 
@@ -716,6 +865,14 @@ window.api.onMenuEdit((action) => {
   ed[action]()
 })
 commands.register({ id: 'file.openFolderByPath', title: 'Open Folder by Path…', run: openFolderByPath })
+commands.register({ id: 'file.openRecent', title: 'Open Recent Folder…', keys: 'Ctrl+R', run: showRecentPicker })
+commands.register({
+  id: 'file.clearRecent', title: 'Clear Recent Folders',
+  run: async () => {
+    await window.api.recentClear()
+    refreshRecentSidebar()
+  }
+})
 
 // Drop a folder (or a file) onto the window to open it.
 window.addEventListener('dragover', (e) => {
@@ -877,15 +1034,29 @@ commands.register({
 commands.register({ id: 'settings.open', title: 'Open Settings', keys: 'Ctrl+,', run: () => settingsView.isOpen ? settingsView.close() : settingsView.open() })
 commands.register({
   id: 'view.zoomIn', title: 'Increase Font Size', keys: 'Ctrl+=',
-  run: () => { const s = { ...settings, fontSize: Math.min(28, settings.fontSize + 1) }; applySettings(s); settingsView.set(s); void window.api.saveSettings(s) }
+  run: () => updateUserSettings({ fontSize: Math.min(28, userSettings.fontSize + 1) })
 })
 commands.register({
   id: 'view.zoomOut', title: 'Decrease Font Size', keys: 'Ctrl+-',
-  run: () => { const s = { ...settings, fontSize: Math.max(10, settings.fontSize - 1) }; applySettings(s); settingsView.set(s); void window.api.saveSettings(s) }
+  run: () => updateUserSettings({ fontSize: Math.max(10, userSettings.fontSize - 1) })
 })
 commands.register({
   id: 'view.toggleTheme', title: 'Toggle Light/Dark Theme',
-  run: () => { const s: Settings = { ...settings, theme: settings.theme === 'dark' ? 'light' : 'dark' }; applySettings(s); settingsView.set(s); void window.api.saveSettings(s) }
+  run: () => updateUserSettings({ theme: userSettings.theme === 'dark' ? 'light' : 'dark' })
+})
+commands.register({
+  id: 'settings.project', title: 'Open Project Settings', when: () => rootFolder !== null,
+  run: async () => {
+    const folder = rootFolder!
+    try {
+      const path = await window.api.ensureProjectSettings(folder, {})
+      await tree.refreshAll()
+      await openFile(path)
+      await loadProjectSettings(folder)
+    } catch (err) {
+      alert(`Couldn't create the project settings file: ${String(err)}`)
+    }
+  }
 })
 
 // ---------- git status in the file tree ----------
@@ -948,6 +1119,16 @@ const palette = new Palette({
   goToLine: (line) => editor.goTo(line),
   lineCount: () => workspace.active?.buffer.lineCount ?? null
 })
+
+// ---------- keyboard shortcuts you can change ----------
+
+const shortcuts = new Shortcuts(commands, palette, (message) => alert(message))
+commands.register({ id: 'keys.show', title: 'Keyboard Shortcuts…', run: () => shortcuts.showList() })
+commands.register({ id: 'keys.openFile', title: 'Edit Keyboard Shortcuts File (keybindings.json)', run: () => void shortcuts.openFile((p) => void openFile(p)) })
+settingsView.setLinks([
+  { label: 'Keyboard Shortcuts…', run: () => shortcuts.showList() },
+  { label: 'Project Settings…', run: () => commands.run('settings.project') }
+])
 // ---------- status bar ----------
 
 let statusFrame = 0
@@ -1083,28 +1264,58 @@ $('stop-run').addEventListener('click', () => void window.api.stopRun())
 $('open-folder').addEventListener('click', () => void openFolder())
 
 // While typing in the terminal, keys belong to the shell (Ctrl+C, Ctrl+W, Ctrl+F...).
-// Only these IDE shortcuts still work there.
-const TERMINAL_PASSTHROUGH = new Set(['Ctrl+Shift+`', 'Ctrl+`', 'Ctrl+J', 'Ctrl+Shift+P', 'Ctrl+Tab', 'Ctrl+Shift+Tab', 'F5', 'Shift+F5', 'Ctrl+,', 'Ctrl+F5', 'Ctrl+Shift+F5', 'F9', 'F10', 'F11', 'Shift+F11'])
+// Only these IDE commands' shortcuts still work there (whatever keys they're set to).
+const TERMINAL_PASSTHROUGH = new Set([
+  'terminal.new', 'terminal.toggle', 'panel.toggle', 'palette.commands', 'tab.next', 'tab.prev',
+  'run.smart', 'run.stop', 'run.file', 'settings.open', 'debug.restart',
+  'debug.toggleBreakpoint', 'debug.stepOver', 'debug.stepInto', 'debug.stepOut'
+])
+const PALETTE_TOGGLES = new Set(['palette.commands', 'palette.files', 'palette.line'])
 
 // Global shortcuts. Capture phase, so they win over the editor's own key handling.
 window.addEventListener('keydown', (e) => {
-  const key = keyString(e)
-  if (terminal.hasFocus && !TERMINAL_PASSTHROUGH.has(key)) return
+  if (palette.capturing) return // the palette is recording a new shortcut
+  const command = commands.commandForKey(keyString(e))
+  if (!command) return
+  if (terminal.hasFocus && !TERMINAL_PASSTHROUGH.has(command.id)) return
   // Dialogs handle their own keys (Escape, arrows...); only their toggles pass through.
-  if (settingsView.isOpen && key !== 'Ctrl+,') return
-  if (palette.isOpen && !['Ctrl+Shift+P', 'Ctrl+P', 'Ctrl+G'].includes(key)) return
-  if (commands.handleKey(e)) {
-    e.preventDefault()
-    e.stopPropagation()
-  }
+  if (settingsView.isOpen && command.id !== 'settings.open') return
+  if (palette.isOpen && !PALETTE_TOGGLES.has(command.id)) return
+  e.preventDefault()
+  e.stopPropagation()
+  void command.run()
 }, { capture: true })
 
 // Block closing the window with unsaved changes; the main process then asks the user.
 window.addEventListener('beforeunload', (e) => {
+  saveStateNow()
   if (workspace.anyDirty) {
     e.preventDefault()
     e.returnValue = ''
   }
+})
+
+// ---------- startup ----------
+
+// Every command is registered by now, so the menu can show all their shortcuts.
+void shortcuts.load()
+
+void window.api.getSettings().then(async (s) => {
+  userSettings = s
+  settingsView.set(s)
+  applyEffective()
+  // Reopen the last project (with its tabs), unless that's turned off or it's gone.
+  if (s.reopenLastProject && !rootFolder) {
+    try {
+      const [last] = await window.api.recentList()
+      const res = last ? await window.api.checkFolder(last) : null
+      if (typeof res === 'string' && !rootFolder) {
+        await openFolderPath(res)
+        return
+      }
+    } catch { /* fall through to the recent list */ }
+  }
+  refreshRecentSidebar()
 })
 
 export { workspace, editor, saveActive }

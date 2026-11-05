@@ -223,3 +223,29 @@ describe('Workspace: opening several files quickly', () => {
     expect((await ws.open('/p/a.py')).name).toBe('a.py')
   })
 })
+
+describe('Workspace: restoring a saved layout', () => {
+  it('reopens tabs per side, with the right active tab and focused side', async () => {
+    const { ws } = setup({ '/a.py': 'a', '/b.py': 'b', '/c.py': 'c' })
+    const res = await ws.restore([
+      { paths: ['/a.py', '/b.py'], active: '/b.py' },
+      { paths: ['/b.py', '/c.py'], active: '/c.py' }
+    ], 1)
+    expect(ws.groups.map((g) => g.docs.map((d) => d.path))).toEqual([['/a.py', '/b.py'], ['/b.py', '/c.py']])
+    expect(ws.groups[0].active?.path).toBe('/b.py')
+    expect(ws.active?.path).toBe('/c.py')
+    // A file open on both sides is one document.
+    expect(ws.groups[0].docs[1]).toBe(ws.groups[1].docs[0])
+    expect(res.skipped).toEqual([])
+  })
+  it('skips files that are gone, and a side left empty', async () => {
+    const { ws } = setup({ '/a.py': 'a' })
+    const res = await ws.restore([
+      { paths: ['/gone.py'], active: '/gone.py' },
+      { paths: ['/a.py', '/also-gone.py'], active: '/also-gone.py' }
+    ], 1)
+    expect(res.skipped).toEqual(['/gone.py', '/also-gone.py'])
+    expect(ws.groups).toHaveLength(1)
+    expect(ws.active?.path).toBe('/a.py')
+  })
+})

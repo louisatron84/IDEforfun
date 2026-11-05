@@ -1,4 +1,6 @@
-import type { Settings } from './settings'
+import type { ProjectSettings, Settings } from './settings'
+import type { KeyOverrides } from './keybindings'
+import type { WorkspaceState } from './projectState'
 import type { FindOptions } from './regex'
 import type { Encoding, TextFileResult } from './encoding'
 
@@ -144,4 +146,27 @@ export interface IdeApi {
 
   getSettings(): Promise<Settings>
   saveSettings(settings: Settings): Promise<void>
+
+  /** Your shortcut changes from keybindings.json (error = the file couldn't be read). */
+  getKeybindings(): Promise<{ overrides: KeyOverrides; path: string; error?: string }>
+  saveKeybindings(overrides: KeyOverrides): Promise<void>
+  /** Create keybindings.json if needed; returns its path. */
+  ensureKeybindingsFile(): Promise<string>
+  /** Tell the menu bar which shortcut to show for each command. */
+  setMenuKeys(keys: Record<string, string | null>): void
+
+  /** Recently opened folders, newest first. */
+  recentList(): Promise<string[]>
+  recentAdd(folder: string): Promise<string[]>
+  recentRemove(folder: string): Promise<string[]>
+  recentClear(): Promise<string[]>
+  onMenuOpenRecent(listener: (folder: string) => void): () => void
+
+  /** The project's saved tabs/layout, or null the first time it's opened. */
+  workspaceState(root: string): Promise<WorkspaceState | null>
+  saveWorkspaceState(root: string, state: WorkspaceState): void
+  /** <project>/.ideforfun/settings.json */
+  projectSettings(root: string): Promise<{ settings: ProjectSettings; path: string; exists: boolean; error?: string }>
+  /** Create the project settings file if needed; returns its path. */
+  ensureProjectSettings(root: string, initial: ProjectSettings): Promise<string>
 }

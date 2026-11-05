@@ -44,7 +44,7 @@ your terminal has `ELECTRON_RUN_AS_NODE` set. Clear it first: `$env:ELECTRON_RUN
 | Ctrl+Shift+P | Command palette (every command is listed here) |
 | Ctrl+P | Go to file |
 | Ctrl+G | Go to line |
-| Ctrl+O | Open folder |
+| Ctrl+O / Ctrl+R | Open folder / open a recent folder (also File → Open Recent) |
 | Ctrl+N | New file (type `pkg/app.py` to make folders too); right-click the tree for New Folder / Rename / Delete |
 | F2 / Delete (in the file tree) | Rename / delete (to the Recycle Bin) |
 | Ctrl+S | Save |
@@ -74,6 +74,27 @@ your terminal has `ELECTRON_RUN_AS_NODE` set. Clear it first: `$env:ELECTRON_RUN
 | Ctrl+/ | Comment / uncomment the selected lines |
 | Ctrl+Shift+[ / Ctrl+Shift+] | Fold / unfold the block (or click the arrows next to the line numbers) |
 | Ctrl+Shift+\\ | Jump to the matching bracket |
+
+Every shortcut can be changed: **File → Preferences → Keyboard Shortcuts…** (or
+"Keyboard Shortcuts" in the command palette) lists them all, marks clashes, and lets
+you press new keys, remove them or reset them. Changes go in `keybindings.json` in
+the app's data folder, which you can also edit by hand ("Edit Keyboard Shortcuts File"):
+
+```json
+{ "run.file": "Ctrl+Shift+R", "palette.files": ["Ctrl+P", "Ctrl+E"], "nav.back": null }
+```
+
+## Projects
+- The last project reopens at startup with its tabs, split, cursor positions, terminals
+  and bottom panel (turn this off in Settings). Each project remembers its own layout.
+- A project can override some settings in `.ideforfun/settings.json`
+  (File → Preferences → Project Settings):
+
+```json
+{ "tabSize": 2, "pythonPath": ".venv/Scripts/python.exe", "shell": "gitbash" }
+```
+
+  A relative `pythonPath` is relative to the project folder.
 
 ## Layout
 - `src/main/`: Electron main process: file system, running Python (`python.ts`), terminals (`terminals.ts`), settings

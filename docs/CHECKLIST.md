@@ -42,10 +42,10 @@ to real source code or runtime behaviour.
 - [x] Settings (font size, theme, tab width, Python interpreter, Ctrl+= / Ctrl+-) (v0.10)
 - [x] Multiple terminal sessions (v0.25: + / ▾ / 🗑 buttons, list on the right, Ctrl+Shift+`)
 - [x] Terminal profiles and shell selection (v0.25: finds PowerShell, PowerShell 7, Command Prompt, Git Bash, WSL / bash, zsh, fish; default in Settings)
-- [ ] Configurable keyboard shortcuts
-- [ ] Recent projects
-- [ ] Workspace persistence (restore tabs, terminal sessions and layout)
-- [ ] Project-specific settings
+- [x] Configurable keyboard shortcuts (v0.26: press new keys from Keyboard Shortcuts…, clashes marked, keybindings.json, menu follows)
+- [x] Recent projects (v0.26: File → Open Recent, Ctrl+R, listed in the sidebar with no folder open)
+- [x] Workspace persistence (restore tabs, terminal sessions and layout) (v0.26: tabs, split, cursors, terminals' shells, bottom panel; last project reopens at startup)
+- [x] Project-specific settings (v0.26: .ideforfun/settings.json can set tabSize, pythonPath, shell)
 - [ ] Task runner for predefined project commands
 - [ ] Run configurations (arguments, environment variables and working directory)
 - [ ] Python environment management (create, select and manage virtual environments)

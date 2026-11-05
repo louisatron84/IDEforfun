@@ -11,6 +11,9 @@ export class SettingsView {
   private settings: Settings
   private saveTimer: number | undefined
   private returnFocus: HTMLElement | null = null
+  /** Which settings the open project overrides, and where (shown as a note). */
+  private projectNote: string | null = null
+  private links: { label: string; run: () => void }[] = []
 
   constructor(initial: Settings, private readonly onChange: (s: Settings) => void) {
     this.settings = { ...initial }
@@ -45,6 +48,18 @@ export class SettingsView {
   /** Update from outside (e.g. settings finished loading from disk). */
   set(settings: Settings): void {
     this.settings = { ...settings }
+    this.render()
+  }
+
+  /** Say which settings the project's .ideforfun/settings.json overrides (null = none). */
+  setProjectNote(note: string | null): void {
+    this.projectNote = note
+    if (this.isOpen) this.render()
+  }
+
+  /** Buttons at the bottom (e.g. Keyboard Shortcuts…, Project Settings…). */
+  setLinks(links: { label: string; run: () => void }[]): void {
+    this.links = links
     this.render()
   }
 
@@ -142,11 +157,45 @@ export class SettingsView {
     const shellRow = this.row('Terminal shell', 'Used for new terminals', shell)
     shellRow.querySelector('label')!.htmlFor = shell.id
 
+    // Reopen the last project at startup
+    const reopen = document.createElement('input')
+    reopen.type = 'checkbox'
+    reopen.id = 'setting-reopen'
+    reopen.checked = s.reopenLastProject
+    reopen.addEventListener('change', () => this.update({ reopenLastProject: reopen.checked }))
+    const reopenRow = this.row('Reopen last project', 'At startup, open the last folder with its tabs and layout', reopen)
+    reopenRow.querySelector('label')!.htmlFor = reopen.id
+
+    const rows: HTMLElement[] = [header]
+    if (this.projectNote) {
+      const note = document.createElement('p')
+      note.className = 'settings-note'
+      note.textContent = this.projectNote
+      rows.push(note)
+    }
+    rows.push(fontRow, themeRow, tabRow, pyRow, shellRow, reopenRow)
+
+    if (this.links.length) {
+      const linkRow = document.createElement('div')
+      linkRow.className = 'settings-links'
+      for (const l of this.links) {
+        const b = document.createElement('button')
+        b.textContent = l.label
+        b.addEventListener('click', () => {
+          this.close()
+          l.run()
+        })
+        linkRow.append(b)
+      }
+      rows.push(linkRow)
+    }
+
     const footer = document.createElement('p')
     footer.className = 'settings-footer'
     footer.textContent = 'Changes apply immediately and are saved automatically.'
+    rows.push(footer)
 
-    this.dialog.append(header, fontRow, themeRow, tabRow, pyRow, shellRow, footer)
+    this.dialog.append(...rows)
   }
 
   private row(label: string, hint: string, ...controls: HTMLElement[]): HTMLDivElement {

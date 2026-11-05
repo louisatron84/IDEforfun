@@ -1,5 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
-import { buildMenu, type EditAction } from './menu'
+import { buildMenu, type EditAction, type MenuState } from './menu'
+import { ensureProjectSettings, readProjectSettings, UserState } from './userState'
+import type { KeyOverrides } from '../shared/keybindings'
+import type { ProjectSettings } from '../shared/settings'
 import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { realpath } from 'node:fs/promises'
@@ -27,6 +30,11 @@ const terminals = new Terminals()
 const languageServer = new LanguageServer()
 const debugAdapter = new DebugAdapter()
 const backups = new Backups(() => join(app.getPath('userData'), 'backups'))
+const userState = new UserState(() => app.getPath('userData'))
+
+// The menu shows the window's current shortcuts and the recent folders, so it's rebuilt when they change.
+const menuState: MenuState = { keys: {}, recent: [] }
+const refreshMenu = () => Menu.setApplicationMenu(buildMenu(menuState))
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -196,6 +204,39 @@ ipcMain.on('term:write', (_event, id: number, data: string) => terminals.write(i
 ipcMain.on('term:resize', (_event, id: number, cols: number, rows: number) => terminals.resize(id, cols, rows))
 ipcMain.on('term:kill', (_event, id: number) => terminals.kill(id))
 
+// ---------- shortcuts, recent folders, per-project layout and settings ----------
+ipcMain.handle('keys:get', () => userState.keybindings())
+ipcMain.handle('keys:save', (_event, overrides: KeyOverrides) => userState.saveKeybindings(overrides))
+ipcMain.handle('keys:ensureFile', () => userState.ensureKeybindingsFile())
+ipcMain.on('menu:setKeys', (_event, keys: Record<string, string | null>) => {
+  if (!keys || typeof keys !== 'object') return
+  menuState.keys = keys
+  refreshMenu()
+})
+const updateRecent = (list: string[]) => {
+  menuState.recent = list
+  refreshMenu()
+  return list
+}
+ipcMain.handle('recent:list', () => userState.recent())
+ipcMain.handle('recent:add', async (_event, folder: string) => updateRecent(await userState.addRecent(folder)))
+ipcMain.handle('recent:remove', async (_event, folder: string) => updateRecent(await userState.removeRecent(folder)))
+ipcMain.handle('recent:clear', async () => {
+  await userState.clearRecent()
+  return updateRecent([])
+})
+ipcMain.handle('state:get', (_event, root: string) => userState.workspace(root))
+// A plain message (not invoke) handled synchronously, so it's saved even while the window closes.
+ipcMain.on('state:save', (_event, root: string, state: unknown) => {
+  try {
+    if (typeof root === 'string' && root) userState.saveWorkspaceSync(root, state)
+  } catch (err) {
+    console.error('Could not save the workspace layout:', err)
+  }
+})
+ipcMain.handle('project:settings', (_event, root: string) => readProjectSettings(root))
+ipcMain.handle('project:ensureSettings', (_event, root: string, initial: ProjectSettings) => ensureProjectSettings(root, initial))
+
 // ---------- settings (userData/settings.json) ----------
 const settingsFile = () => join(app.getPath('userData'), 'settings.json')
 
@@ -220,7 +261,8 @@ app.on('before-quit', () => {
 })
 
 app.whenReady().then(() => {
-  Menu.setApplicationMenu(buildMenu())
+  menuState.recent = userState.recentSync()
+  refreshMenu()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

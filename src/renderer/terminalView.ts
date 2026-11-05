@@ -150,6 +150,8 @@ export class TerminalView {
   private nextNumber = 1
   private shells: ShellProfile[] | null = null
   private fontSize: number | null = null
+  /** Shells of the terminals open last session, started when the panel is first shown. */
+  private pending: string[] = []
 
   constructor(
     private readonly getCwd: () => string | null,
@@ -192,7 +194,7 @@ export class TerminalView {
   /** Called when the Terminal tab becomes visible: create a terminal on first use. */
   show(): void {
     if (!this.sessions.length) {
-      void this.newTerminal()
+      void this.startPending()
       return
     }
     this.active?.layout()
@@ -201,6 +203,31 @@ export class TerminalView {
 
   focus(): void {
     this.active?.term.focus()
+  }
+
+  /** The shell id of each terminal ('' = default), to reopen them next time. */
+  shellIds(): string[] {
+    return this.sessions.length ? this.sessions.map((s) => s.profile?.id ?? '') : [...this.pending]
+  }
+
+  /** Terminals to open (with these shells) when the panel is next shown, if none are open. */
+  setPending(shellIds: string[]): void {
+    if (!this.sessions.length) this.pending = [...shellIds]
+  }
+
+  private startingPending = false
+
+  private async startPending(): Promise<void> {
+    if (this.startingPending) return // shown twice quickly
+    this.startingPending = true
+    try {
+      const ids = this.pending.length ? this.pending : ['']
+      this.pending = []
+      const shells = await this.loadShells()
+      for (const id of ids) await this.newTerminal(shells.find((s) => s.id === id))
+    } finally {
+      this.startingPending = false
+    }
   }
 
   get hasFocus(): boolean {

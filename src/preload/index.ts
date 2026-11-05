@@ -86,7 +86,24 @@ const api: IdeApi = {
   },
   resolvePythonForAnalysis: (root, configured) => ipcRenderer.invoke('lsp:resolvePython', root, configured),
   getSettings: () => ipcRenderer.invoke('settings:get'),
-  saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings)
+  saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
+  getKeybindings: () => ipcRenderer.invoke('keys:get'),
+  saveKeybindings: (overrides) => ipcRenderer.invoke('keys:save', overrides),
+  ensureKeybindingsFile: () => ipcRenderer.invoke('keys:ensureFile'),
+  setMenuKeys: (keys) => ipcRenderer.send('menu:setKeys', keys),
+  recentList: () => ipcRenderer.invoke('recent:list'),
+  recentAdd: (folder) => ipcRenderer.invoke('recent:add', folder),
+  recentRemove: (folder) => ipcRenderer.invoke('recent:remove', folder),
+  recentClear: () => ipcRenderer.invoke('recent:clear'),
+  onMenuOpenRecent: (listener) => {
+    const handler = (_e: Electron.IpcRendererEvent, folder: string) => listener(folder)
+    ipcRenderer.on('menu:openRecent', handler)
+    return () => ipcRenderer.removeListener('menu:openRecent', handler)
+  },
+  workspaceState: (root) => ipcRenderer.invoke('state:get', root),
+  saveWorkspaceState: (root, state) => ipcRenderer.send('state:save', root, state),
+  projectSettings: (root) => ipcRenderer.invoke('project:settings', root),
+  ensureProjectSettings: (root, initial) => ipcRenderer.invoke('project:ensureSettings', root, initial)
 }
 
 contextBridge.exposeInMainWorld('api', api)

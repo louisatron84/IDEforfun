@@ -120,6 +120,43 @@ export class Workspace {
     return doc
   }
 
+  /**
+   * Bring back a saved layout: tabs per group, each group's active tab and
+   * the focused group. Files that can't be opened any more (deleted, now
+   * binary or huge) are skipped and returned. Expects no tabs open.
+   */
+  async restore(layout: { paths: string[]; active: string | null }[], activeGroup: number): Promise<{ opened: Doc[][]; skipped: string[] }> {
+    const skipped: string[] = []
+    const byPath = new Map<string, Doc>()
+    const groups: Group[] = []
+    for (const g of layout.slice(0, 2)) {
+      const docs: Doc[] = []
+      for (const path of g.paths) {
+        let doc = [...byPath.values()].find((d) => samePath(d.path, path)) ?? this.find(path)
+        if (!doc) {
+          try {
+            doc = await readDoc(this.api, path, {})
+          } catch {
+            skipped.push(path)
+            continue
+          }
+          byPath.set(path, doc)
+        }
+        if (!docs.includes(doc)) docs.push(doc)
+      }
+      const active = docs.find((d) => g.active !== null && samePath(d.path, g.active)) ?? docs[0] ?? null
+      groups.push({ docs, active })
+    }
+    // A side whose files are all gone isn't worth keeping.
+    const focused = groups[activeGroup]
+    const kept = groups.filter((g) => g.docs.length)
+    if (!kept.length) kept.push({ docs: [], active: null })
+    this.groups = kept
+    this.activeGroup = Math.max(0, kept.indexOf(focused!))
+    this.notifyChanged()
+    return { opened: groups.map((g) => g.docs), skipped }
+  }
+
   /** Read the file again with another encoding, replacing its tabs' contents. */
   async reopenWithEncoding(doc: Doc, encoding: Encoding): Promise<Doc> {
     const fresh = await readDoc(this.api, doc.path, { force: true, encoding })

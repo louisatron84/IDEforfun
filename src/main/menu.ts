@@ -6,18 +6,27 @@
  * nothing fires twice and stock shortcuts like Ctrl+W can't close the window.
  */
 import { app, BrowserWindow, dialog, Menu, type MenuItemConstructorOptions } from 'electron'
+import { toAccelerator } from '../shared/keybindings'
 
 /** Edit actions: the window decides whether they go to our editor or to a text box. */
 export type EditAction = 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'selectAll'
 
-export function buildMenu(): Menu {
+export interface MenuState {
+  /** The shortcut shown for each command id (after your changes); null = none. */
+  keys: Record<string, string | null>
+  /** Recently opened folders, newest first. */
+  recent: string[]
+}
+
+export function buildMenu(state: MenuState = { keys: {}, recent: [] }): Menu {
   const send = (channel: string, ...args: unknown[]) => {
     const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
     win?.webContents.send(channel, ...args)
   }
-  const cmd = (label: string, id: string, accelerator?: string): MenuItemConstructorOptions => ({
+  const cmd = (label: string, id: string, fallback?: string): MenuItemConstructorOptions => ({
     label,
-    accelerator,
+    // The renderer tells us each command's current shortcut (you can change them).
+    accelerator: id in state.keys ? (state.keys[id] ? toAccelerator(state.keys[id]!) : undefined) : fallback,
     registerAccelerator: false,
     click: () => send('menu:command', id)
   })
@@ -38,6 +47,21 @@ export function buildMenu(): Menu {
         sep,
         cmd('Open Folder…', 'file.openFolder', 'CmdOrCtrl+O'),
         cmd('Open Folder by Path…', 'file.openFolderByPath'),
+        {
+          label: 'Open Recent',
+          submenu: state.recent.length
+            ? [
+                ...state.recent.map((folder): MenuItemConstructorOptions => ({
+                  // & would be read as a mnemonic marker on Windows/Linux.
+                  label: folder.replace(/&/g, '&&'),
+                  click: () => send('menu:openRecent', folder)
+                })),
+                sep,
+                cmd('More…', 'file.openRecent'),
+                cmd('Clear Recent Folders', 'file.clearRecent')
+              ]
+            : [{ label: 'No recent folders', enabled: false }]
+        },
         sep,
         cmd('Save', 'file.save', 'CmdOrCtrl+S'),
         cmd('Save with Encoding…', 'file.saveEncoding'),
@@ -48,7 +72,16 @@ export function buildMenu(): Menu {
         sep,
         cmd('Close Tab', 'tab.close', 'CmdOrCtrl+W'),
         sep,
-        cmd('Settings', 'settings.open', 'CmdOrCtrl+,'),
+        {
+          label: 'Preferences',
+          submenu: [
+            cmd('Settings', 'settings.open', 'CmdOrCtrl+,'),
+            cmd('Project Settings', 'settings.project'),
+            sep,
+            cmd('Keyboard Shortcuts…', 'keys.show'),
+            cmd('Edit Keyboard Shortcuts File', 'keys.openFile')
+          ]
+        },
         sep,
         { label: 'Exit', role: 'quit' }
       ]

@@ -45,3 +45,34 @@ describe('CommandRegistry', () => {
     expect(reg.all().map((c) => c.title)).toEqual(['Alpha', 'Beta'])
   })
 })
+
+describe('CommandRegistry with your own shortcuts', () => {
+  const setup = () => {
+    const reg = new CommandRegistry()
+    const ran: string[] = []
+    reg.register({ id: 'a', title: 'A', keys: 'Ctrl+R', run: () => { ran.push('a') } })
+    reg.register({ id: 'b', title: 'B', keys: ['F1', 'F2'], run: () => { ran.push('b') } })
+    return { reg, ran }
+  }
+  it('replaces the default keys of changed commands only', () => {
+    const { reg, ran } = setup()
+    reg.setOverrides({ a: ['Ctrl+E'] })
+    expect(reg.keysOf('a')).toEqual(['Ctrl+E'])
+    expect(reg.keysOf('b')).toEqual(['F1', 'F2'])
+    expect(reg.defaultKeys('a')).toEqual(['Ctrl+R'])
+    expect(reg.handleKey(ev('r', { ctrlKey: true }))).toBe(false)
+    expect(reg.handleKey(ev('e', { ctrlKey: true }))).toBe(true)
+    expect(ran).toEqual(['a'])
+  })
+  it('an empty list removes the shortcut', () => {
+    const { reg } = setup()
+    reg.setOverrides({ b: [] })
+    expect(reg.handleKey(ev('F1'))).toBe(false)
+    expect(reg.menuKeys()).toEqual({ a: 'Ctrl+R', b: null })
+  })
+  it('finds the command for a key', () => {
+    const { reg } = setup()
+    expect(reg.commandForKey('F2')?.id).toBe('b')
+    expect(reg.commandForKey('F3')).toBeUndefined()
+  })
+})

@@ -8,6 +8,8 @@ export interface Settings {
   pythonPath: string
   /** Shell for new terminals (an id like 'powershell', 'gitbash'); '' = the system default. */
   shell: string
+  /** Open the last project again when the app starts. */
+  reopenLastProject: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -15,7 +17,8 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: 'dark',
   tabSize: 4,
   pythonPath: '',
-  shell: ''
+  shell: '',
+  reopenLastProject: true
 }
 
 export const FONT_SIZE_MIN = 10
@@ -32,5 +35,29 @@ export function normalizeSettings(raw: unknown): Settings {
   if (r.tabSize === 2 || r.tabSize === 4 || r.tabSize === 8) s.tabSize = r.tabSize
   if (typeof r.pythonPath === 'string') s.pythonPath = r.pythonPath.trim()
   if (typeof r.shell === 'string' && /^[\w.-]*$/.test(r.shell)) s.shell = r.shell
+  if (typeof r.reopenLastProject === 'boolean') s.reopenLastProject = r.reopenLastProject
   return s
+}
+
+/** Settings a project can override in <project>/.ideforfun/settings.json. */
+export const PROJECT_SETTING_KEYS = ['tabSize', 'pythonPath', 'shell'] as const
+export type ProjectSettings = Partial<Pick<Settings, (typeof PROJECT_SETTING_KEYS)[number]>>
+
+export const PROJECT_SETTINGS_DIR = '.ideforfun'
+export const PROJECT_SETTINGS_FILE = 'settings.json'
+
+/** Only the valid project-level values from a project settings file; anything else is ignored. */
+export function normalizeProjectSettings(raw: unknown): ProjectSettings {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const r = raw as Record<string, unknown>
+  const out: ProjectSettings = {}
+  if (r.tabSize === 2 || r.tabSize === 4 || r.tabSize === 8) out.tabSize = r.tabSize
+  if (typeof r.pythonPath === 'string') out.pythonPath = r.pythonPath.trim()
+  if (typeof r.shell === 'string' && /^[\w.-]*$/.test(r.shell)) out.shell = r.shell
+  return out
+}
+
+/** The settings in effect: yours, with the project's overrides on top. */
+export function effectiveSettings(user: Settings, project: ProjectSettings): Settings {
+  return { ...user, ...project }
 }
