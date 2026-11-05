@@ -11,7 +11,8 @@ export class FileTree {
 
   constructor(
     private readonly container: HTMLElement,
-    private readonly onOpenFile: (entry: DirEntry) => void
+    /** Resolves to false if the file wasn't opened (e.g. user kept unsaved changes). */
+    private readonly onOpenFile: (entry: DirEntry) => Promise<boolean>
   ) {}
 
   async setRoot(rootPath: string): Promise<void> {
@@ -67,9 +68,8 @@ export class FileTree {
         }
       })
     } else {
-      row.addEventListener('click', () => {
-        this.select(row)
-        this.onOpenFile(entry)
+      row.addEventListener('click', async () => {
+        if (await this.onOpenFile(entry)) this.select(row)
       })
     }
     return wrapper

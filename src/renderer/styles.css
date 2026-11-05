@@ -79,36 +79,79 @@ body { display: flex; flex-direction: column; }
 #file-title { padding: 4px 12px; border-bottom: 1px solid var(--border); min-height: 25px; }
 #editor { flex: 1; min-height: 0; }
 
-.text-view {
+.editor {
+  position: relative;
   height: 100%;
   overflow: auto;
   display: flex;
   align-items: flex-start;
   font: var(--code-size) / var(--line-height) var(--font-code);
+  cursor: text;
 }
 
-.text-view pre {
+.editor pre {
   margin: 0;
-  padding: 4px 0;
+  padding: 4px 0 40vh; /* extra space at the bottom so the last line can scroll up */
   font: inherit;
 }
 
-.text-view .gutter {
+.editor .gutter {
   position: sticky;
   left: 0;
+  z-index: 2;
   min-height: 100%;
-  padding: 4px 12px 4px 16px;
+  padding-left: 16px;
+  padding-right: 12px;
   text-align: right;
   color: var(--fg-muted);
   background: var(--bg);
   border-right: 1px solid var(--border);
+  user-select: none;
+  cursor: default;
 }
 
-.text-view .content { padding-left: 12px; padding-right: 24px; tab-size: 4; }
+.editor .text-area { position: relative; flex: 1 0 auto; }
+.editor .content { padding-left: 12px; padding-right: 24px; tab-size: 4; user-select: none; }
 
-.text-view.empty {
+.editor .cursor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  height: var(--line-height);
+  background: var(--fg);
+  display: none;
+  animation: blink 1.06s steps(1) infinite;
+  pointer-events: none;
+}
+.editor.focused .cursor { display: block; }
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+/* Invisible textarea that receives keystrokes; it follows the cursor so IME popups appear in the right place. */
+.editor .input {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: var(--line-height);
+  padding: 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  opacity: 0;
+  font: inherit;
+  white-space: pre;
+}
+
+.editor.empty {
   align-items: center;
   justify-content: center;
   color: var(--fg-muted);
   font-family: var(--font-ui);
+  cursor: default;
 }
+#file-title.dirty { color: var(--fg); }

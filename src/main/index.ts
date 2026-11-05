@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
-import { readdir, readFile } from 'node:fs/promises'
+import { readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { sortAndFilterEntries } from './dirEntries'
 
@@ -15,6 +15,20 @@ function createWindow(): void {
       nodeIntegration: false,
       sandbox: true
     }
+  })
+
+  // The renderer blocks closing (beforeunload) when there are unsaved changes;
+  // ask the user here whether to close anyway.
+  win.webContents.on('will-prevent-unload', (event) => {
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'warning',
+      buttons: ['Discard changes', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      message: 'You have unsaved changes.',
+      detail: 'Close anyway and lose them?'
+    })
+    if (choice === 0) event.preventDefault() // preventDefault here = ignore the block and close
   })
 
   if (process.env['ELECTRON_RENDERER_URL']) {
@@ -40,6 +54,10 @@ ipcMain.handle('fs:readDir', async (_event, dir: string) => {
 })
 
 ipcMain.handle('fs:readFile', async (_event, path: string) => readFile(path, 'utf8'))
+
+ipcMain.handle('fs:writeFile', async (_event, path: string, text: string) => {
+  await writeFile(path, text, 'utf8')
+})
 
 app.whenReady().then(() => {
   createWindow()

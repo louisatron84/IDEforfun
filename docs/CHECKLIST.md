@@ -5,11 +5,11 @@ The roadmap. Work through it roughly top to bottom; each tier builds on the one 
 ## Tier 1: core (it's an editor)
 - [x] Open a folder, show the file tree, expand/collapse folders (v0.1)
 - [x] Open a file and render its text with line numbers in a monospace font (v0.1, read-only)
-- [ ] Text buffer model: insert, delete, line/column ↔ offset
-- [ ] Cursor: arrows, Home/End, PgUp/PgDn, click to place
-- [ ] Typing, Backspace/Delete, Enter (with Python auto-indent after `:`)
+- [x] Text buffer model: insert, delete, line/column ↔ offset
+- [x] Cursor: arrows, Home/End, PgUp/PgDn, click to place
+- [x] Typing, Backspace/Delete, Enter (with Python auto-indent after `:`)
 - [ ] Selection (shift+arrows, mouse drag), copy/cut/paste
-- [ ] Save (Ctrl+S), dirty marker, warning about unsaved changes on close
+- [x] Save (Ctrl+S), dirty marker, warning about unsaved changes on close (v0.2)
 - [ ] Undo/redo
 - [ ] Scrolling that only renders the visible lines (so big files stay fast)
 
@@ -27,3 +27,13 @@ The roadmap. Work through it roughly top to bottom; each tier builds on the one 
 - [ ] Search across the project
 - [ ] Git status in the file tree
 - [ ] Debugger (DAP, debugpy)
+
+## Tier 4: visual tools (the thing that makes this IDE different)
+Rule: **the code is the source of truth**. Graphs are views of the code plus a way to edit it, and anything done in a graph turns into normal, readable Python.
+- [ ] Project graph from code scanning (Python `ast`): files → functions → API endpoints called (`requests`/`httpx`/`aiohttp`), FastAPI/Flask routes, env vars
+- [ ] Live network view: "Run" loads a small hook that wraps `requests`/`httpx`/`socket` and streams each call (method, URL, status, timing) to the IDE as an animated graph/timeline (needs Tier 2 "Run current file")
+- [ ] Drag to connect APIs: drag a line from a file to an unconnected API, and the IDE generates the client module, `.env` key, and import
+  - [ ] APIs with an OpenAPI/Swagger spec: generate a real function per endpoint
+  - [ ] APIs without a spec: generate a skeleton (base URL, auth, one example request)
+  - [ ] Later: AI help reads API docs and writes glue code between APIs
+- [ ] More visuals: call graph, live variable values, data flowing through pandas pipelines, import map, recursion trees
