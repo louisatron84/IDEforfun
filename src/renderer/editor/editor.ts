@@ -33,6 +33,10 @@ export interface EditorOptions {
   /** Mouse moved over the text: the character under it (null if over empty space). */
   onMouseMove?: (pos: Position | null, e: MouseEvent) => void
   onMouseLeave?: () => void
+  /** Called first for every key in the editor; return true to say "handled, don't do anything else". */
+  onKeyDown?: (e: KeyboardEvent) => boolean
+  /** Called after the user typed text (not pasted), e.g. to open autocomplete. */
+  onType?: (text: string) => void
 }
 
 /** An underlined range, e.g. an error from the language server. */
@@ -213,6 +217,10 @@ export class Editor {
   // ---------- keyboard ----------
 
   private onKeyDown(e: KeyboardEvent): void {
+    if (this.opts.onKeyDown?.(e)) {
+      e.preventDefault()
+      return
+    }
     const b = this.buffer
     const pos = this.cursor
     const ctrl = e.ctrlKey || e.metaKey
@@ -336,6 +344,7 @@ export class Editor {
       return this.buffer.insert(at, text)
     })
     this.afterEdit(next)
+    if (kind === 'typing') this.opts.onType?.(text)
   }
 
   /** Ctrl+C / Ctrl+X. With nothing selected, copies/cuts the whole line (VS Code style). */

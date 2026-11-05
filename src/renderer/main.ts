@@ -15,6 +15,7 @@ import { LspClient } from './lsp/client'
 import { PythonLanguage, type Diagnostic } from './lsp/python'
 import { ProblemsView } from './problemsView'
 import { Tooltip } from './tooltip'
+import { Completion } from './completion'
 import { DEFAULT_SETTINGS, type Settings } from '../shared/settings'
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
@@ -29,7 +30,10 @@ const editor = new Editor($('editor'), {
   onEdit: (doc) => {
     workspace.notifyChanged()
     python.docChanged(doc)
+    completion.onEdit()
   },
+  onKeyDown: (e) => completion.handleKey(e),
+  onType: (text) => completion.onType(text),
   onMouseMove: (pos, e) => onEditorHover(pos, e),
   onMouseLeave: () => hideHover()
 })
@@ -72,6 +76,7 @@ function showDiagnostics(): void {
   panel.setTitle('problems', count ? `Problems (${count})` : 'Problems')
 }
 python.onDiagnostics(showDiagnostics)
+const completion = new Completion(editor, python, () => workspace.active)
 
 let lspRestarts = 0
 async function startLanguageServer(): Promise<void> {
@@ -175,6 +180,7 @@ workspace.subscribe(() => {
   }
   tree.highlight(doc?.path ?? null)
   findBar.refresh()
+  completion.syncDoc()
   python.syncDocs(workspace.docs)
   showDiagnostics()
   const folder = rootFolder?.split(/[\\/]/).pop()

@@ -7,6 +7,7 @@ import type { LspClient } from './client'
 import type { Doc } from '../editor/document'
 import type { Position } from '../editor/textBuffer'
 import { pathToUri, uriToPath } from '../../shared/uri'
+import type { CompletionItem } from './completionLogic'
 
 export interface Diagnostic {
   start: Position
@@ -181,6 +182,28 @@ export class PythonLanguage {
     this.client.notify('textDocument/didSave', { textDocument: { uri: pathToUri(doc.path) } })
   }
 
+  // ---------- completion ----------
+
+  /** Ask for suggestions at `pos`. `trigger` is the character that triggered it (e.g. '.'). */
+  async completion(doc: Doc, pos: Position, trigger?: string): Promise<{ items: CompletionItem[]; incomplete: boolean }> {
+    if (!this.started || !this.open.has(doc)) return { items: [], incomplete: false }
+    this.flush()
+    const res = await this.client.request<any>('textDocument/completion', {
+      textDocument: { uri: pathToUri(doc.path) },
+      position: toLsp(pos),
+      context: trigger ? { triggerKind: 2, triggerCharacter: trigger } : { triggerKind: 1 }
+    })
+    const list: any[] = Array.isArray(res) ? res : res?.items ?? []
+    return { items: list.map(toCompletionItem), incomplete: !Array.isArray(res) && !!res?.isIncomplete }
+  }
+
+  /** Fetch the details/docs for one suggestion (Pyright fills these in lazily). */
+  async resolveCompletion(item: CompletionItem): Promise<CompletionItem> {
+    if (!this.started || !item.raw || !this.serverCapabilities.completionProvider?.resolveProvider) return item
+    const res = await this.client.request<any>('completionItem/resolve', item.raw)
+    return { ...item, detail: res?.detail ?? item.detail, documentation: docText(res?.documentation) ?? item.documentation }
+  }
+
   // ---------- diagnostics ----------
 
   onDiagnostics(listener: () => void): void {
@@ -213,4 +236,25 @@ export class PythonLanguage {
   protected get lspClient(): LspClient {
     return this.client
   }
+}
+
+/** LSP documentation is a string or { kind, value }. */
+export function docText(doc: unknown): string | undefined {
+  if (typeof doc === 'string') return doc
+  if (doc && typeof doc === 'object' && 'value' in doc) return String((doc as { value: unknown }).value)
+  return undefined
+}
+
+function toCompletionItem(raw: any): CompletionItem {
+  const item: CompletionItem = { label: raw.label, kind: raw.kind, raw }
+  if (raw.detail) item.detail = raw.detail
+  const doc = docText(raw.documentation)
+  if (doc) item.documentation = doc
+  if (raw.insertText) item.insertText = raw.insertText
+  if (raw.filterText) item.filterText = raw.filterText
+  if (raw.sortText) item.sortText = raw.sortText
+  const te = raw.textEdit
+  const range = te?.range ?? te?.insert
+  if (te && range) item.textEdit = { start: toPosition(range.start), end: toPosition(range.end), text: te.newText }
+  return item
 }
