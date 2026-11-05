@@ -29,7 +29,7 @@ to real source code or runtime behaviour.
 - [x] File encoding detection and conversion (v0.23: UTF-8, UTF-8 with BOM, UTF-16 LE/BE, Western; Reopen / Save with Encoding)
 - [x] CRLF/LF line endings: shown in the status bar, click to convert (v0.23)
 - [x] Large-file mode and graceful handling of binary files (v0.23: binary files ask first; over 5 MB skips the language server; over 50 MB asks; over 256 MB refused)
-- [ ] Recovery of unsaved buffers after unexpected crashes
+- [x] Recovery of unsaved buffers after unexpected crashes (v0.24: backups of unsaved files, offered back when the folder is next opened)
 
 ## Tier 2: IDE foundations
 

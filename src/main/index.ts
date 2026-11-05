@@ -5,6 +5,8 @@ import { sortAndFilterEntries } from './dirEntries'
 import { listFiles } from './listFiles'
 import { createEntry, renameEntry } from './fileOps'
 import { readTextFile, writeTextFile } from './textFile'
+import { Backups } from './backups'
+import type { BackupData } from '../shared/api'
 import type { Encoding } from '../shared/encoding'
 import { searchProject } from './search'
 import { gitStatus } from './git'
@@ -22,6 +24,7 @@ const runner = new PythonRunner()
 const terminals = new Terminals()
 const languageServer = new LanguageServer()
 const debugAdapter = new DebugAdapter()
+const backups = new Backups(() => join(app.getPath('userData'), 'backups'))
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -60,7 +63,11 @@ function createWindow(): void {
       message: 'You have unsaved changes.',
       detail: 'Close anyway and lose them?'
     })
-    if (choice === 0) event.preventDefault() // preventDefault here = ignore the block and close
+    if (choice === 0) {
+      // The user chose to lose the changes: drop their crash-recovery copies too.
+      backups.clearSync()
+      event.preventDefault() // preventDefault here = ignore the block and close
+    }
   })
 
   if (process.env['ELECTRON_RENDERER_URL']) {
@@ -87,6 +94,9 @@ ipcMain.handle('fs:readDir', async (_event, dir: string) => {
 
 ipcMain.handle('fs:readText', (_event, path: string, opts?: { force?: boolean; encoding?: Encoding }) => readTextFile(path, opts))
 ipcMain.handle('fs:writeText', (_event, path: string, text: string, encoding: Encoding) => writeTextFile(path, text, encoding))
+ipcMain.handle('backup:write', (_event, data: BackupData) => backups.write(data))
+ipcMain.handle('backup:remove', (_event, path: string) => backups.remove(path))
+ipcMain.handle('backup:list', () => backups.list())
 ipcMain.handle('fs:create', (_event, dir: string, name: string, isDirectory: boolean) => createEntry(dir, name, isDirectory))
 ipcMain.handle('fs:rename', (_event, path: string, newName: string) => renameEntry(path, newName))
 // To the Recycle Bin (not a permanent delete), so mistakes can be undone.

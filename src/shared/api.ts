@@ -42,6 +42,16 @@ export interface GitStatusMap {
 }
 
 /** The only bridge between the UI (renderer) and the OS (main process). */
+/** A copy of an unsaved file, kept until it's saved (for crash recovery). */
+export interface BackupData {
+  path: string
+  text: string
+  encoding: Encoding
+  eol: 'LF' | 'CRLF'
+  /** When the backup was written (ms since 1970). */
+  time: number
+}
+
 export interface IdeApi {
   openFolder(): Promise<string | null>
   readDir(path: string): Promise<DirEntry[]>
@@ -50,6 +60,10 @@ export interface IdeApi {
   /** Read a file for the editor: detects its encoding, and reports binary / huge files. */
   readTextFile(path: string, opts?: { force?: boolean; encoding?: Encoding }): Promise<TextFileResult>
   writeTextFile(path: string, text: string, encoding: Encoding): Promise<void>
+  /** Crash recovery: keep / drop / list copies of unsaved files. */
+  backupWrite(data: BackupData): Promise<void>
+  backupRemove(path: string): Promise<void>
+  backupList(): Promise<BackupData[]>
   /** Create an empty file or folder in `dir` ("pkg/mod.py" makes "pkg" too). Returns its path. */
   createEntry(dir: string, name: string, isDirectory: boolean): Promise<string>
   /** Rename in place; returns the new path. */

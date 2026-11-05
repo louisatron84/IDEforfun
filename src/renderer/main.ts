@@ -1,7 +1,8 @@
 import { FileTree } from './fileTree'
 import { Editor, type EditorOptions } from './editor/editor'
 import type { Doc } from './editor/document'
-import { OpenRefused, Workspace, samePath } from './workspace'
+import { OpenRefused, Workspace, isInside, samePath } from './workspace'
+import { BackupKeeper } from './backups'
 import { ENCODINGS, encodingLabel } from '../shared/encoding'
 import { TabBar } from './tabBar'
 import { CommandRegistry, keyString } from './keymap'
@@ -538,6 +539,7 @@ workspace.subscribe(() => {
   findBar.refresh()
   completion.syncDoc()
   python.syncDocs(workspace.docs.filter((d) => !d.large))
+  backups.sync(workspace.docs)
   scheduleStatus()
   showDiagnostics()
   const folder = rootFolder?.split(/[\\/]/).pop()
@@ -600,6 +602,48 @@ async function openFolder(): Promise<void> {
   void refreshGit()
   lspRestarts = 0
   void startLanguageServer()
+  await offerRestore(folder)
+}
+
+// ---------- crash recovery ----------
+
+/** Keeps a backup of every unsaved file; left-over backups mean the app didn't close properly. */
+const backups = new BackupKeeper(window.api)
+
+/** Offer to bring back unsaved changes to files in `folder` that were lost in a crash. */
+async function offerRestore(folder: string): Promise<void> {
+  let found
+  try {
+    found = (await window.api.backupList()).filter((b) => isInside(b.path, folder))
+  } catch {
+    return
+  }
+  if (!found.length || rootFolder !== folder) return
+  const rel = (p: string) => p.slice(folder.length).replace(/^[\\/]+/, '')
+  const list = found.slice(0, 8).map((b) => `  • ${rel(b.path)}`).join('\n') + (found.length > 8 ? `\n  …and ${found.length - 8} more` : '')
+  const restore = confirm(
+    `IDEforfun didn't close properly last time, and ${found.length} file${found.length > 1 ? 's had' : ' had'} unsaved changes:\n\n${list}\n\n` +
+    'Restore those changes? (They open as unsaved; Ctrl+Z goes back to the file on disk.) Cancel throws them away.'
+  )
+  if (!restore) {
+    for (const b of found) void window.api.backupRemove(b.path)
+    return
+  }
+  for (const b of found) {
+    const doc = await openFile(b.path)
+    if (!doc) continue // deleted or unreadable: the alert said so
+    // One undoable step from the file on disk to the backed-up text.
+    if (doc.buffer.getLines().join('\n') !== b.text) {
+      doc.history.transact('other', { line: 0, col: 0 }, () => {
+        doc.buffer.delete({ line: 0, col: 0 }, doc.buffer.clamp({ line: Infinity, col: Infinity }))
+        return doc.buffer.insert({ line: 0, col: 0 }, b.text)
+      })
+    }
+    doc.eol = b.eol
+    doc.encoding = b.encoding
+    python.docChanged(doc)
+  }
+  workspace.notifyChanged()
 }
 
 // ---------- commands ----------

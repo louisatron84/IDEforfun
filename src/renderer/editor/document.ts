@@ -15,6 +15,8 @@ export class Doc {
   readonly highlighter: Highlighter
   /** Header lines of folded blocks (they move with edits, like breakpoints). */
   folds: number[] = []
+  /** Goes up on every change to the text (cheap "has it changed since?" checks). */
+  version = 0
   /** The file's encoding on disk (changing it makes the file "unsaved" until saved). */
   encoding: Encoding
   /** Big file: the language server is skipped for it to stay responsive. */
@@ -30,6 +32,7 @@ export class Doc {
     this.large = opts.large ?? false
     this.savedEol = this.buffer.eol
     this.buffer.subscribe((change) => {
+      this.version++
       if (this.folds.length && change.text.includes('\n')) this.folds = shiftLines(this.folds, change)
     })
   }
