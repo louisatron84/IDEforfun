@@ -27,6 +27,10 @@ your terminal has `ELECTRON_RUN_AS_NODE` set. Clear it first: `$env:ELECTRON_RUN
 | Ctrl+S | Save |
 | Ctrl+W / Ctrl+Tab / Ctrl+Shift+Tab | Close tab / next tab / previous tab |
 | Ctrl+F / Ctrl+H | Find / find and replace (Alt+C case, Alt+W word, Alt+R regex) |
+| Ctrl+Shift+F / Ctrl+Shift+E | Search the whole project / back to the file tree |
+| Ctrl+Space | Autocomplete (also pops up as you type) |
+| F12 or Ctrl+click / Alt+← | Go to definition / go back |
+| Ctrl+Shift+M | Problems (errors and warnings from Pyright) |
 | F5 / Shift+F5 | Run current Python file (auto-saves) / stop it |
 | Ctrl+` | Toggle terminal |
 | Ctrl+J | Toggle bottom panel |
@@ -49,5 +53,7 @@ your terminal has `ELECTRON_RUN_AS_NODE` set. Clear it first: `$env:ELECTRON_RUN
 - `styles.css`: all colors are CSS variables (dark + light themes), ready for a redesign
 
 ## Third-party code
-Everything above is hand-written except the integrated terminal, which uses
-[xterm.js](https://xtermjs.org/) to draw and [node-pty](https://github.com/microsoft/node-pty) to run the shell.
+Everything above is hand-written except two pieces: the integrated terminal uses
+[xterm.js](https://xtermjs.org/) + [node-pty](https://github.com/microsoft/node-pty), and Python intelligence
+(errors, autocomplete, hover, go to definition) comes from the [Pyright](https://github.com/microsoft/pyright) language server.
+The protocol client talking to it is hand-written (`src/renderer/lsp/`).
