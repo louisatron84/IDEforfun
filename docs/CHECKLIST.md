@@ -23,7 +23,7 @@ The roadmap. Work through it roughly top to bottom; each tier builds on the one 
 - [x] Settings (font size, theme, tab width) (v0.10: + light theme, Python interpreter, Ctrl+= / Ctrl+-)
 
 ## Tier 3: smart features
-- [ ] Language Server Protocol client (Pyright): errors ✓ (v0.13), autocomplete ✓ (v0.14), go-to-definition, hover
+- [x] Language Server Protocol client (Pyright): errors (v0.13), autocomplete (v0.14), hover + go-to-definition (v0.15)
 - [x] Search across the project (v0.12: Ctrl+Shift+F, case / word / regex)
 - [x] Git status in the file tree (v0.12: M/U/A/D badges, folder dots, auto-refresh)
 - [ ] Debugger (DAP, debugpy)

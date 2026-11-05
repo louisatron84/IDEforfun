@@ -16,6 +16,9 @@ import { PythonLanguage, type Diagnostic } from './lsp/python'
 import { ProblemsView } from './problemsView'
 import { Tooltip } from './tooltip'
 import { Completion } from './completion'
+import { hoverSections } from './lsp/markdown'
+import type { TooltipSection } from './tooltip'
+import { wordStartAt } from './lsp/completionLogic'
 import { DEFAULT_SETTINGS, type Settings } from '../shared/settings'
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
@@ -34,6 +37,7 @@ const editor = new Editor($('editor'), {
   },
   onKeyDown: (e) => completion.handleKey(e),
   onType: (text) => completion.onType(text),
+  onCtrlClick: (pos) => void goToDefinition(pos),
   onMouseMove: (pos, e) => onEditorHover(pos, e),
   onMouseLeave: () => hideHover()
 })
@@ -107,7 +111,7 @@ window.api.onLspExit((code) => {
   }
 })
 
-// ---------- hover tooltips (errors under the mouse) ----------
+// ---------- hover tooltips (errors + type info under the mouse) ----------
 
 const tooltip = new Tooltip()
 let hoverTimer: number | undefined
@@ -127,21 +131,68 @@ function covers(d: Diagnostic, pos: { line: number; col: number }): boolean {
   return afterStart && beforeEnd
 }
 
+const isWordChar = (ch: string | undefined) => !!ch && /[\p{L}\p{N}_]/u.test(ch)
+
 function onEditorHover(pos: { line: number; col: number } | null, e: MouseEvent): void {
   const doc = workspace.active
-  const hits = pos && doc ? python.diagnosticsFor(doc.path).filter((d) => d.severity <= 3 && covers(d, pos)) : []
-  const key = hits.map((d) => d.message).join('|')
+  if (!pos || !doc) {
+    hideHover()
+    return
+  }
+  const hits = python.diagnosticsFor(doc.path).filter((d) => d.severity <= 3 && covers(d, pos))
+  // Hovering anywhere on the same word (or same set of errors) keeps the same tooltip.
+  const lineText = doc.buffer.getLine(pos.line)
+  const onWord = isWordChar(lineText[pos.col])
+  const wordStart = onWord ? wordStartAt(lineText, pos.col + 1) : -1
+  const key = `${doc.path}:${pos.line}:${wordStart}|${hits.map((d) => d.message).join('|')}`
   if (key === hoverKey) return
   hideHover()
-  if (!hits.length) return
+  if (!hits.length && !onWord) return
   hoverKey = key
   const anchor = { left: e.clientX, top: e.clientY - 10, bottom: e.clientY + 10 }
-  hoverTimer = window.setTimeout(() => {
-    tooltip.show(hits.map((d) => ({
+  hoverTimer = window.setTimeout(async () => {
+    const sections: TooltipSection[] = hits.map((d) => ({
       kind: SEVERITY_LABEL[d.severity],
       text: `${d.message}${d.code ? `  (${d.code})` : ''}`
-    })), anchor)
-  }, 350)
+    }))
+    if (onWord) {
+      try {
+        const md = await python.hover(doc, pos)
+        if (md) sections.push(...hoverSections(md))
+      } catch {
+        // server busy: show what we have
+      }
+    }
+    if (hoverKey !== key || !sections.length) return // mouse moved on meanwhile
+    tooltip.show(sections, anchor)
+  }, 400)
+}
+
+// ---------- go to definition (F12 / Ctrl+click) and back (Alt+Left) ----------
+
+const navigationStack: { path: string; line: number; col: number }[] = []
+
+async function goToDefinition(pos = editor.getCursor()): Promise<void> {
+  const doc = workspace.active
+  if (!doc) return
+  hideHover()
+  let target
+  try {
+    target = await python.definition(doc, pos)
+  } catch {
+    return
+  }
+  if (!target) return
+  navigationStack.push({ path: doc.path, line: pos.line, col: pos.col })
+  if (navigationStack.length > 50) navigationStack.shift()
+  if (await openFile(target.path)) editor.select(target.start, target.end)
+  editor.focus()
+}
+
+async function goBack(): Promise<void> {
+  const prev = navigationStack.pop()
+  if (!prev) return
+  if (await openFile(prev.path)) editor.goTo(prev.line, prev.col)
 }
 
 // ---------- settings ----------
@@ -285,6 +336,8 @@ commands.register({ id: 'run.file', title: 'Run Python File', keys: 'F5', when: 
 commands.register({ id: 'run.stop', title: 'Stop Running', keys: 'Shift+F5', run: () => void window.api.stopRun() })
 commands.register({ id: 'panel.toggle', title: 'Toggle Bottom Panel', keys: 'Ctrl+J', run: () => panel.toggle() })
 commands.register({ id: 'panel.output', title: 'Show Output', run: () => panel.show('output') })
+commands.register({ id: 'nav.definition', title: 'Go to Definition', keys: 'F12', when: hasDoc, run: () => void goToDefinition() })
+commands.register({ id: 'nav.back', title: 'Go Back', keys: 'Alt+ArrowLeft', run: () => void goBack() })
 commands.register({ id: 'panel.problems', title: 'Show Problems', keys: 'Ctrl+Shift+M', run: () => panel.show('problems') })
 commands.register({ id: 'python.restartServer', title: 'Restart Python Language Server', when: () => rootFolder !== null, run: () => { lspRestarts = 0; void startLanguageServer() } })
 commands.register({

@@ -37,6 +37,8 @@ export interface EditorOptions {
   onKeyDown?: (e: KeyboardEvent) => boolean
   /** Called after the user typed text (not pasted), e.g. to open autocomplete. */
   onType?: (text: string) => void
+  /** Ctrl+click on the text (after the cursor was placed there), e.g. go to definition. */
+  onCtrlClick?: (pos: Position) => void
 }
 
 /** An underlined range, e.g. an error from the language server. */
@@ -409,6 +411,10 @@ export class Editor {
     this.render(false)
     this.focus()
 
+    if ((e.ctrlKey || e.metaKey) && e.detail === 1 && !e.shiftKey) {
+      this.opts.onCtrlClick?.(pos)
+      return
+    }
     if (e.detail !== 1) return
     // Drag to select: track the mouse even outside the editor until the button is released.
     const onMove = (ev: MouseEvent) => {

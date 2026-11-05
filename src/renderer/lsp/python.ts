@@ -204,6 +204,43 @@ export class PythonLanguage {
     return { ...item, detail: res?.detail ?? item.detail, documentation: docText(res?.documentation) ?? item.documentation }
   }
 
+  // ---------- hover & go to definition ----------
+
+  /** Type/signature/docs for the symbol at `pos`, as Markdown (or null). */
+  async hover(doc: Doc, pos: Position): Promise<string | null> {
+    if (!this.started || !this.open.has(doc)) return null
+    this.flush()
+    const res = await this.client.request<any>('textDocument/hover', {
+      textDocument: { uri: pathToUri(doc.path) },
+      position: toLsp(pos)
+    })
+    const c = res?.contents
+    if (!c) return null
+    const parts = Array.isArray(c) ? c : [c]
+    const text = parts
+      .map((p: any) => (typeof p === 'string' ? p : p.language ? '```' + p.language + '\n' + p.value + '\n```' : p.value))
+      .join('\n\n')
+      .trim()
+    return text || null
+  }
+
+  /** Where the symbol at `pos` is defined (first result), or null. */
+  async definition(doc: Doc, pos: Position): Promise<{ path: string; start: Position; end: Position } | null> {
+    if (!this.started || !this.open.has(doc)) return null
+    this.flush()
+    const res = await this.client.request<any>('textDocument/definition', {
+      textDocument: { uri: pathToUri(doc.path) },
+      position: toLsp(pos)
+    })
+    const first = Array.isArray(res) ? res[0] : res
+    if (!first) return null
+    // Location { uri, range } or LocationLink { targetUri, targetSelectionRange }
+    const uri: string = first.uri ?? first.targetUri
+    const range = first.range ?? first.targetSelectionRange ?? first.targetRange
+    if (!uri || !range) return null
+    return { path: uriToPath(uri), start: toPosition(range.start), end: toPosition(range.end) }
+  }
+
   // ---------- diagnostics ----------
 
   onDiagnostics(listener: () => void): void {

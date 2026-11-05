@@ -716,3 +716,11 @@ body { display: flex; flex-direction: column; }
 .completion-details[hidden] { display: none; }
 .completion-detail { font-family: var(--font-code); color: var(--tok-function); white-space: pre-wrap; word-break: break-word; }
 .completion-doc { margin-top: 6px; color: var(--fg-muted); white-space: pre-wrap; }
+
+/* ---- hover info ---- */
+.tooltip-section.code {
+  color: var(--tok-function);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.tooltip { max-height: 50vh; overflow: hidden; }
