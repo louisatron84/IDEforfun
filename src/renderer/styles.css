@@ -91,7 +91,12 @@ body { display: flex; flex-direction: column; }
 
 /* ---- editor ---- */
 #editor-pane { position: relative; flex: 1; display: flex; flex-direction: column; min-width: 0; }
-#editor { flex: 1; min-height: 0; }
+#groups { flex: 1; min-height: 0; display: flex; }
+.group { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }
+.group + .group { border-left: 1px solid var(--border); }
+.editor-slot { flex: 1; min-height: 0; }
+/* With a split, the inactive side's tab row is dimmed so it's clear where typing goes. */
+#groups.split .group:not(.active) .tab.active { opacity: 0.7; box-shadow: none; }
 .editor-host { position: relative; }
 .editor-host > .editor { height: 100%; }
 
@@ -220,7 +225,7 @@ body { display: flex; flex-direction: column; }
 .tok-comment { color: var(--tok-comment); font-style: italic; }
 
 /* ---- tabs ---- */
-#tabs {
+.tabs {
   display: flex;
   min-height: 34px;
   overflow-x: auto;

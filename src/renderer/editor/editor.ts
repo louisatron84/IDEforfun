@@ -45,6 +45,22 @@ export interface EditorOptions {
   onCtrlClick?: (pos: Position) => void
   /** Click in the line-number gutter (0-based line), e.g. to toggle a breakpoint. */
   onGutterClick?: (line: number) => void
+  /** The editor got keyboard focus (with a split view: this side became active). */
+  onFocus?: () => void
+}
+
+/**
+ * Where this editor is in one document: cursor(s) and scroll position.
+ * Kept per editor, so the same file open in both halves of a split view
+ * has its own cursor on each side.
+ */
+interface ViewState {
+  cursor: Position
+  anchor: Position
+  /** Extra cursors/selections besides the main one (multi-cursor editing). Usually empty. */
+  extras: sel.Selection[]
+  scrollTop: number
+  scrollLeft: number
 }
 
 /** An underlined range, e.g. an error from the language server. */
@@ -69,6 +85,10 @@ export class Editor {
   /** The document being shown (an empty placeholder when no file is open). */
   private doc: Doc = new Doc('', '')
   private hasDoc = false
+  private views = new WeakMap<Doc, ViewState>()
+  private view: ViewState = this.viewFor(this.doc)
+  /** A redraw requested because the shown file changed elsewhere (e.g. the other side of a split). */
+  private passiveFrame = 0
   /** On-screen column to aim for when moving up/down (null = use current). */
   private goalVisual: number | null = null
   private charWidth = 8
@@ -80,10 +100,36 @@ export class Editor {
   private get history() { return this.doc.history }
   private get highlighter() { return this.doc.highlighter }
   /** The cursor is the selection's head; `anchor` is where the selection started. */
-  private get cursor() { return this.doc.cursor }
-  private set cursor(p: Position) { this.doc.cursor = p }
-  private get anchor() { return this.doc.anchor }
-  private set anchor(p: Position) { this.doc.anchor = p }
+  private get cursor() { return this.view.cursor }
+  private set cursor(p: Position) { this.view.cursor = p }
+  private get anchor() { return this.view.anchor }
+  private set anchor(p: Position) { this.view.anchor = p }
+
+  /** This editor's cursor/scroll state for a doc (created on first use). */
+  private viewFor(doc: Doc): ViewState {
+    let v = this.views.get(doc)
+    if (v) return v
+    const view: ViewState = { cursor: { line: 0, col: 0 }, anchor: { line: 0, col: 0 }, extras: [], scrollTop: 0, scrollLeft: 0 }
+    v = view
+    this.views.set(doc, v)
+    doc.buffer.subscribe((change) => {
+      // Edits made elsewhere (the other side of a split, or code) shift this view's cursors along.
+      view.cursor = mc.mapPosition(view.cursor, change)
+      view.anchor = mc.mapPosition(view.anchor, change)
+      view.extras = view.extras.map((s) => ({ anchor: mc.mapPosition(s.anchor, change), head: mc.mapPosition(s.head, change) }))
+      if (this.hasDoc && this.doc === doc) this.schedulePassiveRender()
+    })
+    return v
+  }
+
+  /** Redraw on the next frame without scrolling (the change may have come from elsewhere). */
+  private schedulePassiveRender(): void {
+    if (this.passiveFrame) return
+    this.passiveFrame = requestAnimationFrame(() => {
+      this.passiveFrame = 0
+      if (this.hasDoc) this.render(true, 'none')
+    })
+  }
 
   constructor(container: HTMLElement, private readonly opts: EditorOptions = {}) {
     this.root = el('div', 'editor')
@@ -119,7 +165,10 @@ export class Editor {
 
     this.input.addEventListener('keydown', (e) => this.onKeyDown(e))
     this.input.addEventListener('input', (e) => this.onInput(e as InputEvent))
-    this.input.addEventListener('focus', () => this.root.classList.add('focused'))
+    this.input.addEventListener('focus', () => {
+      this.root.classList.add('focused')
+      this.opts.onFocus?.()
+    })
     this.input.addEventListener('blur', () => this.root.classList.remove('focused'))
     this.textArea.addEventListener('mousedown', (e) => this.onMouseDown(e))
     this.textArea.addEventListener('mousemove', (e) => {
@@ -149,9 +198,10 @@ export class Editor {
   }
 
   /** Show a document, remembering the scroll position of the one being left. */
-  show(doc: Doc): void {
+  show(doc: Doc, focus = true): void {
     this.rememberScroll()
     this.doc = doc
+    this.view = this.viewFor(doc)
     this.hasDoc = true
     this.goalVisual = null
     this.root.className = 'editor'
@@ -160,12 +210,12 @@ export class Editor {
     this.measure()
     this.rebuildFolds()
     this.updateSize()
-    this.root.scrollTop = doc.scrollTop
-    this.root.scrollLeft = doc.scrollLeft
+    this.root.scrollTop = this.view.scrollTop
+    this.root.scrollLeft = this.view.scrollLeft
     this.renderLines()
     this.renderSelection()
     this.positionCursor()
-    this.focus()
+    if (focus) this.focus()
   }
 
   get currentDoc(): Doc | null {
@@ -230,14 +280,15 @@ export class Editor {
     this.minimap.canvas.hidden = true
     this.hasDoc = false
     this.doc = new Doc('', '')
+    this.view = this.viewFor(this.doc)
     this.root.className = 'editor empty'
     this.root.textContent = message
   }
 
   private rememberScroll(): void {
     if (!this.hasDoc) return
-    this.doc.scrollTop = this.root.scrollTop
-    this.doc.scrollLeft = this.root.scrollLeft
+    this.view.scrollTop = this.root.scrollTop
+    this.view.scrollLeft = this.root.scrollLeft
   }
 
   // ---------- selection helpers ----------
@@ -277,16 +328,16 @@ export class Editor {
 
   /** True when there are extra cursors besides the main one. */
   private get multi(): boolean {
-    return this.doc.extras.length > 0
+    return this.view.extras.length > 0
   }
 
   /** How many cursors there are (1 normally). */
   get cursorCount(): number {
-    return 1 + (this.hasDoc ? this.doc.extras.length : 0)
+    return 1 + (this.hasDoc ? this.view.extras.length : 0)
   }
 
   private allSelections(): mc.MultiSelection[] {
-    return [{ anchor: this.anchor, head: this.cursor, primary: true }, ...this.doc.extras]
+    return [{ anchor: this.anchor, head: this.cursor, primary: true }, ...this.view.extras]
   }
 
   /** Replace all cursors; the one marked primary becomes the main cursor. */
@@ -295,12 +346,12 @@ export class Editor {
     const primary = all.find((s) => s.primary)!
     this.anchor = primary.anchor
     this.cursor = primary.head
-    this.doc.extras = all.filter((s) => s !== primary).map(({ anchor, head }) => ({ anchor, head }))
+    this.view.extras = all.filter((s) => s !== primary).map(({ anchor, head }) => ({ anchor, head }))
   }
 
   /** Back to a single cursor (the main one). */
   private clearExtras(): void {
-    if (this.hasDoc) this.doc.extras = []
+    if (this.hasDoc) this.view.extras = []
   }
 
   /** Run an edit at every cursor as one undo step. */
@@ -930,7 +981,7 @@ export class Editor {
    * 'nearest' scrolls as little as possible, 'center' puts it mid-screen
    * (used for jumps such as find results and error links).
    */
-  private render(textChanged = true, scroll: 'nearest' | 'center' = 'nearest'): void {
+  private render(textChanged = true, scroll: 'nearest' | 'center' | 'none' = 'nearest'): void {
     if (textChanged) this.rebuildFolds()
     if (this.foldMap.isHidden(this.cursor.line)) {
       // The cursor moved into a folded block (e.g. go to line, find): open it.
@@ -946,7 +997,7 @@ export class Editor {
     if (textChanged) this.updateSize()
     this.bracketMatch = this.hasSelection() || this.multi ? null : this.findBracketMatch()
     const { x, y } = this.positionCursor()
-    this.scrollIntoView(x, y, scroll)
+    if (scroll !== 'none') this.scrollIntoView(x, y, scroll)
     this.renderLines()
     this.renderSelection()
     this.minimap.schedule()
@@ -1118,7 +1169,7 @@ export class Editor {
       }
     }
     // Extra cursors: their selections, plus a drawn cursor each (the main cursor is drawn separately).
-    for (const s of this.doc.extras) {
+    for (const s of this.view.extras) {
       const { start, end } = sel.selectionRange(s)
       if (end.line < firstVisible || start.line > lastVisible) continue
       if (!sel.isEmpty(s)) this.addBoxes(boxes, start, end, 'sel', firstVisible, lastVisible)

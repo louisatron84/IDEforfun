@@ -28,6 +28,7 @@ your terminal has `ELECTRON_RUN_AS_NODE` set. Clear it first: `$env:ELECTRON_RUN
 | F2 / Delete (in the file tree) | Rename / delete (to the Recycle Bin) |
 | Ctrl+S | Save |
 | Ctrl+W / Ctrl+Tab / Ctrl+Shift+Tab | Close tab / next tab / previous tab |
+| Ctrl+\ / Ctrl+1 / Ctrl+2 | Split the editor (same file on both sides, own cursors) / focus left / focus right |
 | Ctrl+F / Ctrl+H | Find / find and replace (Alt+C case, Alt+W word, Alt+R regex) |
 | Ctrl+Shift+F / Ctrl+Shift+E | Search the whole project / back to the file tree |
 | Ctrl+Space | Autocomplete (also pops up as you type) |

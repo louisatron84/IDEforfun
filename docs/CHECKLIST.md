@@ -25,7 +25,7 @@ to real source code or runtime behaviour.
 - [x] Comment/uncomment selection (v0.19: Ctrl+/)
 - [x] Code folding (functions, classes and blocks) (v0.20: gutter arrows, Ctrl+Shift+[ / ], Fold All / Unfold All; folds follow edits)
 - [x] Minimap (v0.21: token colors, on-screen box, click/drag to scroll, follows folds; "Toggle Minimap" in the palette)
-- [ ] Multiple editor groups / split view
+- [x] Multiple editor groups / split view (v0.22: two side-by-side groups with their own tabs and cursors; Ctrl+\, Ctrl+1/2, Move Tab to the Other Side)
 - [ ] File encoding detection and conversion
 - [ ] CRLF/LF line endings: show and convert (files already keep their own line endings when saved)
 - [ ] Large-file mode and graceful handling of binary files

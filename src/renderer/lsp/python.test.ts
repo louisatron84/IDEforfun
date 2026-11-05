@@ -19,7 +19,7 @@ function setup() {
 }
 
 const edit = (doc: Doc, text: string) =>
-  doc.history.transact('typing', doc.cursor, () => doc.buffer.insert(doc.buffer.clamp({ line: 99, col: 99 }), text))
+  doc.history.transact('typing', { line: 0, col: 0 }, () => doc.buffer.insert(doc.buffer.clamp({ line: 99, col: 99 }), text))
 
 describe('PythonLanguage', () => {
   it('initializes, then sends initialized and the configuration', async () => {

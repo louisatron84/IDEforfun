@@ -1,5 +1,5 @@
 import { FileTree } from './fileTree'
-import { Editor } from './editor/editor'
+import { Editor, type EditorOptions } from './editor/editor'
 import type { Doc } from './editor/document'
 import { Workspace, samePath } from './workspace'
 import { TabBar } from './tabBar'
@@ -32,7 +32,10 @@ let rootFolder: string | null = null
 const workspace = new Workspace(window.api, (doc: Doc) =>
   confirm(`${doc.name} has unsaved changes. Close it without saving?`)
 )
-const editor = new Editor($('editor'), {
+// ---------- editors (one per tab group; two when the view is split) ----------
+
+/** Callbacks for the editor of group `index`. */
+const editorOptions = (index: number): EditorOptions => ({
   onEdit: (doc) => {
     workspace.notifyChanged()
     python.docChanged(doc)
@@ -41,11 +44,68 @@ const editor = new Editor($('editor'), {
   onKeyDown: (e) => completion.handleKey(e),
   onType: (text) => completion.onType(text),
   onCtrlClick: (pos) => void goToDefinition(pos),
-  onGutterClick: (line) => toggleBreakpoint(line),
-  onMouseMove: (pos, e) => onEditorHover(pos, e),
-  onMouseLeave: () => hideHover()
+  onGutterClick: (line) => {
+    workspace.focusGroup(index)
+    toggleBreakpoint(line)
+  },
+  // Hover info is for the side you're working in.
+  onMouseMove: (pos, e) => {
+    if (index === workspace.activeGroup) onEditorHover(pos, e)
+  },
+  onMouseLeave: () => hideHover(),
+  onFocus: () => workspace.focusGroup(index)
 })
-const tabBar = new TabBar($('tabs'), workspace)
+const groupEls: HTMLElement[] = [$('group-0')]
+const editors: Editor[] = [new Editor($('editor'), editorOptions(0))]
+const tabBars: TabBar[] = [new TabBar($('tabs'), workspace, 0)]
+let minimapOn = true
+
+/**
+ * "The editor": whichever side has focus. Find, autocomplete, the debugger
+ * and every command talk to this, so they follow the active side.
+ */
+const editor = new Proxy({} as Editor, {
+  get: (_target, key) => {
+    const e = editors[workspace.activeGroup] ?? editors[0]
+    const value = Reflect.get(e, key, e)
+    return typeof value === 'function' ? value.bind(e) : value
+  },
+  set: (_target, key, value) => {
+    for (const e of editors) Reflect.set(e, key, value, e)
+    return true
+  }
+})
+
+/** Add or remove the second editor to match the workspace's groups. */
+function syncGroups(): void {
+  const host = $('groups')
+  while (editors.length < workspace.groups.length) {
+    const i = editors.length
+    const group = document.createElement('div')
+    group.className = 'group'
+    group.id = `group-${i}`
+    const tabs = document.createElement('div')
+    tabs.className = 'tabs'
+    tabs.setAttribute('role', 'tablist')
+    const slot = document.createElement('div')
+    slot.className = 'editor-slot'
+    group.append(tabs, slot)
+    host.append(group)
+    groupEls.push(group)
+    const ed = new Editor(slot, editorOptions(i))
+    ed.refreshLayout(settings.tabSize)
+    ed.setMinimap(minimapOn)
+    editors.push(ed)
+    tabBars.push(new TabBar(tabs, workspace, i))
+  }
+  while (editors.length > workspace.groups.length) {
+    groupEls.pop()!.remove()
+    editors.pop()
+    tabBars.pop()
+  }
+  host.classList.toggle('split', editors.length > 1)
+  groupEls.forEach((g, i) => g.classList.toggle('active', i === workspace.activeGroup))
+}
 const tree = new FileTree($('file-tree'), {
   openFile: (path) => void openFile(path),
   created: (path, isDirectory) => {
@@ -128,10 +188,12 @@ function watchDoc(doc: Doc): void {
 
 /** Draw breakpoints and the paused line for the file in the editor. */
 function updateLineMarkers(): void {
-  const doc = editor.currentDoc
-  if (!doc) return
-  const exec = pausedAt && samePath(pausedAt.path, doc.path) ? pausedAt.line : null
-  editor.setLineMarkers(breakpoints.linesFor(doc.path), exec)
+  for (const ed of editors) {
+    const doc = ed.currentDoc
+    if (!doc) continue
+    const exec = pausedAt && samePath(pausedAt.path, doc.path) ? pausedAt.line : null
+    ed.setLineMarkers(breakpoints.linesFor(doc.path), exec)
+  }
 }
 
 breakpoints.subscribe((path) => {
@@ -284,8 +346,10 @@ const problems = new ProblemsView(
 panel.addView('problems', 'Problems', problems.body, problems.actions)
 
 function showDiagnostics(): void {
-  const doc = workspace.active
-  editor.setSquiggles(doc ? python.diagnosticsFor(doc.path) : [])
+  for (const ed of editors) {
+    const doc = ed.currentDoc
+    ed.setSquiggles(doc ? python.diagnosticsFor(doc.path) : [])
+  }
   const count = problems.render(python.allDiagnostics())
   panel.setTitle('problems', count ? `Problems (${count})` : 'Problems')
 }
@@ -436,7 +500,7 @@ function applySettings(s: Settings): void {
   root.style.setProperty('--line-height', `${Math.round(s.fontSize * 1.45)}px`)
   root.style.setProperty('--tab-size', String(s.tabSize))
   root.dataset.theme = s.theme
-  editor.refreshLayout(s.tabSize)
+  for (const ed of editors) ed.refreshLayout(s.tabSize)
   terminal.applyTheme(s.fontSize)
 }
 
@@ -451,12 +515,19 @@ void window.api.getSettings().then((s) => {
 
 // Keep the editor, tabs, tree highlight and window title in sync with the workspace.
 workspace.subscribe(() => {
-  tabBar.render()
+  syncGroups()
+  workspace.groups.forEach((g, i) => {
+    tabBars[i].render()
+    const ed = editors[i]
+    if (g.active !== ed.currentDoc || !g.active) {
+      // Only the active side takes keyboard focus.
+      if (g.active) ed.show(g.active, i === workspace.activeGroup)
+      else ed.showPlaceholder(rootFolder ? 'Pick a file from the tree' : 'Open a folder and pick a file')
+    }
+  })
   const doc = workspace.active
-  if (doc !== editor.currentDoc || !doc) {
-    if (doc) editor.show(doc)
-    else editor.showPlaceholder(rootFolder ? 'Pick a file from the tree' : 'Open a folder and pick a file')
-  }
+  // Find highlights belong to the side being searched.
+  editors.forEach((ed, i) => { if (i !== workspace.activeGroup) ed.setMatches([]) })
   tree.highlight(doc?.path ?? null)
   for (const d of workspace.docs) watchDoc(d)
   updateLineMarkers()
@@ -607,11 +678,26 @@ commands.register({ id: 'debug.clearBreakpoints', title: 'Remove All Breakpoints
 commands.register({
   id: 'editor.toggleMinimap', title: 'Toggle Minimap',
   run: () => {
-    editor.setMinimap(!editor.minimapVisible)
-    try { localStorage.setItem('ideforfun.minimap', editor.minimapVisible ? '1' : '0') } catch { /* storage unavailable */ }
+    minimapOn = !minimapOn
+    for (const ed of editors) ed.setMinimap(minimapOn)
+    try { localStorage.setItem('ideforfun.minimap', minimapOn ? '1' : '0') } catch { /* storage unavailable */ }
   }
 })
-try { if (localStorage.getItem('ideforfun.minimap') === '0') editor.setMinimap(false) } catch { /* storage unavailable */ }
+try {
+  if (localStorage.getItem('ideforfun.minimap') === '0') {
+    minimapOn = false
+    for (const ed of editors) ed.setMinimap(false)
+  }
+} catch { /* storage unavailable */ }
+const focusGroup = (i: number) => {
+  if (!workspace.groups[i]) return
+  workspace.focusGroup(i)
+  editor.focus()
+}
+commands.register({ id: 'view.split', title: 'Split Editor (or switch sides)', keys: 'Ctrl+\\', when: hasDoc, run: () => { workspace.split(); editor.focus() } })
+commands.register({ id: 'view.moveToOtherGroup', title: 'Move Tab to the Other Side', when: hasDoc, run: () => { workspace.moveToOtherGroup(); editor.focus() } })
+commands.register({ id: 'view.focusLeft', title: 'Focus Left Editor', keys: 'Ctrl+1', run: () => focusGroup(0) })
+commands.register({ id: 'view.focusRight', title: 'Focus Right Editor', keys: 'Ctrl+2', run: () => focusGroup(1) })
 commands.register({ id: 'editor.fold', title: 'Fold Block (Ctrl+Shift+[)', when: hasDoc, run: () => editor.fold() })
 commands.register({ id: 'editor.unfold', title: 'Unfold Block (Ctrl+Shift+])', when: hasDoc, run: () => editor.unfold() })
 commands.register({ id: 'editor.foldAll', title: 'Fold All', when: hasDoc, run: () => editor.foldAll() })

@@ -5,7 +5,12 @@
 import type { Workspace } from './workspace'
 
 export class TabBar {
-  constructor(private readonly container: HTMLElement, private readonly workspace: Workspace) {
+  constructor(
+    private readonly container: HTMLElement,
+    private readonly workspace: Workspace,
+    /** Which tab group this row shows. */
+    private readonly groupIndex = 0
+  ) {
     // Mouse wheel scrolls the tab row sideways when there are many tabs.
     container.addEventListener('wheel', (e) => {
       if (e.deltaY) container.scrollLeft += e.deltaY
@@ -13,10 +18,12 @@ export class TabBar {
   }
 
   render(): void {
-    const tabs = this.workspace.docs.map((doc) => {
+    const group = this.workspace.groups[this.groupIndex]
+    if (!group) return
+    const tabs = group.docs.map((doc) => {
       const tab = document.createElement('div')
       tab.className = 'tab'
-      if (doc === this.workspace.active) tab.classList.add('active')
+      if (doc === group.active) tab.classList.add('active')
       if (doc.dirty) tab.classList.add('dirty')
       tab.title = doc.path
       tab.setAttribute('role', 'tab')
@@ -31,17 +38,17 @@ export class TabBar {
       close.setAttribute('aria-label', `Close ${doc.name}`)
       close.addEventListener('click', (e) => {
         e.stopPropagation()
-        this.workspace.close(doc)
+        this.workspace.close(doc, this.groupIndex)
       })
 
       tab.append(name, close)
       tab.addEventListener('mousedown', (e) => {
         if (e.button === 1) {
           e.preventDefault() // middle-click closes
-          this.workspace.close(doc)
+          this.workspace.close(doc, this.groupIndex)
         }
       })
-      tab.addEventListener('click', () => this.workspace.activate(doc))
+      tab.addEventListener('click', () => this.workspace.activate(doc, this.groupIndex))
       return tab
     })
     this.container.replaceChildren(...tabs)

@@ -1,27 +1,19 @@
 /**
- * One open file: its text, undo history, highlighting state, and where the
- * user was (cursor, selection, scroll). Each tab owns one Doc; the Editor
- * displays whichever Doc is active, so switching tabs keeps everything.
+ * One open file: its text, undo history, highlighting state and folded
+ * blocks. A file open in both halves of a split view is one Doc; each
+ * Editor keeps its own cursor and scroll position for it.
  */
-import type { Position } from './textBuffer'
 import { TextBuffer } from './textBuffer'
 import { History } from './history'
 import { Highlighter } from './highlighter'
-import type { Selection } from './selection'
 import { shiftLines } from './lines'
 
 export class Doc {
   readonly buffer: TextBuffer
   readonly history: History
   readonly highlighter: Highlighter
-  cursor: Position = { line: 0, col: 0 }
-  anchor: Position = { line: 0, col: 0 }
-  /** Extra cursors/selections besides the main one (multi-cursor editing). Usually empty. */
-  extras: Selection[] = []
   /** Header lines of folded blocks (they move with edits, like breakpoints). */
   folds: number[] = []
-  scrollTop = 0
-  scrollLeft = 0
 
   constructor(public path: string, text: string) {
     this.buffer = new TextBuffer(text)

@@ -27,9 +27,17 @@ export function isInside(path: string, parent: string): boolean {
   return norm(path).startsWith(base.endsWith(sep) ? base : base + sep)
 }
 
+/** One row of tabs with its own active tab (the editor area can be split into two). */
+export interface Group {
+  docs: Doc[]
+  active: Doc | null
+}
+
 export class Workspace {
-  docs: Doc[] = []
-  active: Doc | null = null
+  /** Tab groups, left to right. There's always at least one. */
+  groups: Group[] = [{ docs: [], active: null }]
+  /** The group with keyboard focus: commands and "the active file" refer to it. */
+  activeGroup = 0
   private readonly listeners = new Set<() => void>()
 
   constructor(
@@ -48,45 +56,130 @@ export class Workspace {
     for (const l of this.listeners) l()
   }
 
+  private get group(): Group {
+    return this.groups[this.activeGroup]
+  }
+
+  /** Every open file once (a file open in both groups is one Doc). */
+  get docs(): Doc[] {
+    const all: Doc[] = []
+    for (const g of this.groups) for (const d of g.docs) if (!all.includes(d)) all.push(d)
+    return all
+  }
+
+  /** The active file of the focused group. */
+  get active(): Doc | null {
+    return this.group.active
+  }
+
   find(path: string): Doc | undefined {
     return this.docs.find((d) => samePath(d.path, path))
   }
 
-  /** Open a file in a tab (or switch to it if it's already open). Throws if it can't be read. */
+  /** Open a file in a tab of the focused group (or switch to it). Throws if it can't be read. */
   async open(path: string): Promise<Doc> {
     const existing = this.find(path)
     if (existing) {
-      this.activate(existing)
+      this.show(existing)
       return existing
     }
     const text = await this.api.readFile(path)
     // It may have been opened while we were reading (double-click).
     const raced = this.find(path)
     if (raced) {
-      this.activate(raced)
+      this.show(raced)
       return raced
     }
     const doc = new Doc(path, text)
-    const at = this.active ? this.docs.indexOf(this.active) + 1 : this.docs.length
-    this.docs.splice(at, 0, doc)
-    this.activate(doc)
+    this.show(doc)
     return doc
   }
 
-  activate(doc: Doc): void {
-    this.active = doc
+  /** Show a doc in the focused group, adding a tab next to the current one if needed. */
+  private show(doc: Doc): void {
+    const g = this.group
+    if (!g.docs.includes(doc)) {
+      const at = g.active ? g.docs.indexOf(g.active) + 1 : g.docs.length
+      g.docs.splice(at, 0, doc)
+    }
+    g.active = doc
     this.notifyChanged()
   }
 
-  /** Close a tab. Returns false if the user chose to keep unsaved changes. */
-  close(doc: Doc): boolean {
-    if (doc.dirty && !this.confirmDiscard(doc)) return false
-    const index = this.docs.indexOf(doc)
-    if (index === -1) return true
-    this.docs.splice(index, 1)
-    if (this.active === doc) this.active = this.docs[Math.min(index, this.docs.length - 1)] ?? null
+  /** Make `doc` active: in the focused group if it has a tab there, else in the group that has it. */
+  activate(doc: Doc, groupIndex?: number): void {
+    const i = groupIndex ?? (this.group.docs.includes(doc) ? this.activeGroup : this.groups.findIndex((g) => g.docs.includes(doc)))
+    if (i === -1 || !this.groups[i]) return
+    this.activeGroup = i
+    const g = this.groups[i]
+    if (!g.docs.includes(doc)) g.docs.push(doc)
+    g.active = doc
+    this.notifyChanged()
+  }
+
+  /** Give keyboard focus to a group (e.g. its editor was clicked). */
+  focusGroup(index: number): void {
+    if (index === this.activeGroup || !this.groups[index]) return
+    this.activeGroup = index
+    this.notifyChanged()
+  }
+
+  /** Split: open the active file in a second group (or move to the other group if already split). */
+  split(): void {
+    if (this.groups.length > 1) {
+      this.focusGroup(this.activeGroup === 0 ? 1 : 0)
+      return
+    }
+    const doc = this.active
+    this.groups.push({ docs: doc ? [doc] : [], active: doc })
+    this.activeGroup = 1
+    this.notifyChanged()
+  }
+
+  /** Move the active tab to the other group (splitting first if needed). */
+  moveToOtherGroup(): void {
+    const doc = this.active
+    if (!doc) return
+    if (this.groups.length === 1) {
+      this.split()
+      this.removeFrom(0, doc)
+    } else {
+      const from = this.activeGroup
+      const to = from === 0 ? 1 : 0
+      const target = this.groups[to]
+      if (!target.docs.includes(doc)) target.docs.push(doc)
+      target.active = doc
+      this.removeFrom(from, doc)
+      this.activeGroup = Math.min(to, this.groups.length - 1)
+    }
+    this.notifyChanged()
+  }
+
+  /** Close a tab (in the focused group, or `groupIndex`). Returns false if the user kept unsaved changes. */
+  close(doc: Doc, groupIndex?: number): boolean {
+    const i = groupIndex ?? (this.group.docs.includes(doc) ? this.activeGroup : this.groups.findIndex((g) => g.docs.includes(doc)))
+    if (i === -1) return true
+    const elsewhere = this.groups.some((g, j) => j !== i && g.docs.includes(doc))
+    // Unsaved changes are only lost when the last tab showing the file closes.
+    if (!elsewhere && doc.dirty && !this.confirmDiscard(doc)) return false
+    this.removeFrom(i, doc)
     this.notifyChanged()
     return true
+  }
+
+  /** Remove a tab from a group; an emptied second group goes away. */
+  private removeFrom(groupIndex: number, doc: Doc): void {
+    const g = this.groups[groupIndex]
+    const index = g.docs.indexOf(doc)
+    if (index === -1) return
+    g.docs.splice(index, 1)
+    if (g.active === doc) g.active = g.docs[Math.min(index, g.docs.length - 1)] ?? null
+    if (!g.docs.length && this.groups.length > 1) {
+      this.groups.splice(groupIndex, 1)
+      if (this.activeGroup >= this.groups.length || this.activeGroup === groupIndex) {
+        this.activeGroup = Math.max(0, Math.min(groupIndex, this.groups.length - 1))
+      }
+    }
   }
 
   /** Close every tab (e.g. when opening another folder). Returns false if cancelled. */
@@ -94,8 +187,8 @@ export class Workspace {
     for (const doc of this.docs) {
       if (doc.dirty && !this.confirmDiscard(doc)) return false
     }
-    this.docs = []
-    this.active = null
+    this.groups = [{ docs: [], active: null }]
+    this.activeGroup = 0
     this.notifyChanged()
     return true
   }
@@ -107,11 +200,12 @@ export class Workspace {
     this.notifyChanged()
   }
 
-  /** Switch to the next (+1) or previous (-1) tab, wrapping around. */
+  /** Switch to the next (+1) or previous (-1) tab in the focused group, wrapping around. */
   next(delta: 1 | -1): void {
-    if (!this.active || this.docs.length < 2) return
-    const i = this.docs.indexOf(this.active)
-    this.activate(this.docs[(i + delta + this.docs.length) % this.docs.length])
+    const g = this.group
+    if (!g.active || g.docs.length < 2) return
+    const i = g.docs.indexOf(g.active)
+    this.activate(g.docs[(i + delta + g.docs.length) % g.docs.length], this.activeGroup)
   }
 
   /** Open docs for this file, or for files inside this folder. */
@@ -130,10 +224,8 @@ export class Workspace {
   /** Close tabs without asking (their files were deleted). */
   discard(docs: Doc[]): void {
     if (!docs.length) return
-    const activeIndex = this.active ? this.docs.indexOf(this.active) : -1
-    this.docs = this.docs.filter((d) => !docs.includes(d))
-    if (this.active && docs.includes(this.active)) {
-      this.active = this.docs[Math.min(activeIndex, this.docs.length - 1)] ?? null
+    for (let i = this.groups.length - 1; i >= 0; i--) {
+      for (const doc of docs) this.removeFrom(i, doc)
     }
     this.notifyChanged()
   }
