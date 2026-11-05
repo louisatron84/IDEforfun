@@ -68,6 +68,17 @@ export interface IdeApi {
   terminalKill(id: number): void
   onTerminalEvent(listener: (event: TerminalEvent) => void): () => void
 
+  /** The interpreter to debug with, and whether debugpy is installed in it. */
+  debugPrepare(cwd: string, python?: string): Promise<{ python: string | null; hasDebugpy: boolean }>
+  /** pip install debugpy into that interpreter. */
+  debugInstall(python: string): Promise<{ ok: boolean; output: string }>
+  /** Start the debugpy adapter; then talk to it with debugSend / onDebugMessage (DAP). */
+  debugStart(python: string, cwd: string): Promise<void>
+  debugSend(message: unknown): void
+  debugStop(): Promise<void>
+  onDebugMessage(listener: (message: unknown) => void): () => void
+  onDebugExit(listener: (info: { code: number | null; error?: string }) => void): () => void
+
   /** Every file under a folder (for quick open), skipping .git, node_modules, etc. */
   listFiles(root: string): Promise<{ path: string; rel: string }[]>
 

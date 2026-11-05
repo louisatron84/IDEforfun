@@ -33,7 +33,11 @@ your terminal has `ELECTRON_RUN_AS_NODE` set. Clear it first: `$env:ELECTRON_RUN
 | Ctrl+Space | Autocomplete (also pops up as you type) |
 | F12 or Ctrl+click / Alt+← | Go to definition / go back |
 | Ctrl+Shift+M | Problems (errors and warnings from Pyright) |
-| F5 / Shift+F5 | Run current Python file (auto-saves) / stop it |
+| F5 | Run the current Python file (auto-saves). With breakpoints set it debugs instead; while paused it continues |
+| Ctrl+F5 / Shift+F5 | Run without debugging / stop (running or debugging) |
+| F9 or click a line number | Toggle a breakpoint |
+| F10 / F11 / Shift+F11 | Debugger: step over / step into / step out |
+| Ctrl+Shift+F5 | Restart debugging |
 | Ctrl+` | Toggle terminal |
 | Ctrl+J | Toggle bottom panel |
 | Ctrl+, | Settings |
@@ -55,7 +59,8 @@ your terminal has `ELECTRON_RUN_AS_NODE` set. Clear it first: `$env:ELECTRON_RUN
 - `styles.css`: all colors are CSS variables (dark + light themes), ready for a redesign
 
 ## Third-party code
-Everything above is hand-written except two pieces: the integrated terminal uses
+Everything above is hand-written except three pieces: the integrated terminal uses
 [xterm.js](https://xtermjs.org/) + [node-pty](https://github.com/microsoft/node-pty), and Python intelligence
-(errors, autocomplete, hover, go to definition) comes from the [Pyright](https://github.com/microsoft/pyright) language server.
-The protocol client talking to it is hand-written (`src/renderer/lsp/`).
+(errors, autocomplete, hover, go to definition) comes from the [Pyright](https://github.com/microsoft/pyright) language server, and the debugger is
+[debugpy](https://github.com/microsoft/debugpy) (installed into your Python on first use).
+The protocol clients talking to them are hand-written (`src/renderer/lsp/`, `src/renderer/debug/`).

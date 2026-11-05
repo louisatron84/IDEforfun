@@ -23,7 +23,7 @@ import { Doc } from './document'
 const PAD_TOP = 4 // space above the first line
 const PAD_LEFT = 12 // must match .editor .lines padding-left in styles.css
 const PAD_RIGHT = 24
-const GUTTER_PAD = 28 // gutter's left + right padding around the numbers
+const GUTTER_PAD = 40 // gutter's left (room for breakpoint dots) + right padding around the numbers
 /** Extra lines drawn above/below the visible area so fast scrolling doesn't flash. */
 const OVERSCAN = 5
 
@@ -39,6 +39,8 @@ export interface EditorOptions {
   onType?: (text: string) => void
   /** Ctrl+click on the text (after the cursor was placed there), e.g. go to definition. */
   onCtrlClick?: (pos: Position) => void
+  /** Click in the line-number gutter (0-based line), e.g. to toggle a breakpoint. */
+  onGutterClick?: (line: number) => void
 }
 
 /** An underlined range, e.g. an error from the language server. */
@@ -108,6 +110,12 @@ export class Editor {
       if (this.hasDoc) this.opts.onMouseMove?.(this.hitTest(e.clientX, e.clientY), e)
     })
     this.textArea.addEventListener('mouseleave', () => this.opts.onMouseLeave?.())
+    this.gutter.addEventListener('mousedown', (e) => {
+      if (!this.hasDoc || e.button !== 0) return
+      e.preventDefault() // keep focus in the editor
+      const line = Math.floor((e.clientY - this.content.getBoundingClientRect().top - PAD_TOP) / this.lineHeight)
+      if (line >= 0 && line < this.buffer.lineCount) this.opts.onGutterClick?.(line)
+    })
     this.root.addEventListener('scroll', () => {
       this.renderLines()
       this.renderSelection()
@@ -504,7 +512,7 @@ export class Editor {
     const numberEls: HTMLElement[] = []
     for (let i = first; i <= last; i++) {
       lineEls.push(this.renderLine(i))
-      const num = el('div', '')
+      const num = el('div', this.breakpoints.has(i) ? (i === this.execLine ? 'bp exec' : 'bp') : i === this.execLine ? 'exec' : '')
       num.textContent = String(i + 1)
       numberEls.push(num)
     }
@@ -529,6 +537,18 @@ export class Editor {
     }
     if (pos < text.length) lineEl.append(text.slice(pos))
     return lineEl
+  }
+
+  /** Debugger markers for the shown document: breakpoint lines, and the line it's paused on. */
+  private breakpoints: ReadonlySet<number> = new Set()
+  private execLine: number | null = null
+
+  setLineMarkers(breakpoints: Iterable<number>, execLine: number | null): void {
+    this.breakpoints = new Set(breakpoints)
+    this.execLine = execLine
+    if (!this.hasDoc) return
+    this.renderLines()
+    this.renderSelection()
   }
 
   /** Ranges to highlight besides the selection (find matches). Sorted by position. */
@@ -583,6 +603,11 @@ export class Editor {
     const lastVisible = firstVisible + Math.ceil(this.root.clientHeight / this.lineHeight) + 2
     const boxes: HTMLElement[] = []
 
+    if (this.execLine !== null && this.execLine >= firstVisible && this.execLine <= lastVisible) {
+      const box = el('div', 'exec-line')
+      box.style.transform = `translateY(${PAD_TOP + this.execLine * this.lineHeight}px)`
+      boxes.push(box)
+    }
     for (const m of this.matches) {
       if (m.end.line < firstVisible) continue
       if (m.start.line > lastVisible) break

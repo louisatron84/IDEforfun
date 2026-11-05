@@ -27,8 +27,8 @@ The roadmap. Work through it roughly top to bottom; each tier builds on the one 
 - [x] Language Server Protocol client (Pyright): errors (v0.13), autocomplete (v0.14), hover + go-to-definition (v0.15)
 - [x] Search across the project (v0.12: Ctrl+Shift+F, case / word / regex)
 - [x] Git status in the file tree (v0.12: M/U/A/D badges, folder dots, auto-refresh)
-- [ ] Debugger (DAP, debugpy)
-- 
+- [x] Debugger (DAP, debugpy): breakpoints, stepping, call stack, variables, debug console, hover values (v0.17)
+  - [ ] Later: `input()` while debugging (needs the program in a terminal), conditional breakpoints, watch expressions
 
 ## Later: own visual identity
 - [ ] Redesign so it doesn't look like every other IDE (the current dark sidebar + tabs layout is a placeholder)

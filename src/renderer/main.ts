@@ -1,7 +1,7 @@
 import { FileTree } from './fileTree'
 import { Editor } from './editor/editor'
 import type { Doc } from './editor/document'
-import { Workspace } from './workspace'
+import { Workspace, samePath } from './workspace'
 import { TabBar } from './tabBar'
 import { CommandRegistry, keyString } from './keymap'
 import { FindBar } from './findBar'
@@ -15,6 +15,9 @@ import { LspClient } from './lsp/client'
 import { PythonLanguage, type Diagnostic } from './lsp/python'
 import { ProblemsView } from './problemsView'
 import { Tooltip } from './tooltip'
+import { BreakpointStore } from './debug/breakpoints'
+import { DebugSession, type PauseInfo, type StackFrame } from './debug/session'
+import { DebugView } from './debug/debugView'
 import { Completion } from './completion'
 import { hoverSections } from './lsp/markdown'
 import type { TooltipSection } from './tooltip'
@@ -38,6 +41,7 @@ const editor = new Editor($('editor'), {
   onKeyDown: (e) => completion.handleKey(e),
   onType: (text) => completion.onType(text),
   onCtrlClick: (pos) => void goToDefinition(pos),
+  onGutterClick: (line) => toggleBreakpoint(line),
   onMouseMove: (pos, e) => onEditorHover(pos, e),
   onMouseLeave: () => hideHover()
 })
@@ -53,6 +57,7 @@ const tree = new FileTree($('file-tree'), {
     const moved = workspace.docsUnder(oldPath)
     python.syncDocs(workspace.docs.filter((d) => !moved.includes(d)))
     workspace.pathRenamed(oldPath, newPath)
+    breakpoints.pathRenamed(oldPath, newPath)
     void refreshGit()
   },
   delete: async (path, isDirectory) => {
@@ -69,6 +74,7 @@ const tree = new FileTree($('file-tree'), {
       return false
     }
     workspace.discard(open)
+    breakpoints.removeUnder(path)
     void refreshGit()
     return true
   },
@@ -85,6 +91,179 @@ const output = new OutputView(
 panel.addView('output', 'Output', output.body, output.actions)
 const terminal = new TerminalView(() => rootFolder)
 panel.addView('terminal', 'Terminal', terminal.body, terminal.actions, () => terminal.show())
+
+// ---------- debugger (debugpy over the Debug Adapter Protocol) ----------
+
+const breakpoints = new BreakpointStore()
+/** Docs whose edits we watch so their breakpoints move with the code. */
+const watchedDocs = new WeakSet<Doc>()
+let session: DebugSession | null = null
+/** Where the paused program is (shown with a ▶ in the gutter and a highlighted line). */
+let pausedAt: { path: string; line: number } | null = null
+let debugFile: string | null = null
+
+const debugView = new DebugView({
+  continue: () => void session?.continue(),
+  stepOver: () => void session?.stepOver(),
+  stepInto: () => void session?.stepInto(),
+  stepOut: () => void session?.stepOut(),
+  stop: () => void stopDebugging(),
+  restart: () => void restartDebugging(),
+  selectFrame: (frame) => void showFrame(frame),
+  scopes: (frameId) => session!.scopes(frameId),
+  variables: (ref) => session!.variables(ref),
+  evaluate: (expr) => {
+    if (!session) return Promise.reject(new Error('Not debugging'))
+    return session.evaluate(expr, debugView.currentFrame?.id)
+  },
+  openLink: (path, line) => void openFile(path, line - 1)
+})
+panel.addView('debug', 'Debug', debugView.body, debugView.actions, () => debugView.focusInput())
+
+function watchDoc(doc: Doc): void {
+  if (watchedDocs.has(doc)) return
+  watchedDocs.add(doc)
+  doc.buffer.subscribe((change) => breakpoints.applyChange(doc.path, change))
+}
+
+/** Draw breakpoints and the paused line for the file in the editor. */
+function updateLineMarkers(): void {
+  const doc = editor.currentDoc
+  if (!doc) return
+  const exec = pausedAt && samePath(pausedAt.path, doc.path) ? pausedAt.line : null
+  editor.setLineMarkers(breakpoints.linesFor(doc.path), exec)
+}
+
+breakpoints.subscribe((path) => {
+  updateLineMarkers()
+  // Breakpoints changed while debugging: tell debugpy right away.
+  void session?.setBreakpoints(path, breakpoints.linesFor(path)).catch(() => {})
+})
+
+function toggleBreakpoint(line = editor.getCursor().line): void {
+  const doc = workspace.active
+  if (doc) breakpoints.toggle(doc.path, line)
+}
+
+const debugging = () => session?.active === true
+const debugPaused = () => session?.state === 'paused'
+
+async function startDebugging(path = workspace.active?.path): Promise<void> {
+  if (!path) return
+  if (session?.active) await stopDebugging()
+  panel.show('debug')
+  debugView.begin(path)
+  if (!path.toLowerCase().endsWith('.py')) {
+    debugView.error('Debugging works with Python files (.py).')
+    return
+  }
+  // Save every open file first: debugpy reads the files from disk.
+  for (const doc of workspace.docs.filter((d) => d.dirty)) {
+    try {
+      await workspace.save(doc)
+      python.didSave(doc)
+    } catch (err) {
+      debugView.error(`Debugging cancelled: couldn't save ${doc.name} (${String(err)})`)
+      return
+    }
+  }
+  const cwd = rootFolder ?? parentDir(path)
+  debugView.setState('starting')
+  const prep = await window.api.debugPrepare(cwd, settings.pythonPath || undefined)
+  if (!prep.python) {
+    debugView.error('Python was not found. Install it from python.org, or pick an interpreter in Settings (Ctrl+,).')
+    debugView.setState('idle')
+    return
+  }
+  if (!prep.hasDebugpy) {
+    const ok = confirm(
+      `The debugger needs the "debugpy" package, which isn't installed for:\n${prep.python}\n\nInstall it now? (runs: pip install debugpy)`
+    )
+    if (!ok) {
+      debugView.error(`Debugging needs debugpy. Install it with:\n  "${prep.python}" -m pip install debugpy`)
+      debugView.setState('idle')
+      return
+    }
+    debugView.output('console', 'Installing debugpy (pip install debugpy)…\n')
+    const res = await window.api.debugInstall(prep.python)
+    const tail = res.output.split(/\r?\n/).filter(Boolean).slice(-4).join('\n')
+    debugView.output(res.ok ? 'console' : 'stderr', tail + '\n')
+    if (!res.ok) {
+      debugView.error('Installing debugpy failed (see above).')
+      debugView.setState('idle')
+      return
+    }
+  }
+  debugView.started(prep.python)
+  debugFile = path
+
+  const s: DebugSession = new DebugSession({
+    send: (m) => window.api.debugSend(m),
+    onState: (state) => {
+      if (session !== s) return
+      debugView.setState(state)
+      if (state === 'running' && pausedAt) {
+        pausedAt = null
+        updateLineMarkers()
+      }
+    },
+    onOutput: (category, text) => {
+      if (session === s) debugView.output(category, text)
+    },
+    onPaused: (info) => {
+      if (session === s) void onPaused(info)
+    },
+    onEnded: (code) => {
+      if (session !== s) return
+      pausedAt = null
+      updateLineMarkers()
+      debugView.setState('idle')
+      debugView.ended(code)
+      void window.api.debugStop()
+    }
+  })
+  session = s
+  await window.api.debugStart(prep.python, cwd)
+  try {
+    await s.start({ program: path, cwd, breakpoints: breakpoints.all() })
+  } catch (err) {
+    if (session !== s || !s.active) return
+    debugView.error(`Couldn't start debugging: ${err instanceof Error ? err.message : String(err)}`)
+    await s.stop()
+  }
+}
+
+async function onPaused(info: PauseInfo): Promise<void> {
+  debugView.showPaused(info)
+  panel.show('debug')
+  const frame = debugView.currentFrame
+  if (frame) await showFrame(frame)
+}
+
+/** Open a stack frame's file at its line and mark it as the paused line. */
+async function showFrame(frame: StackFrame): Promise<void> {
+  if (!frame.path) return
+  pausedAt = { path: frame.path, line: frame.line }
+  if (await openFile(frame.path)) editor.goTo(frame.line, frame.col)
+  updateLineMarkers()
+}
+
+async function stopDebugging(): Promise<void> {
+  await session?.stop()
+}
+
+async function restartDebugging(): Promise<void> {
+  const file = debugFile
+  await stopDebugging()
+  if (file) await startDebugging(file)
+}
+
+window.api.onDebugMessage((m) => session?.handleMessage(m))
+window.api.onDebugExit((info) => {
+  if (!session?.active) return
+  if (info.error) debugView.error(info.error)
+  session.adapterExited()
+})
 
 // ---------- Python language server (Pyright) ----------
 
@@ -186,6 +365,15 @@ function onEditorHover(pos: { line: number; col: number } | null, e: MouseEvent)
       kind: SEVERITY_LABEL[d.severity],
       text: `${d.message}${d.code ? `  (${d.code})` : ''}`
     }))
+    if (onWord && debugPaused()) {
+      const expr = expressionAt(lineText, pos.col)
+      try {
+        const { result } = await session!.evaluate(expr, debugView.currentFrame?.id, 'hover')
+        sections.push({ kind: 'code', text: `${expr} = ${result}` })
+      } catch {
+        // not a variable here (e.g. a keyword): nothing to show
+      }
+    }
     if (onWord) {
       try {
         const md = await python.hover(doc, pos)
@@ -197,6 +385,15 @@ function onEditorHover(pos: { line: number; col: number } | null, e: MouseEvent)
     if (hoverKey !== key || !sections.length) return // mouse moved on meanwhile
     tooltip.show(sections, anchor)
   }, 400)
+}
+
+/** The dotted name under the cursor, e.g. "self.items" when hovering "items". */
+function expressionAt(line: string, col: number): string {
+  let start = col
+  while (start > 0 && /[\p{L}\p{N}_.]/u.test(line[start - 1])) start--
+  let end = col
+  while (end < line.length && /[\p{L}\p{N}_]/u.test(line[end])) end++
+  return line.slice(start, end).replace(/^\.+/, '')
 }
 
 // ---------- go to definition (F12 / Ctrl+click) and back (Alt+Left) ----------
@@ -261,6 +458,8 @@ workspace.subscribe(() => {
     else editor.showPlaceholder(rootFolder ? 'Pick a file from the tree' : 'Open a folder and pick a file')
   }
   tree.highlight(doc?.path ?? null)
+  for (const d of workspace.docs) watchDoc(d)
+  updateLineMarkers()
   findBar.refresh()
   completion.syncDoc()
   python.syncDocs(workspace.docs)
@@ -382,8 +581,30 @@ window.api.onRunEvent((e) => {
   else if (e.type === 'exit') output.finished(e.code, e.ms, e.signal)
 })
 
-commands.register({ id: 'run.file', title: 'Run Python File', keys: 'F5', when: hasDoc, run: runCurrentFile })
-commands.register({ id: 'run.stop', title: 'Stop Running', keys: 'Shift+F5', run: () => void window.api.stopRun() })
+commands.register({
+  id: 'run.smart', title: 'Run (or Debug if there are breakpoints) / Continue', keys: 'F5',
+  when: () => hasDoc() || debugPaused(),
+  run: () => {
+    if (debugPaused()) return void session!.continue()
+    if (debugging()) return // starting or running: nothing to do
+    if (breakpoints.count > 0) return void startDebugging()
+    void runCurrentFile()
+  }
+})
+commands.register({ id: 'run.file', title: 'Run Python File (without debugging)', keys: 'Ctrl+F5', when: hasDoc, run: runCurrentFile })
+commands.register({
+  id: 'run.stop', title: 'Stop Running / Debugging', keys: 'Shift+F5',
+  run: () => (debugging() ? void stopDebugging() : void window.api.stopRun())
+})
+commands.register({ id: 'debug.start', title: 'Start Debugging', when: () => hasDoc() && !debugging(), run: () => void startDebugging() })
+commands.register({ id: 'debug.restart', title: 'Restart Debugging', keys: 'Ctrl+Shift+F5', when: debugging, run: () => void restartDebugging() })
+commands.register({ id: 'debug.stepOver', title: 'Step Over', keys: 'F10', when: debugPaused, run: () => void session!.stepOver() })
+commands.register({ id: 'debug.stepInto', title: 'Step Into', keys: 'F11', when: debugPaused, run: () => void session!.stepInto() })
+commands.register({ id: 'debug.stepOut', title: 'Step Out', keys: 'Shift+F11', when: debugPaused, run: () => void session!.stepOut() })
+commands.register({ id: 'debug.pause', title: 'Pause', when: () => session?.state === 'running', run: () => void session!.pause() })
+commands.register({ id: 'debug.toggleBreakpoint', title: 'Toggle Breakpoint', keys: 'F9', when: hasDoc, run: () => toggleBreakpoint() })
+commands.register({ id: 'debug.clearBreakpoints', title: 'Remove All Breakpoints', when: () => breakpoints.count > 0, run: () => breakpoints.clear() })
+commands.register({ id: 'panel.debug', title: 'Show Debug Panel', run: () => panel.show('debug') })
 commands.register({ id: 'panel.toggle', title: 'Toggle Bottom Panel', keys: 'Ctrl+J', run: () => panel.toggle() })
 commands.register({ id: 'panel.output', title: 'Show Output', run: () => panel.show('output') })
 commands.register({ id: 'nav.definition', title: 'Go to Definition', keys: 'F12', when: hasDoc, run: () => void goToDefinition() })
@@ -480,12 +701,13 @@ commands.register({ id: 'palette.line', title: 'Go to Line…', keys: 'Ctrl+G', 
 
 $('open-settings').addEventListener('click', () => settingsView.open())
 $('run-file').addEventListener('click', () => void runCurrentFile())
+$('debug-file').addEventListener('click', () => void startDebugging())
 $('stop-run').addEventListener('click', () => void window.api.stopRun())
 $('open-folder').addEventListener('click', () => void openFolder())
 
 // While typing in the terminal, keys belong to the shell (Ctrl+C, Ctrl+W, Ctrl+F...).
 // Only these IDE shortcuts still work there.
-const TERMINAL_PASSTHROUGH = new Set(['Ctrl+`', 'Ctrl+J', 'Ctrl+Shift+P', 'Ctrl+Tab', 'Ctrl+Shift+Tab', 'F5', 'Shift+F5', 'Ctrl+,'])
+const TERMINAL_PASSTHROUGH = new Set(['Ctrl+`', 'Ctrl+J', 'Ctrl+Shift+P', 'Ctrl+Tab', 'Ctrl+Shift+Tab', 'F5', 'Shift+F5', 'Ctrl+,', 'Ctrl+F5', 'Ctrl+Shift+F5', 'F9', 'F10', 'F11', 'Shift+F11'])
 
 // Global shortcuts. Capture phase, so they win over the editor's own key handling.
 window.addEventListener('keydown', (e) => {

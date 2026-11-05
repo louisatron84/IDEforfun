@@ -10,6 +10,7 @@ import { LanguageServer, resolvePythonForAnalysis } from './languageServer'
 import type { FindOptions } from '../shared/regex'
 import { PythonRunner } from './python'
 import { Terminals } from './terminals'
+import { DebugAdapter, hasDebugpy, installDebugpy, resolvePython } from './debugAdapter'
 import { normalizeSettings } from '../shared/settings'
 
 // Lets automated tests use a throwaway profile instead of the real settings.
@@ -18,6 +19,7 @@ if (process.env['IDEFORFUN_USER_DATA']) app.setPath('userData', process.env['IDE
 const runner = new PythonRunner()
 const terminals = new Terminals()
 const languageServer = new LanguageServer()
+const debugAdapter = new DebugAdapter()
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -37,10 +39,12 @@ function createWindow(): void {
   win.webContents.on('did-start-loading', () => {
     terminals.killAll()
     languageServer.stop()
+    debugAdapter.stop()
   })
   win.on('closed', () => {
     terminals.killAll()
     languageServer.stop()
+    debugAdapter.stop()
   })
 
   // The renderer blocks closing (beforeunload) when there are unsaved changes;
@@ -108,6 +112,15 @@ ipcMain.handle('run:start', (event, file: string, cwd: string, python?: string) 
 ipcMain.handle('run:stop', () => runner.stop())
 ipcMain.handle('run:input', (_event, text: string) => runner.sendInput(text))
 
+ipcMain.handle('debug:prepare', async (_event, cwd: string, configured?: string) => {
+  const python = await resolvePython(cwd, configured)
+  return { python, hasDebugpy: python ? await hasDebugpy(python) : false }
+})
+ipcMain.handle('debug:install', (_event, python: string) => installDebugpy(python))
+ipcMain.handle('debug:start', (event, python: string, cwd: string) => debugAdapter.start(event.sender, python, cwd))
+ipcMain.on('debug:send', (_event, message: unknown) => debugAdapter.send(message))
+ipcMain.handle('debug:stop', () => debugAdapter.stop())
+
 ipcMain.handle('term:create', (event, cwd: string | null, cols: number, rows: number) =>
   terminals.create(event.sender, cwd, cols, rows)
 )
@@ -133,6 +146,7 @@ ipcMain.handle('settings:save', async (_event, settings: unknown) => {
 
 app.on('before-quit', () => {
   runner.stop()
+  debugAdapter.stop()
   terminals.killAll()
   languageServer.stop()
 })

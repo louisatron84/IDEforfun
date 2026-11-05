@@ -808,3 +808,112 @@ body { display: flex; flex-direction: column; }
 .context-menu-keys { color: var(--fg-muted); font-size: 12px; }
 .context-menu button:hover .context-menu-keys { color: inherit; }
 .context-menu-sep { height: 1px; margin: 4px 6px; background: var(--border); }
+
+/* ---- debugger: breakpoints and the paused line ---- */
+:root { --breakpoint: #e5484d; --exec-line: rgba(255, 200, 0, 0.16); --exec-arrow: #f5c400; }
+:root[data-theme="light"] { --breakpoint: #d93036; --exec-line: rgba(255, 196, 0, 0.28); --exec-arrow: #b38600; }
+.editor .gutter { cursor: pointer; }
+.editor .gutter-lines > div { position: relative; }
+/* Hover a line number to see where a breakpoint would go. */
+.editor .gutter-lines > div::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin-top: -5px;
+  border-radius: 50%;
+}
+.editor .gutter-lines > div:hover::before { background: var(--breakpoint); opacity: 0.35; }
+.editor .gutter-lines > div.bp::before { background: var(--breakpoint); opacity: 1; }
+.editor .gutter-lines > div.exec { color: var(--fg); }
+.editor .gutter-lines > div.exec::after {
+  content: '▶';
+  position: absolute;
+  left: 7px;
+  top: 0;
+  color: var(--exec-arrow);
+  font-size: 11px;
+}
+.editor .gutter-lines > div.bp.exec::after { left: 9px; color: #fff; font-size: 8px; }
+.editor .exec-line {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: var(--line-height);
+  background: var(--exec-line);
+}
+
+/* ---- debug panel ---- */
+.debug-view {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 34%) 1fr;
+  background: var(--bg);
+}
+.debug-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  border-right: 1px solid var(--border);
+  font-size: 13px;
+}
+.debug-status {
+  padding: 6px 10px;
+  color: var(--fg-muted);
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.debug-status[data-state="paused"] { color: var(--exec-arrow); }
+.debug-heading {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 4px 10px;
+  background: var(--bg-panel);
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.debug-stack, .debug-vars { padding: 2px 0 6px; }
+.debug-stack.stale, .debug-vars.stale { opacity: 0.45; }
+.debug-frame {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 2px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.debug-frame:hover { background: var(--bg-hover); }
+.debug-frame.selected { background: var(--bg-active); }
+.debug-frame.no-source { color: var(--fg-muted); }
+.debug-frame-name { overflow: hidden; text-overflow: ellipsis; font-family: var(--font-code); }
+.debug-frame-loc { color: var(--fg-muted); flex-shrink: 0; }
+.debug-var {
+  display: flex;
+  align-items: baseline;
+  min-height: 20px;
+  padding-right: 8px;
+  font: 12.5px / 20px var(--font-code);
+  white-space: nowrap;
+  cursor: default;
+}
+.debug-var:hover { background: var(--bg-hover); }
+.debug-var.scope { font-family: var(--font-ui); font-weight: 500; cursor: pointer; }
+.debug-var.muted { color: var(--fg-muted); }
+.debug-var-name { color: var(--tok-builtin); }
+.debug-var-eq { color: var(--fg-muted); white-space: pre; }
+.debug-var-value { overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
+.debug-var-children[hidden] { display: none; }
+.debug-console { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.debug-log .eval-result { color: var(--tok-function); }
+.debug-input-row { color: var(--exec-arrow); }
+.output-input:disabled { opacity: 0.6; }
+.panel-buttons button:disabled { opacity: 0.4; cursor: default; }

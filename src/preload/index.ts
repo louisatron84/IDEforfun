@@ -27,6 +27,21 @@ const api: IdeApi = {
     ipcRenderer.on('term:event', handler)
     return () => ipcRenderer.removeListener('term:event', handler)
   },
+  debugPrepare: (cwd, python) => ipcRenderer.invoke('debug:prepare', cwd, python),
+  debugInstall: (python) => ipcRenderer.invoke('debug:install', python),
+  debugStart: (python, cwd) => ipcRenderer.invoke('debug:start', python, cwd),
+  debugSend: (message) => ipcRenderer.send('debug:send', message),
+  debugStop: () => ipcRenderer.invoke('debug:stop'),
+  onDebugMessage: (listener) => {
+    const handler = (_e: unknown, message: unknown) => listener(message)
+    ipcRenderer.on('debug:message', handler)
+    return () => ipcRenderer.removeListener('debug:message', handler)
+  },
+  onDebugExit: (listener) => {
+    const handler = (_e: unknown, info: { code: number | null; error?: string }) => listener(info)
+    ipcRenderer.on('debug:exit', handler)
+    return () => ipcRenderer.removeListener('debug:exit', handler)
+  },
   listFiles: (root) => ipcRenderer.invoke('fs:listFiles', root),
   searchProject: (root, query, opts) => ipcRenderer.invoke('search:project', root, query, opts),
   gitStatus: (folder) => ipcRenderer.invoke('git:status', folder),
