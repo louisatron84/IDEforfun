@@ -138,6 +138,23 @@ export class Editor {
     this.focus()
   }
 
+  /** The current selection (anchor = where it started, head = cursor). */
+  getSelection(): sel.Selection {
+    return this.selection
+  }
+
+  /** The selected text, or '' if nothing is selected. */
+  getSelectedText(): string {
+    return this.hasSelection() ? this.selectedText() : ''
+  }
+
+  /** Run an edit from outside the editor (e.g. Replace All) as one undo step. */
+  runEdit(fn: (buffer: Doc['buffer']) => Position): void {
+    if (!this.hasDoc) return
+    const next = this.history.transact('other', this.cursor, () => fn(this.buffer))
+    this.afterEdit(next)
+  }
+
   /** Select a range (used by find). */
   select(anchor: Position, head: Position): void {
     this.anchor = anchor

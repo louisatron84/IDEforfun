@@ -4,6 +4,7 @@ import type { Doc } from './editor/document'
 import { Workspace } from './workspace'
 import { TabBar } from './tabBar'
 import { CommandRegistry } from './keymap'
+import { FindBar } from './findBar'
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 
@@ -17,6 +18,7 @@ const editor = new Editor($('editor'), { onEdit: () => workspace.notifyChanged()
 const tabBar = new TabBar($('tabs'), workspace)
 const tree = new FileTree($('sidebar'), (entry) => void openFile(entry.path))
 export const commands = new CommandRegistry()
+const findBar = new FindBar($('editor-pane'), editor)
 
 // Keep the editor, tabs, tree highlight and window title in sync with the workspace.
 workspace.subscribe(() => {
@@ -27,6 +29,7 @@ workspace.subscribe(() => {
     else editor.showPlaceholder(rootFolder ? 'Pick a file from the tree' : 'Open a folder and pick a file')
   }
   tree.highlight(doc?.path ?? null)
+  findBar.refresh()
   const folder = rootFolder?.split(/[\\/]/).pop()
   document.title = [doc ? (doc.dirty ? '● ' : '') + doc.name : null, folder, 'IDEforfun']
     .filter(Boolean).join(' — ')
@@ -81,6 +84,10 @@ commands.register({
 })
 commands.register({ id: 'tab.next', title: 'Next Tab', keys: 'Ctrl+Tab', when: hasDoc, run: () => workspace.next(1) })
 commands.register({ id: 'tab.prev', title: 'Previous Tab', keys: 'Ctrl+Shift+Tab', when: hasDoc, run: () => workspace.next(-1) })
+
+commands.register({ id: 'find.open', title: 'Find', keys: 'Ctrl+F', when: hasDoc, run: () => findBar.open(false) })
+commands.register({ id: 'find.replace', title: 'Find and Replace', keys: 'Ctrl+H', when: hasDoc, run: () => findBar.open(true) })
+commands.register({ id: 'find.close', title: 'Close Find', keys: 'Escape', when: () => findBar.isOpen, run: () => findBar.close() })
 
 $('open-folder').addEventListener('click', () => void openFolder())
 

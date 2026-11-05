@@ -75,7 +75,7 @@ body { display: flex; flex-direction: column; }
 .tree-row.dir .tree-name { font-weight: 500; }
 
 /* ---- editor ---- */
-#editor-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+#editor-pane { position: relative; flex: 1; display: flex; flex-direction: column; min-width: 0; }
 #editor { flex: 1; min-height: 0; }
 
 .editor {
@@ -254,3 +254,50 @@ body { display: flex; flex-direction: column; }
   background: var(--match);
   border-radius: 2px;
 }
+
+/* ---- find bar ---- */
+.find-bar {
+  position: absolute;
+  top: 40px;
+  right: 18px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+.find-bar[hidden] { display: none; }
+.find-row, .replace-row { display: flex; align-items: center; gap: 3px; }
+.replace-row[hidden] { display: none; }
+.find-bar input {
+  width: 220px;
+  padding: 4px 6px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: 13px var(--font-code);
+  outline: none;
+}
+.find-bar input:focus { border-color: var(--accent); }
+.find-bar input.invalid { border-color: #e06c75; }
+.find-bar button {
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-muted);
+  font: 12px var(--font-ui);
+  cursor: pointer;
+}
+.find-bar button:hover { background: var(--bg-hover); color: var(--fg); }
+.find-bar button.on { background: var(--bg-active); color: var(--fg); border-color: var(--accent); }
+.find-bar .replace-row button { border-color: var(--border); }
+.find-count { min-width: 70px; padding: 0 4px; color: var(--fg-muted); font-size: 12px; text-align: center; }
+.find-count.none { color: #e06c75; }
