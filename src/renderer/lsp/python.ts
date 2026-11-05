@@ -290,6 +290,8 @@ function toCompletionItem(raw: any): CompletionItem {
   if (raw.insertText) item.insertText = raw.insertText
   if (raw.filterText) item.filterText = raw.filterText
   if (raw.sortText) item.sortText = raw.sortText
+  // Pyright marks auto-imports in detail ("Auto-import") and/or data.autoImportText.
+  if (raw.data?.autoImportText || /auto-import/i.test(raw.detail ?? '') || /auto-import/i.test(raw.labelDetails?.description ?? '')) item.autoImport = true
   const te = raw.textEdit
   const range = te?.range ?? te?.insert
   if (te && range) item.textEdit = { start: toPosition(range.start), end: toPosition(range.end), text: te.newText }

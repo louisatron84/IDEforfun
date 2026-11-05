@@ -40,7 +40,10 @@ export class PythonRunner {
       if (!sender.isDestroyed()) sender.send('run:event', { ...e, runId })
     }
 
-    for (const python of pythonCandidates(cwd, process.platform, configured)) {
+    // An interpreter chosen in Settings is used as-is: if it's wrong, say so rather
+    // than quietly running some other Python.
+    const candidates = configured ? [configured] : pythonCandidates(cwd, process.platform)
+    for (const python of candidates) {
       // Paths (virtualenvs) must exist; bare commands are found on PATH by spawn.
       if (!isBareCommand(python)) {
         try {
@@ -52,7 +55,12 @@ export class PythonRunner {
       const started = await this.trySpawn(python, file, cwd, send)
       if (started) return
     }
-    send({ type: 'error', message: 'Python was not found. Install it from python.org, or create a .venv in your project.' })
+    send({
+      type: 'error',
+      message: configured
+        ? `The Python interpreter set in Settings wasn't found:\n  ${configured}\nFix it in Settings (Ctrl+,), or clear it to pick one automatically.`
+        : 'Python was not found. Install it from python.org, or create a .venv in your project.'
+    })
     send({ type: 'exit', code: null, ms: 0 })
   }
 

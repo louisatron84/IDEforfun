@@ -25,7 +25,8 @@ function run(cmd: string, args: string[], timeout: number): Promise<{ ok: boolea
  * virtualenv, else python on PATH (asked for its real path). Null if none works.
  */
 export async function resolvePython(root: string, configured?: string): Promise<string | null> {
-  for (const candidate of pythonCandidates(root, process.platform, configured)) {
+  // An interpreter chosen in Settings is the only one tried (a wrong one is reported, not replaced).
+  for (const candidate of configured ? [configured] : pythonCandidates(root, process.platform)) {
     if (!isBareCommand(candidate)) {
       try {
         await access(candidate)

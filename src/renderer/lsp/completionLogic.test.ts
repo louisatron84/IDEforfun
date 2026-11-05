@@ -55,3 +55,15 @@ describe('completionEdit', () => {
     expect(e).toEqual({ start: { line: 2, col: 8 }, end: pos, text: 'append' })
   })
 })
+
+describe('filterCompletions: auto-imports', () => {
+  it('puts names that need a new import after ones already in scope', () => {
+    const items = [
+      { label: 'datetime', autoImport: true, sortText: '01' },
+      { label: 'data', sortText: '09' },
+      { label: 'dataclass', autoImport: true }
+    ]
+    expect(filterCompletions(items, 'dat').map((i) => i.label)).toEqual(['data', 'datetime', 'dataclass'])
+    expect(filterCompletions(items, '').map((i) => i.label)).toEqual(['data', 'datetime', 'dataclass'])
+  })
+})

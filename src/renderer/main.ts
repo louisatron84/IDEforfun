@@ -264,7 +264,9 @@ async function startDebugging(path = workspace.active?.path): Promise<void> {
   debugView.setState('starting')
   const prep = await window.api.debugPrepare(cwd, settings.pythonPath || undefined)
   if (!prep.python) {
-    debugView.error('Python was not found. Install it from python.org, or pick an interpreter in Settings (Ctrl+,).')
+    debugView.error(settings.pythonPath
+      ? `The Python interpreter set in Settings wasn't found:\n  ${settings.pythonPath}\nFix it in Settings (Ctrl+,), or clear it to pick one automatically.`
+      : 'Python was not found. Install it from python.org, or pick an interpreter in Settings (Ctrl+,).')
     debugView.setState('idle')
     return
   }

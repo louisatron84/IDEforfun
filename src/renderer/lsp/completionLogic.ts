@@ -14,6 +14,8 @@ export interface CompletionItem {
   textEdit?: { start: Position; end: Position; text: string }
   /** The raw item, for completionItem/resolve. */
   raw?: unknown
+  /** Accepting it also adds an import (Pyright's auto-import suggestions). */
+  autoImport?: boolean
 }
 
 const isWordChar = (ch: string) => /[\p{L}\p{N}_]/u.test(ch)
@@ -27,7 +29,9 @@ export function wordStartAt(lineText: string, col: number): number {
 
 /** Items matching what was typed so far, best first (ties keep the server's order). */
 export function filterCompletions(items: CompletionItem[], prefix: string): CompletionItem[] {
+  // Names already available come before ones that would need a new import.
   const byServerOrder = (a: CompletionItem, b: CompletionItem) =>
+    Number(!!a.autoImport) - Number(!!b.autoImport) ||
     (a.sortText ?? a.label).localeCompare(b.sortText ?? b.label)
   if (!prefix) return [...items].sort(byServerOrder)
   const scored: { item: CompletionItem; score: number }[] = []
@@ -39,6 +43,7 @@ export function filterCompletions(items: CompletionItem[], prefix: string): Comp
     if (text === prefix) score += 100
     else if (text.startsWith(prefix)) score += 30 // same case as typed: "Do" prefers Dog over dog
     else if (text.toLowerCase().startsWith(prefix.toLowerCase())) score += 20
+    if (item.autoImport) score -= 25
     scored.push({ item, score })
   }
   scored.sort((a, b) => b.score - a.score || byServerOrder(a.item, b.item))
