@@ -11,11 +11,11 @@ The roadmap. Work through it roughly top to bottom; each tier builds on the one 
 - [x] Selection (shift+arrows, mouse drag, double/triple-click, Ctrl+A), copy/cut/paste, Tab/Shift+Tab indent (v0.4)
 - [x] Save (Ctrl+S), dirty marker, warning about unsaved changes on close (v0.2)
 - [x] Undo/redo (v0.3)
-- [ ] Scrolling that only renders the visible lines (so big files stay fast)
+- [x] Scrolling that only renders the visible lines (so big files stay fast) (v0.5: 50k lines opens in ~80ms)
 
 ## Tier 2: it's an IDE
 - [ ] Tabs for several open files
-- [ ] Python syntax highlighting (our own tokenizer)
+- [x] Python syntax highlighting (our own tokenizer) (v0.5)
 - [ ] Find/replace in the file
 - [ ] Run the current Python file and show its output in a panel
 - [ ] Integrated terminal (xterm.js + node-pty, the one part we don't write ourselves)

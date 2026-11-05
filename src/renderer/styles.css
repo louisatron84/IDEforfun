@@ -89,29 +89,39 @@ body { display: flex; flex-direction: column; }
   cursor: text;
 }
 
-.editor pre {
-  margin: 0;
-  padding: 4px 0 40vh; /* extra space at the bottom so the last line can scroll up */
-  font: inherit;
-}
-
+/* Gutter and content are as tall as the whole file (so the scrollbar is right),
+   but only the visible lines are actually in the DOM, shifted into place with transform. */
 .editor .gutter {
   position: sticky;
   left: 0;
   z-index: 2;
-  min-height: 100%;
-  padding-left: 16px;
-  padding-right: 12px;
-  text-align: right;
+  flex-shrink: 0;
+  min-height: 100%; /* keep the divider line full-height on short files */
   color: var(--fg-muted);
   background: var(--bg);
   border-right: 1px solid var(--border);
   user-select: none;
   cursor: default;
 }
+.editor .gutter-lines { padding-right: 12px; text-align: right; }
 
 .editor .text-area { position: relative; flex: 1 0 auto; }
-.editor .content { padding-left: 12px; padding-right: 24px; tab-size: 4; user-select: none; }
+.editor .content { position: relative; tab-size: 4; user-select: none; } /* above the selection boxes */
+
+.editor .gutter-lines,
+.editor .lines {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  will-change: transform;
+}
+.editor .lines { padding-left: 12px; } /* must match PAD_LEFT in editor.ts */
+.editor .line,
+.editor .gutter-lines > div {
+  height: var(--line-height);
+  white-space: pre;
+}
 
 .editor .cursor {
   position: absolute;
@@ -167,4 +177,29 @@ body { display: flex; flex-direction: column; }
   background: var(--selection-unfocused);
 }
 .editor.focused .sel { background: var(--selection); }
-.editor .content { position: relative; } /* text paints above the selection boxes */
+
+/* ---- syntax colors (one place to restyle everything) ---- */
+:root {
+  --tok-keyword: #cf8e6d;
+  --tok-constant: #cf8e6d;
+  --tok-builtin: #8888c6;
+  --tok-self: #94558d;
+  --tok-function: #56a8f5;
+  --tok-class: #e5c07b;
+  --tok-call: #7fb3e0;
+  --tok-decorator: #b3ae60;
+  --tok-string: #6aab73;
+  --tok-number: #2aacb8;
+  --tok-comment: #7a7e85;
+}
+.tok-keyword { color: var(--tok-keyword); }
+.tok-constant { color: var(--tok-constant); }
+.tok-builtin { color: var(--tok-builtin); }
+.tok-self { color: var(--tok-self); font-style: italic; }
+.tok-function { color: var(--tok-function); }
+.tok-class { color: var(--tok-class); }
+.tok-call { color: var(--tok-call); }
+.tok-decorator { color: var(--tok-decorator); }
+.tok-string { color: var(--tok-string); }
+.tok-number { color: var(--tok-number); }
+.tok-comment { color: var(--tok-comment); font-style: italic; }

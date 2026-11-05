@@ -36,8 +36,17 @@ export class TextBuffer {
   private lines: string[]
   /** Line ending used when saving: kept the same as the file had. */
   readonly eol: '\n' | '\r\n'
-  /** Called after every change (used by History for undo/redo). */
-  onChange: ((change: Change) => void) | null = null
+  private readonly listeners = new Set<(change: Change) => void>()
+
+  /** Get told about every change (History uses it for undo, Highlighter to re-color). */
+  subscribe(listener: (change: Change) => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  private emit(change: Change): void {
+    for (const listener of this.listeners) listener(change)
+  }
 
   constructor(text: string) {
     this.eol = text.includes('\r\n') ? '\r\n' : '\n'
@@ -82,7 +91,7 @@ export class TextBuffer {
       this.lines.splice(at.line, 1, before + pieces[0], ...pieces.slice(1, -1), last + after)
     }
     const normalized = pieces.join('\n')
-    this.onChange?.({ kind: 'insert', at, text: normalized })
+    this.emit({ kind: 'insert', at, text: normalized })
     return endOf(at, normalized)
   }
 
@@ -105,11 +114,11 @@ export class TextBuffer {
     let end = this.clamp(b)
     if (comparePositions(start, end) > 0) [start, end] = [end, start]
     if (comparePositions(start, end) === 0) return
-    const removed = this.onChange ? this.getRange(start, end) : ''
+    const removed = this.listeners.size > 0 ? this.getRange(start, end) : ''
     const head = this.lines[start.line].slice(0, start.col)
     const tail = this.lines[end.line].slice(end.col)
     this.lines.splice(start.line, end.line - start.line + 1, head + tail)
-    this.onChange?.({ kind: 'delete', at: start, text: removed })
+    this.emit({ kind: 'delete', at: start, text: removed })
   }
 
   /** Character offset of a position, counting each line break as 1 character. */

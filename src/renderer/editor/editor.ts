@@ -4,15 +4,14 @@
  * How it works:
  * - The text lives in a TextBuffer (the model). Commands in commands.ts and
  *   selection.ts change it; History records every change for undo/redo.
- * - It's drawn as a line-number gutter plus one <pre> holding all the text.
+ * - Only the lines visible on screen are in the DOM ("virtual scrolling"): the
+ *   content area is as tall as the whole file, and the ~40 visible lines are
+ *   drawn as colored spans (from the Highlighter) and shifted into place.
  *   Selection highlights are absolutely positioned divs behind the text.
  * - The cursor is a div we position ourselves, using the monospace character width.
  * - Keystrokes go into an invisible <textarea> that follows the cursor. That gives
  *   us typing, paste and IME (e.g. accented chars) from the browser for free;
  *   we read what was typed, insert it into the buffer and clear the textarea.
- *
- * Re-rendering the whole <pre> on each edit is fine for normal files. Rendering
- * only the visible lines is on the checklist for big files.
  */
 import type { Position } from './textBuffer'
 import { TextBuffer, comparePositions } from './textBuffer'
@@ -20,10 +19,15 @@ import * as cmd from './commands'
 import * as sel from './selection'
 import type { EditKind } from './history'
 import { History } from './history'
+import { Highlighter } from './highlighter'
 
 const TAB_SIZE = 4
-const PAD_TOP = 4 // must match .editor pre padding-top in styles.css
-const PAD_LEFT = 12 // must match .editor .content padding-left
+const PAD_TOP = 4 // space above the first line
+const PAD_LEFT = 12 // must match .editor .lines padding-left in styles.css
+const PAD_RIGHT = 24
+const GUTTER_PAD = 28 // gutter's left + right padding around the numbers
+/** Extra lines drawn above/below the visible area so fast scrolling doesn't flash. */
+const OVERSCAN = 5
 
 export interface EditorOptions {
   /** Called whenever the dirty (unsaved) state changes. */
@@ -32,15 +36,18 @@ export interface EditorOptions {
 
 export class Editor {
   private readonly root: HTMLDivElement
-  private readonly gutter: HTMLPreElement
+  private readonly gutter: HTMLDivElement
+  private readonly gutterLines: HTMLDivElement
   private readonly textArea: HTMLDivElement
   private readonly selectionLayer: HTMLDivElement
-  private readonly content: HTMLPreElement
+  private readonly content: HTMLDivElement
+  private readonly linesEl: HTMLDivElement
   private readonly cursorEl: HTMLDivElement
   private readonly input: HTMLTextAreaElement
 
   private buffer = new TextBuffer('')
   private history = new History(this.buffer)
+  private highlighter = new Highlighter(this.buffer)
   /** The cursor is the selection's head; `anchor` is where the selection started. */
   private cursor: Position = { line: 0, col: 0 }
   private anchor: Position = { line: 0, col: 0 }
@@ -52,10 +59,14 @@ export class Editor {
 
   constructor(container: HTMLElement, private readonly opts: EditorOptions = {}) {
     this.root = el('div', 'editor')
-    this.gutter = el('pre', 'gutter')
+    this.gutter = el('div', 'gutter')
+    this.gutterLines = el('div', 'gutter-lines')
+    this.gutter.append(this.gutterLines)
     this.textArea = el('div', 'text-area')
     this.selectionLayer = el('div', 'selection-layer')
-    this.content = el('pre', 'content')
+    this.content = el('div', 'content')
+    this.linesEl = el('div', 'lines')
+    this.content.append(this.linesEl)
     this.cursorEl = el('div', 'cursor')
     this.input = el('textarea', 'input')
     this.input.spellcheck = false
@@ -71,7 +82,10 @@ export class Editor {
     this.input.addEventListener('focus', () => this.root.classList.add('focused'))
     this.input.addEventListener('blur', () => this.root.classList.remove('focused'))
     this.textArea.addEventListener('mousedown', (e) => this.onMouseDown(e))
-    this.root.addEventListener('scroll', () => this.renderSelection())
+    this.root.addEventListener('scroll', () => {
+      this.renderLines()
+      this.renderSelection()
+    })
 
     this.showPlaceholder('Open a folder and pick a file')
   }
@@ -83,6 +97,7 @@ export class Editor {
   open(text: string): void {
     this.buffer = new TextBuffer(text)
     this.history = new History(this.buffer)
+    this.highlighter = new Highlighter(this.buffer)
     this.cursor = this.anchor = { line: 0, col: 0 }
     this.goalVisual = null
     this.root.className = 'editor'
@@ -364,22 +379,72 @@ export class Editor {
   private measure(): void {
     const probe = el('span', '')
     probe.textContent = 'x'.repeat(100)
-    this.content.replaceChildren(probe)
+    this.linesEl.replaceChildren(probe)
     this.charWidth = probe.getBoundingClientRect().width / 100 || 8
     this.lineHeight = parseFloat(getComputedStyle(this.content).lineHeight) || 20
   }
 
   private render(textChanged = true): void {
-    if (textChanged) {
-      const lines = this.buffer.getLines()
-      // textContent (never innerHTML) so file contents can't be parsed as HTML.
-      this.content.textContent = lines.join('\n')
-      let numbers = ''
-      for (let i = 1; i <= lines.length; i++) numbers += i === 1 ? '1' : '\n' + i
-      this.gutter.textContent = numbers
-    }
+    if (textChanged) this.updateSize()
+    this.renderLines()
     this.placeCursor()
     this.renderSelection()
+  }
+
+  /** Size the scrollable area to the whole file, even though only visible lines are drawn. */
+  private updateSize(): void {
+    const lines = this.buffer.getLines()
+    let widest = 0
+    for (const line of lines) {
+      const cols = line.includes('\t') ? cmd.visualCol(line, line.length, TAB_SIZE) : line.length
+      if (cols > widest) widest = cols
+    }
+    const height = `calc(${PAD_TOP + lines.length * this.lineHeight}px + 40vh)` // 40vh: let the last line scroll up
+    this.content.style.height = height
+    this.content.style.width = `${PAD_LEFT + widest * this.charWidth + PAD_RIGHT}px`
+    this.gutter.style.height = height
+    this.gutter.style.width = `${String(lines.length).length * this.charWidth + GUTTER_PAD}px`
+  }
+
+  /** Which lines are on screen, plus a few extra above and below. */
+  private visibleRange(): [number, number] {
+    const first = Math.floor((this.root.scrollTop - PAD_TOP) / this.lineHeight) - OVERSCAN
+    const count = Math.ceil(this.root.clientHeight / this.lineHeight) + OVERSCAN * 2
+    return [Math.max(0, first), Math.min(this.buffer.lineCount - 1, first + count)]
+  }
+
+  /** Draw just the visible lines, colored by the highlighter. */
+  private renderLines(): void {
+    const [first, last] = this.visibleRange()
+    const lineEls: HTMLElement[] = []
+    const numberEls: HTMLElement[] = []
+    for (let i = first; i <= last; i++) {
+      lineEls.push(this.renderLine(i))
+      const num = el('div', '')
+      num.textContent = String(i + 1)
+      numberEls.push(num)
+    }
+    const offset = `translateY(${PAD_TOP + first * this.lineHeight}px)`
+    this.linesEl.style.transform = offset
+    this.gutterLines.style.transform = offset
+    this.linesEl.replaceChildren(...lineEls)
+    this.gutterLines.replaceChildren(...numberEls)
+  }
+
+  private renderLine(index: number): HTMLElement {
+    const text = this.buffer.getLine(index)
+    const lineEl = el('div', 'line')
+    let pos = 0
+    // textContent / text nodes only (never innerHTML) so file contents can't be parsed as HTML.
+    for (const tok of this.highlighter.tokensFor(index)) {
+      if (tok.start > pos) lineEl.append(text.slice(pos, tok.start))
+      const span = el('span', `tok-${tok.type}`)
+      span.textContent = text.slice(tok.start, tok.end)
+      lineEl.append(span)
+      pos = tok.end
+    }
+    if (pos < text.length) lineEl.append(text.slice(pos))
+    return lineEl
   }
 
   /** Draw highlight boxes for the selected text, only for lines currently on screen. */

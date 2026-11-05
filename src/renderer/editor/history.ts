@@ -40,10 +40,10 @@ export class History {
 
   constructor(private readonly buffer: TextBuffer, opts: { now?: () => number } = {}) {
     this.now = opts.now ?? Date.now
-    buffer.onChange = (change) => {
+    buffer.subscribe((change) => {
       if (this.applying) return
       this.collecting?.push(change)
-    }
+    })
   }
 
   /** Run an edit as one undoable action. `edit` returns the new cursor. */
