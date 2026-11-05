@@ -46,6 +46,9 @@ your terminal has `ELECTRON_RUN_AS_NODE` set. Clear it first: `$env:ELECTRON_RUN
 | Tab / Shift+Tab | Indent / dedent (all selected lines) |
 | Ctrl+C / Ctrl+X (nothing selected) | Copy / cut the whole line |
 | Double / triple click | Select word / line |
+| Alt+click / Ctrl+Alt+↑ ↓ | Add a cursor there / on the line above or below |
+| Ctrl+D / Ctrl+Shift+L | Select the next match too / select every match (multi-cursor) |
+| Escape | Back to one cursor |
 
 ## Layout
 - `src/main/`: Electron main process: file system, running Python (`python.ts`), terminals (`terminals.ts`), settings

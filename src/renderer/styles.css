@@ -917,3 +917,7 @@ body { display: flex; flex-direction: column; }
 .debug-input-row { color: var(--exec-arrow); }
 .output-input:disabled { opacity: 0.6; }
 .panel-buttons button:disabled { opacity: 0.4; cursor: default; }
+
+/* ---- multi-cursor ---- */
+.editor .selection-layer .extra-cursor { display: none; }
+.editor.focused .selection-layer .extra-cursor { display: block; }

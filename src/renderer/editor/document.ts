@@ -7,6 +7,7 @@ import type { Position } from './textBuffer'
 import { TextBuffer } from './textBuffer'
 import { History } from './history'
 import { Highlighter } from './highlighter'
+import type { Selection } from './selection'
 
 export class Doc {
   readonly buffer: TextBuffer
@@ -14,6 +15,8 @@ export class Doc {
   readonly highlighter: Highlighter
   cursor: Position = { line: 0, col: 0 }
   anchor: Position = { line: 0, col: 0 }
+  /** Extra cursors/selections besides the main one (multi-cursor editing). Usually empty. */
+  extras: Selection[] = []
   scrollTop = 0
   scrollLeft = 0
 

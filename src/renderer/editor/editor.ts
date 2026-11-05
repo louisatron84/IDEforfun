@@ -19,6 +19,7 @@ import * as cmd from './commands'
 import * as sel from './selection'
 import type { EditKind } from './history'
 import { Doc } from './document'
+import * as mc from './multiCursor'
 
 const PAD_TOP = 4 // space above the first line
 const PAD_LEFT = 12 // must match .editor .lines padding-left in styles.css
@@ -160,6 +161,7 @@ export class Editor {
 
   /** Move the cursor to a line (1-based column optional), e.g. from a traceback link. */
   goTo(line: number, col = 0): void {
+    this.clearExtras()
     const pos = this.buffer.clamp({ line, col })
     this.cursor = this.anchor = pos
     this.goalVisual = null
@@ -180,12 +182,14 @@ export class Editor {
   /** Run an edit from outside the editor (e.g. Replace All) as one undo step. */
   runEdit(fn: (buffer: Doc['buffer']) => Position): void {
     if (!this.hasDoc) return
+    this.clearExtras()
     const next = this.history.transact('other', this.cursor, () => fn(this.buffer))
     this.afterEdit(next)
   }
 
   /** Select a range (used by find). */
   select(anchor: Position, head: Position): void {
+    this.clearExtras()
     this.anchor = anchor
     this.cursor = head
     this.goalVisual = null
@@ -224,6 +228,210 @@ export class Editor {
     return this.buffer.getRange(this.anchor, this.cursor)
   }
 
+  // ---------- multi-cursor ----------
+
+  /** True when there are extra cursors besides the main one. */
+  private get multi(): boolean {
+    return this.doc.extras.length > 0
+  }
+
+  /** How many cursors there are (1 normally). */
+  get cursorCount(): number {
+    return 1 + (this.hasDoc ? this.doc.extras.length : 0)
+  }
+
+  private allSelections(): mc.MultiSelection[] {
+    return [{ anchor: this.anchor, head: this.cursor, primary: true }, ...this.doc.extras]
+  }
+
+  /** Replace all cursors; the one marked primary becomes the main cursor. */
+  private setSelections(list: readonly mc.MultiSelection[]): void {
+    const all = mc.normalize(list)
+    const primary = all.find((s) => s.primary)!
+    this.anchor = primary.anchor
+    this.cursor = primary.head
+    this.doc.extras = all.filter((s) => s !== primary).map(({ anchor, head }) => ({ anchor, head }))
+  }
+
+  /** Back to a single cursor (the main one). */
+  private clearExtras(): void {
+    if (this.hasDoc) this.doc.extras = []
+  }
+
+  /** Run an edit at every cursor as one undo step. */
+  private editMulti(kind: EditKind, op: (s: sel.Selection, index: number) => sel.Selection): void {
+    let result: mc.MultiSelection[] = []
+    this.history.transact(kind, this.cursor, () => {
+      result = mc.editAll(this.buffer, this.allSelections(), op)
+      return result.find((s) => s.primary)!.head
+    })
+    if (!result.length) return
+    this.setSelections(result)
+    this.goalVisual = null
+    this.render(true)
+    this.opts.onEdit?.(this.doc)
+  }
+
+  /** Keys that create or remove extra cursors. Returns true if handled. */
+  private multiCursorKeys(e: KeyboardEvent): boolean {
+    const ctrl = e.ctrlKey || e.metaKey
+    const k = e.key.toLowerCase()
+    const b = this.buffer
+    // Escape: back to one cursor.
+    if (e.key === 'Escape' && this.multi) {
+      this.clearExtras()
+      this.render(false)
+      return true
+    }
+    // Ctrl+D: select the word, then add the next match of the selection as another cursor.
+    if (ctrl && !e.shiftKey && !e.altKey && k === 'd') {
+      if (!this.hasSelection()) {
+        const [start, end] = sel.wordAt(b.getLine(this.cursor.line), this.cursor.col)
+        if (start === end) return true
+        this.anchor = { line: this.cursor.line, col: start }
+        this.cursor = { line: this.cursor.line, col: end }
+      } else {
+        const all = this.allSelections()
+        const found = mc.nextOccurrence(b, this.selectedText(), sel.selectionRange(this.selection).end, all)
+        if (found) this.setSelections([...all.map((s) => ({ ...s, primary: false })), { ...found, primary: true }])
+      }
+      this.render(false, 'center')
+      return true
+    }
+    // Ctrl+Shift+L: a cursor at every match of the selection (or the word under the cursor).
+    if (ctrl && e.shiftKey && !e.altKey && k === 'l') {
+      let text = this.selectedText()
+      if (!text) {
+        const [start, end] = sel.wordAt(b.getLine(this.cursor.line), this.cursor.col)
+        text = b.getLine(this.cursor.line).slice(start, end)
+      }
+      const found = mc.allOccurrences(b, text)
+      if (found.length) {
+        const here = found.findIndex((s) => comparePositions(s.anchor, this.cursor) <= 0 && comparePositions(this.cursor, s.head) <= 0)
+        this.setSelections(found.map((s, i) => ({ ...s, primary: i === (here === -1 ? 0 : here) })))
+        this.render(false)
+      }
+      return true
+    }
+    // Ctrl+Alt+Up/Down: add a cursor on the line above/below.
+    if (ctrl && e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      const all = mc.normalize(this.allSelections())
+      const edge = e.key === 'ArrowUp' ? all[0] : all[all.length - 1]
+      const delta = e.key === 'ArrowUp' ? -1 : 1
+      const line = edge.head.line + delta
+      if (line < 0 || line >= b.lineCount) return true
+      const goal = cmd.visualCol(b.getLine(edge.head.line), edge.head.col, this._tabSize)
+      const t = cmd.moveVertical(b, edge.head, delta, goal, this._tabSize)
+      this.setSelections([...all.map((s) => ({ ...s, primary: false })), { anchor: t, head: t, primary: true }])
+      this.render(false)
+      return true
+    }
+    return false
+  }
+
+  /** Movement and editing keys when there are several cursors. Returns true if handled. */
+  private multiKeyDown(e: KeyboardEvent): boolean {
+    const b = this.buffer
+    const ctrl = e.ctrlKey || e.metaKey
+    const shift = e.shiftKey
+    const tab = this._tabSize
+
+    const move = (s: sel.Selection): Position | null => {
+      const pos = s.head
+      const has = !sel.isEmpty(s)
+      const vertical = (delta: number) =>
+        cmd.moveVertical(b, pos, delta, cmd.visualCol(b.getLine(pos.line), pos.col, tab), tab)
+      switch (e.key) {
+        case 'ArrowLeft':
+          return !shift && !ctrl && has ? sel.selectionRange(s).start : ctrl ? sel.wordLeft(b, pos) : cmd.moveLeft(b, pos)
+        case 'ArrowRight':
+          return !shift && !ctrl && has ? sel.selectionRange(s).end : ctrl ? sel.wordRight(b, pos) : cmd.moveRight(b, pos)
+        case 'ArrowUp': return vertical(-1)
+        case 'ArrowDown': return vertical(1)
+        case 'Home': return cmd.moveHome(b, pos)
+        case 'End': return cmd.moveEnd(b, pos)
+      }
+      return null
+    }
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key) && !(ctrl && e.altKey)) {
+      if (ctrl && (e.key === 'Home' || e.key === 'End')) {
+        this.clearExtras() // Ctrl+Home/End: jump to the start/end with one cursor
+        return false
+      }
+      this.setSelections(this.allSelections().map((s) => {
+        const t = move(s) ?? s.head
+        return { anchor: shift ? s.anchor : t, head: t, primary: (s as mc.MultiSelection).primary }
+      }))
+      this.goalVisual = null
+      this.render(false)
+      return true
+    }
+    if (e.key === 'PageUp' || e.key === 'PageDown') {
+      this.clearExtras()
+      return false
+    }
+
+    const replace = (s: sel.Selection): Position => (sel.isEmpty(s) ? s.head : sel.deleteSelection(b, s))
+    const at = (p: Position): sel.Selection => ({ anchor: p, head: p })
+    switch (e.key) {
+      case 'Backspace':
+        this.editMulti('delete', (s) => {
+          if (!sel.isEmpty(s)) return at(sel.deleteSelection(b, s))
+          if (ctrl) {
+            const start = sel.wordLeft(b, s.head)
+            b.delete(start, s.head)
+            return at(start)
+          }
+          return at(cmd.backspace(b, s.head, tab))
+        })
+        return true
+      case 'Delete':
+        this.editMulti('delete', (s) => {
+          if (!sel.isEmpty(s)) return at(sel.deleteSelection(b, s))
+          if (ctrl) b.delete(s.head, sel.wordRight(b, s.head))
+          else cmd.deleteForward(b, s.head)
+          return at(s.head)
+        })
+        return true
+      case 'Enter':
+        this.editMulti('newline', (s) => at(cmd.newline(b, replace(s), tab)))
+        return true
+      case 'Tab': {
+        if (ctrl) return false
+        this.editMulti('other', (s) => {
+          const [first, last] = sel.selectedLines(s)
+          if (shift) return sel.dedentLines(b, s, tab)
+          if (!sel.isEmpty(s) && first !== last) return sel.indentLines(b, s, tab)
+          return at(cmd.insertTab(b, replace(s), tab))
+        })
+        return true
+      }
+    }
+    return false
+  }
+
+  /** Copy/cut with several cursors: one piece per cursor, joined by newlines. */
+  private copyOrCutMulti(cut: boolean): void {
+    const b = this.buffer
+    const all = mc.normalize(this.allSelections())
+    const pieces = all.map((s) => (sel.isEmpty(s) ? b.getLine(s.head.line) : b.getRange(s.anchor, s.head)))
+    writeClipboard(pieces.join('\n'), this.input)
+    if (!cut) return
+    this.editMulti('other', (s) => {
+      if (!sel.isEmpty(s)) {
+        const p = sel.deleteSelection(b, s)
+        return { anchor: p, head: p }
+      }
+      const line = s.head.line
+      const isLast = line === b.lineCount - 1
+      if (isLast && line > 0) b.delete({ line: line - 1, col: b.getLine(line - 1).length }, { line, col: b.getLine(line).length })
+      else if (isLast) b.delete({ line, col: 0 }, { line, col: b.getLine(line).length })
+      else b.delete({ line, col: 0 }, { line: line + 1, col: 0 })
+      const p = b.clamp({ line, col: 0 })
+      return { anchor: p, head: p }
+    })
+  }
+
   // ---------- keyboard ----------
 
   private onKeyDown(e: KeyboardEvent): void {
@@ -237,15 +445,23 @@ export class Editor {
     const shift = e.shiftKey
     const k = e.key.toLowerCase()
 
+    // --- multiple cursors ---
+    if (this.multiCursorKeys(e) || (this.multi && !(ctrl && 'zyacx'.includes(k)) && this.multiKeyDown(e))) {
+      e.preventDefault()
+      return
+    }
+
     // --- shortcuts with Ctrl ---
     if (ctrl && (k === 'z' || k === 'y')) {
       e.preventDefault()
+      this.clearExtras()
       const target = k === 'y' || shift ? this.history.redo() : this.history.undo()
       if (target) this.afterEdit(this.buffer.clamp(target))
       return
     }
     if (ctrl && k === 'a') {
       e.preventDefault()
+      this.clearExtras()
       this.anchor = { line: 0, col: 0 }
       this.cursor = b.clamp({ line: Infinity, col: Infinity })
       this.render(false)
@@ -253,7 +469,8 @@ export class Editor {
     }
     if (ctrl && (k === 'c' || k === 'x')) {
       e.preventDefault()
-      this.copyOrCut(k === 'x')
+      if (this.multi) this.copyOrCutMulti(k === 'x')
+      else this.copyOrCut(k === 'x')
       return
     }
 
@@ -345,6 +562,17 @@ export class Editor {
     this.input.value = ''
     if (!text) return
     const kind: EditKind = e.inputType === 'insertFromPaste' ? 'paste' : 'typing'
+    if (this.multi) {
+      // Pasting as many lines as there are cursors puts one line at each cursor.
+      const lines = text.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n')
+      const perCursor = kind === 'paste' && lines.length === this.cursorCount
+      this.editMulti(kind, (s, i) => {
+        const at = sel.isEmpty(s) ? s.head : sel.deleteSelection(this.buffer, s)
+        const p = this.buffer.insert(at, perCursor ? lines[i] : text)
+        return { anchor: p, head: p }
+      })
+      return // no autocomplete with several cursors
+    }
     const hadSelection = this.hasSelection()
     const s = this.selection
     // Typing over a selection is a normal 'typing' step, so the letters typed after it
@@ -401,6 +629,17 @@ export class Editor {
     if (e.button !== 0) return
     e.preventDefault() // keep focus in our hidden textarea
     const pos = this.positionFromMouse(e)
+
+    // Alt+click: add another cursor (it becomes the main one).
+    if (e.altKey && !e.shiftKey && e.detail === 1) {
+      const all = this.allSelections().map((s) => ({ ...s, primary: false }))
+      this.setSelections([...all, { anchor: pos, head: pos, primary: true }])
+      this.goalVisual = null
+      this.render(false)
+      this.focus()
+      return
+    }
+    this.clearExtras()
 
     if (e.detail === 2) {
       const [start, end] = sel.wordAt(this.buffer.getLine(pos.line), pos.col)
@@ -620,6 +859,16 @@ export class Editor {
     if (this.hasSelection()) {
       const { start, end } = sel.selectionRange(this.selection)
       this.addBoxes(boxes, start, end, 'sel', firstVisible, lastVisible)
+    }
+    // Extra cursors: their selections, plus a drawn cursor each (the main cursor is drawn separately).
+    for (const s of this.doc.extras) {
+      const { start, end } = sel.selectionRange(s)
+      if (end.line < firstVisible || start.line > lastVisible) continue
+      if (!sel.isEmpty(s)) this.addBoxes(boxes, start, end, 'sel', firstVisible, lastVisible)
+      const x = PAD_LEFT + cmd.visualCol(this.buffer.getLine(s.head.line), s.head.col, this._tabSize) * this.charWidth
+      const c = el('div', 'cursor extra-cursor')
+      c.style.transform = `translate(${x}px, ${PAD_TOP + s.head.line * this.lineHeight}px)`
+      boxes.push(c)
     }
     this.selectionLayer.replaceChildren(...boxes)
   }

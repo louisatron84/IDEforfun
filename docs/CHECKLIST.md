@@ -19,7 +19,7 @@ to real source code or runtime behaviour.
 - [x] Save (Ctrl+S), dirty marker, warning about unsaved changes on close (v0.2)
 - [x] Undo/redo (v0.3)
 - [x] Scrolling that only renders visible lines (50k lines opens in ~80ms, v0.5)
-- [ ] Multi-cursor editing
+- [x] Multi-cursor editing (v0.18: Alt+click, Ctrl+Alt+↑/↓, Ctrl+D, Ctrl+Shift+L; paste spreads lines across cursors)
 - [ ] Bracket matching and automatic bracket completion
 - [ ] Automatic quote completion
 - [ ] Comment/uncomment selection
