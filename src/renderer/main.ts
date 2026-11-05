@@ -604,6 +604,14 @@ commands.register({ id: 'debug.stepOut', title: 'Step Out', keys: 'Shift+F11', w
 commands.register({ id: 'debug.pause', title: 'Pause', when: () => session?.state === 'running', run: () => void session!.pause() })
 commands.register({ id: 'debug.toggleBreakpoint', title: 'Toggle Breakpoint', keys: 'F9', when: hasDoc, run: () => toggleBreakpoint() })
 commands.register({ id: 'debug.clearBreakpoints', title: 'Remove All Breakpoints', when: () => breakpoints.count > 0, run: () => breakpoints.clear() })
+commands.register({
+  id: 'editor.toggleMinimap', title: 'Toggle Minimap',
+  run: () => {
+    editor.setMinimap(!editor.minimapVisible)
+    try { localStorage.setItem('ideforfun.minimap', editor.minimapVisible ? '1' : '0') } catch { /* storage unavailable */ }
+  }
+})
+try { if (localStorage.getItem('ideforfun.minimap') === '0') editor.setMinimap(false) } catch { /* storage unavailable */ }
 commands.register({ id: 'editor.fold', title: 'Fold Block (Ctrl+Shift+[)', when: hasDoc, run: () => editor.fold() })
 commands.register({ id: 'editor.unfold', title: 'Unfold Block (Ctrl+Shift+])', when: hasDoc, run: () => editor.unfold() })
 commands.register({ id: 'editor.foldAll', title: 'Fold All', when: hasDoc, run: () => editor.foldAll() })

@@ -22,6 +22,7 @@ import { Doc } from './document'
 import * as mc from './multiCursor'
 import * as pairs from './pairs'
 import { FoldMap, enclosingBlock, foldEnd, isFoldable } from './folding'
+import { MINIMAP_WIDTH, Minimap } from './minimap'
 
 const PAD_TOP = 4 // space above the first line
 const PAD_LEFT = 12 // must match .editor .lines padding-left in styles.css
@@ -102,7 +103,19 @@ export class Editor {
     this.input.setAttribute('aria-label', 'Code editor')
 
     this.textArea.append(this.selectionLayer, this.content, this.cursorEl, this.input)
-    container.replaceChildren(this.root)
+    this.minimap = new Minimap({
+      rowCount: () => this.foldMap.visibleCount(this.buffer.lineCount),
+      lineAtRow: (row) => this.foldMap.bufferLine(row),
+      getLine: (line) => this.buffer.getLine(line),
+      tokens: (line) => this.highlighter.tokensFor(line),
+      scroll: () => ({ top: Math.max(0, this.root.scrollTop - PAD_TOP), height: this.root.clientHeight, rowHeight: this.lineHeight }),
+      scrollToRow: (row) => {
+        this.root.scrollTop = PAD_TOP + row * this.lineHeight - this.root.clientHeight / 2
+      }
+    })
+    this.minimap.canvas.hidden = true
+    container.classList.add('editor-host')
+    container.replaceChildren(this.root, this.minimap.canvas)
 
     this.input.addEventListener('keydown', (e) => this.onKeyDown(e))
     this.input.addEventListener('input', (e) => this.onInput(e as InputEvent))
@@ -124,7 +137,13 @@ export class Editor {
     this.root.addEventListener('scroll', () => {
       this.renderLines()
       this.renderSelection()
+      this.minimap.schedule()
     })
+    // Keep the minimap left of the scrollbar, and redraw it when the editor is resized.
+    new ResizeObserver(() => {
+      this.minimap.canvas.style.right = `${this.root.offsetWidth - this.root.clientWidth}px`
+      this.minimap.schedule()
+    }).observe(this.root)
 
     this.showPlaceholder('Open a folder and pick a file')
   }
@@ -136,6 +155,7 @@ export class Editor {
     this.hasDoc = true
     this.goalVisual = null
     this.root.className = 'editor'
+    this.minimap.canvas.hidden = !this.minimapOn
     this.root.replaceChildren(this.gutter, this.textArea)
     this.measure()
     this.rebuildFolds()
@@ -207,6 +227,7 @@ export class Editor {
 
   showPlaceholder(message: string): void {
     this.rememberScroll()
+    this.minimap.canvas.hidden = true
     this.hasDoc = false
     this.doc = new Doc('', '')
     this.root.className = 'editor empty'
@@ -771,6 +792,27 @@ export class Editor {
     return cmd.moveVertical(this.buffer, this.cursor, delta, this.goalVisual, this._tabSize)
   }
 
+  // ---------- minimap ----------
+
+  private readonly minimap: Minimap
+  private minimapOn = true
+
+  /** Show or hide the minimap. */
+  setMinimap(on: boolean): void {
+    this.minimapOn = on
+    this.minimap.setVisible(on && this.hasDoc)
+    if (this.hasDoc) this.render(true)
+  }
+
+  get minimapVisible(): boolean {
+    return this.minimapOn
+  }
+
+  /** Room the minimap takes on the right of the text. */
+  private get minimapRoom(): number {
+    return this.minimapOn && this.hasDoc ? MINIMAP_WIDTH : 0
+  }
+
   // ---------- folding ----------
 
   private foldMap: FoldMap = FoldMap.empty
@@ -907,6 +949,7 @@ export class Editor {
     this.scrollIntoView(x, y, scroll)
     this.renderLines()
     this.renderSelection()
+    this.minimap.schedule()
   }
 
   /** Size the scrollable area to the whole file, even though only visible lines are drawn. */
@@ -920,7 +963,7 @@ export class Editor {
     const rows = this.foldMap.visibleCount(lines.length)
     const height = `calc(${PAD_TOP + rows * this.lineHeight}px + 40vh)` // 40vh: let the last line scroll up
     this.content.style.height = height
-    this.content.style.width = `${PAD_LEFT + widest * this.charWidth + PAD_RIGHT}px`
+    this.content.style.width = `${PAD_LEFT + widest * this.charWidth + PAD_RIGHT + this.minimapRoom}px`
     this.gutter.style.height = height
     this.gutter.style.width = `${String(lines.length).length * this.charWidth + GUTTER_PAD}px`
   }
@@ -1138,7 +1181,7 @@ export class Editor {
       view.scrollTop = y + this.lineHeight + margin - view.clientHeight
     }
     const gutterWidth = this.gutter.offsetWidth
-    const visibleText = view.clientWidth - gutterWidth
+    const visibleText = view.clientWidth - gutterWidth - this.minimapRoom
     const margin2 = this.charWidth * 4
     if (x - margin2 < view.scrollLeft) view.scrollLeft = Math.max(0, x - margin2)
     else if (x + margin2 > view.scrollLeft + visibleText) {

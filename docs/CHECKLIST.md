@@ -24,7 +24,7 @@ to real source code or runtime behaviour.
 - [x] Automatic quote completion (v0.19: skips apostrophes, understands f""/r"" prefixes and """docstrings""")
 - [x] Comment/uncomment selection (v0.19: Ctrl+/)
 - [x] Code folding (functions, classes and blocks) (v0.20: gutter arrows, Ctrl+Shift+[ / ], Fold All / Unfold All; folds follow edits)
-- [ ] Minimap
+- [x] Minimap (v0.21: token colors, on-screen box, click/drag to scroll, follows folds; "Toggle Minimap" in the palette)
 - [ ] Multiple editor groups / split view
 - [ ] File encoding detection and conversion
 - [ ] CRLF/LF line endings: show and convert (files already keep their own line endings when saved)
