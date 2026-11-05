@@ -35,7 +35,7 @@ export function comparePositions(a: Position, b: Position): number {
 export class TextBuffer {
   private lines: string[]
   /** Line ending used when saving: kept the same as the file had. */
-  readonly eol: '\n' | '\r\n'
+  eol: '\n' | '\r\n'
   private readonly listeners = new Set<(change: Change) => void>()
 
   /** Get told about every change (History uses it for undo, Highlighter to re-color). */

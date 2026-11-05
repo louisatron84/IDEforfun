@@ -1,7 +1,8 @@
 import { FileTree } from './fileTree'
 import { Editor, type EditorOptions } from './editor/editor'
 import type { Doc } from './editor/document'
-import { Workspace, samePath } from './workspace'
+import { OpenRefused, Workspace, samePath } from './workspace'
+import { ENCODINGS, encodingLabel } from '../shared/encoding'
 import { TabBar } from './tabBar'
 import { CommandRegistry, keyString } from './keymap'
 import { FindBar } from './findBar'
@@ -53,7 +54,10 @@ const editorOptions = (index: number): EditorOptions => ({
     if (index === workspace.activeGroup) onEditorHover(pos, e)
   },
   onMouseLeave: () => hideHover(),
-  onFocus: () => workspace.focusGroup(index)
+  onFocus: () => workspace.focusGroup(index),
+  onCursor: () => {
+    if (index === workspace.activeGroup) scheduleStatus()
+  }
 })
 const groupEls: HTMLElement[] = [$('group-0')]
 const editors: Editor[] = [new Editor($('editor'), editorOptions(0))]
@@ -367,7 +371,7 @@ async function startLanguageServer(): Promise<void> {
     await window.api.lspStart()
     const py = await window.api.resolvePythonForAnalysis(rootFolder, settings.pythonPath || undefined)
     await python.start(rootFolder, py)
-    python.syncDocs(workspace.docs)
+    python.syncDocs(workspace.docs.filter((d) => !d.large))
     problems.setStatus('')
   } catch (err) {
     problems.setStatus(`Python language server failed to start: ${String(err)}`)
@@ -533,7 +537,8 @@ workspace.subscribe(() => {
   updateLineMarkers()
   findBar.refresh()
   completion.syncDoc()
-  python.syncDocs(workspace.docs)
+  python.syncDocs(workspace.docs.filter((d) => !d.large))
+  scheduleStatus()
   showDiagnostics()
   const folder = rootFolder?.split(/[\\/]/).pop()
   document.title = [doc ? (doc.dirty ? '● ' : '') + doc.name : null, folder, 'IDEforfun']
@@ -541,12 +546,25 @@ workspace.subscribe(() => {
 })
 
 export async function openFile(path: string, line?: number): Promise<Doc | null> {
+  const name = path.split(/[\\/]/).pop()
   try {
-    const doc = await workspace.open(path)
+    let doc: Doc
+    try {
+      doc = await workspace.open(path)
+    } catch (err) {
+      // Binary and very big files ask first.
+      if (!(err instanceof OpenRefused) || err.reason === 'tooLarge') throw err
+      const mb = (err.size / 1048576).toFixed(1)
+      const question = err.reason === 'binary'
+        ? `${name} looks like a binary file (not text), so it may show as gibberish.\n\nOpen it as text anyway?`
+        : `${name} is large (${mb} MB) and may be slow to edit.\n\nOpen it anyway?`
+      if (!confirm(question)) return null
+      doc = await workspace.open(path, { force: true })
+    }
     if (line !== undefined) editor.goTo(line)
     return doc
   } catch (err) {
-    alert(`Can't open ${path}:\n${String(err)}`)
+    alert(`Can't open ${path}:\n${err instanceof Error ? err.message : String(err)}`)
     return null
   }
 }
@@ -793,6 +811,114 @@ const palette = new Palette({
   goToLine: (line) => editor.goTo(line),
   lineCount: () => workspace.active?.buffer.lineCount ?? null
 })
+// ---------- status bar ----------
+
+let statusFrame = 0
+function scheduleStatus(): void {
+  if (statusFrame) return
+  statusFrame = requestAnimationFrame(() => {
+    statusFrame = 0
+    updateStatus()
+  })
+}
+
+function updateStatus(): void {
+  const doc = workspace.active
+  const set = (id: string, text: string) => {
+    const el = $(id)
+    if (el.textContent !== text) el.textContent = text
+  }
+  if (doc) {
+    const c = editor.getCursor()
+    const selected = editor.getSelectedText().length
+    const cursors = editor.cursorCount
+    set('sb-cursor', `Ln ${c.line + 1}, Col ${c.col + 1}` + (cursors > 1 ? ` (${cursors} cursors)` : selected ? ` (${selected} selected)` : ''))
+    set('sb-indent', `Spaces: ${settings.tabSize}`)
+    set('sb-encoding', encodingLabel(doc.encoding))
+    set('sb-eol', doc.eol)
+    const lang = doc.path.toLowerCase().endsWith('.py') ? 'Python' : 'Plain Text'
+    set('sb-lang', doc.large ? `${lang} (large file: no error checking)` : lang)
+  } else {
+    for (const id of ['sb-cursor', 'sb-indent', 'sb-encoding', 'sb-eol', 'sb-lang']) set(id, '')
+  }
+  const all = python.allDiagnostics()
+  const errors = all.reduce((n, [, list]) => n + list.filter((d) => d.severity === 1).length, 0)
+  const warnings = all.reduce((n, [, list]) => n + list.filter((d) => d.severity === 2).length, 0)
+  const problemsEl = $('sb-problems')
+  const key = rootFolder ? `${errors}|${warnings}` : ''
+  if (problemsEl.dataset.key !== key) {
+    problemsEl.dataset.key = key
+    problemsEl.replaceChildren()
+    if (rootFolder) {
+      const e = document.createElement('span')
+      e.className = errors ? 'err' : ''
+      e.textContent = `⊗ ${errors}`
+      const w = document.createElement('span')
+      w.className = warnings ? 'warn' : ''
+      w.textContent = `  ⚠ ${warnings}`
+      problemsEl.append(e, w)
+    }
+  }
+  set('sb-debug', session?.state === 'paused' ? '🐞 Paused' : session?.active ? '🐞 Debugging' : '')
+}
+
+function changeLineEndings(): void {
+  const doc = workspace.active
+  if (!doc) return
+  palette.choose('Line endings for this file', (['LF', 'CRLF'] as const).map((eol) => ({
+    label: eol,
+    detail: eol === 'LF' ? 'Unix / macOS style (\\n)' : 'Windows style (\\r\\n)',
+    hint: doc.eol === eol ? 'current' : undefined,
+    run: () => {
+      doc.eol = eol
+      workspace.notifyChanged()
+    }
+  })))
+}
+
+function reopenWithEncoding(): void {
+  const doc = workspace.active
+  if (!doc) return
+  palette.choose('Reopen with encoding (reads the file again)', ENCODINGS.map((e) => ({
+    label: e.label,
+    hint: doc.encoding === e.id ? 'current' : undefined,
+    run: () => {
+      if (doc.dirty && !confirm(`${doc.name} has unsaved changes. Reopen it and lose them?`)) return
+      void workspace.reopenWithEncoding(doc, e.id).catch((err) => alert(`Couldn't reopen ${doc.name}:\n${String(err)}`))
+    }
+  })))
+}
+
+function saveWithEncoding(): void {
+  const doc = workspace.active
+  if (!doc) return
+  palette.choose('Save with encoding', ENCODINGS.map((e) => ({
+    label: e.label,
+    hint: doc.encoding === e.id ? 'current' : undefined,
+    run: () => {
+      doc.encoding = e.id
+      void saveActive()
+    }
+  })))
+}
+
+commands.register({ id: 'file.lineEndings', title: 'Change Line Endings (LF / CRLF)…', when: hasDoc, run: changeLineEndings })
+commands.register({ id: 'file.reopenEncoding', title: 'Reopen with Encoding…', when: hasDoc, run: reopenWithEncoding })
+commands.register({ id: 'file.saveEncoding', title: 'Save with Encoding…', when: hasDoc, run: saveWithEncoding })
+
+$('sb-eol').addEventListener('click', changeLineEndings)
+$('sb-encoding').addEventListener('click', () => {
+  palette.choose('Encoding', [
+    { label: 'Reopen with Encoding…', detail: 'read the file again as another encoding', run: () => setTimeout(reopenWithEncoding) },
+    { label: 'Save with Encoding…', detail: 'write the file in another encoding', run: () => setTimeout(saveWithEncoding) }
+  ])
+})
+$('sb-cursor').addEventListener('click', () => void palette.open(':'))
+$('sb-indent').addEventListener('click', () => commands.run('settings.open'))
+$('sb-problems').addEventListener('click', () => panel.show('problems'))
+python.onDiagnostics(scheduleStatus)
+updateStatus()
+
 commands.register({ id: 'palette.commands', title: 'Show All Commands', keys: 'Ctrl+Shift+P', run: () => void palette.open('>') })
 commands.register({ id: 'palette.files', title: 'Go to File…', keys: 'Ctrl+P', when: () => rootFolder !== null, run: () => void palette.open('') })
 commands.register({ id: 'palette.line', title: 'Go to Line…', keys: 'Ctrl+G', when: hasDoc, run: () => void palette.open(':') })

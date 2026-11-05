@@ -3,10 +3,24 @@
  * Pure logic, no DOM, so it can be unit-tested; the TabBar draws it.
  */
 import { Doc } from './editor/document'
+import { LARGE_FILE_BYTES, type Encoding, type TextFileResult } from '../shared/encoding'
 
 export interface FileApi {
-  readFile(path: string): Promise<string>
-  writeFile(path: string, text: string): Promise<void>
+  readTextFile(path: string, opts?: { force?: boolean; encoding?: Encoding }): Promise<TextFileResult>
+  writeTextFile(path: string, text: string, encoding: Encoding): Promise<void>
+}
+
+/** Opening was refused: the file looks binary, is huge (both can be forced), or is too large. */
+export class OpenRefused extends Error {
+  constructor(readonly reason: 'binary' | 'huge' | 'tooLarge', readonly size: number) {
+    super(reason === 'binary' ? 'This looks like a binary file' : `The file is too large (${(size / 1048576).toFixed(0)} MB)`)
+  }
+}
+
+async function readDoc(api: FileApi, path: string, opts: { force?: boolean; encoding?: Encoding }): Promise<Doc> {
+  const res = await api.readTextFile(path, opts)
+  if (res.kind !== 'text') throw new OpenRefused(res.kind, res.size)
+  return new Doc(path, res.text, { encoding: res.encoding, large: res.size > LARGE_FILE_BYTES })
 }
 
 /** Compare paths; Windows paths (C:\...) ignore slash direction and case. */
@@ -76,23 +90,38 @@ export class Workspace {
     return this.docs.find((d) => samePath(d.path, path))
   }
 
-  /** Open a file in a tab of the focused group (or switch to it). Throws if it can't be read. */
-  async open(path: string): Promise<Doc> {
+  /**
+   * Open a file in a tab of the focused group (or switch to it). Throws if it
+   * can't be read, or OpenRefused for binary/huge files unless `force`.
+   */
+  async open(path: string, opts: { force?: boolean } = {}): Promise<Doc> {
     const existing = this.find(path)
     if (existing) {
       this.show(existing)
       return existing
     }
-    const text = await this.api.readFile(path)
+    const doc = await readDoc(this.api, path, opts)
     // It may have been opened while we were reading (double-click).
     const raced = this.find(path)
     if (raced) {
       this.show(raced)
       return raced
     }
-    const doc = new Doc(path, text)
     this.show(doc)
     return doc
+  }
+
+  /** Read the file again with another encoding, replacing its tabs' contents. */
+  async reopenWithEncoding(doc: Doc, encoding: Encoding): Promise<Doc> {
+    const fresh = await readDoc(this.api, doc.path, { force: true, encoding })
+    fresh.folds = []
+    for (const g of this.groups) {
+      const i = g.docs.indexOf(doc)
+      if (i !== -1) g.docs[i] = fresh
+      if (g.active === doc) g.active = fresh
+    }
+    this.notifyChanged()
+    return fresh
   }
 
   /** Show a doc in the focused group, adding a tab next to the current one if needed. */
@@ -195,7 +224,7 @@ export class Workspace {
 
   async save(doc: Doc | null = this.active): Promise<void> {
     if (!doc) return
-    await this.api.writeFile(doc.path, doc.getText())
+    await this.api.writeTextFile(doc.path, doc.getText(), doc.encoding)
     doc.markSaved()
     this.notifyChanged()
   }

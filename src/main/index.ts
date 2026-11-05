@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { sortAndFilterEntries } from './dirEntries'
 import { listFiles } from './listFiles'
 import { createEntry, renameEntry } from './fileOps'
+import { readTextFile, writeTextFile } from './textFile'
+import type { Encoding } from '../shared/encoding'
 import { searchProject } from './search'
 import { gitStatus } from './git'
 import { LanguageServer, resolvePythonForAnalysis } from './languageServer'
@@ -83,6 +85,8 @@ ipcMain.handle('fs:readDir', async (_event, dir: string) => {
   )
 })
 
+ipcMain.handle('fs:readText', (_event, path: string, opts?: { force?: boolean; encoding?: Encoding }) => readTextFile(path, opts))
+ipcMain.handle('fs:writeText', (_event, path: string, text: string, encoding: Encoding) => writeTextFile(path, text, encoding))
 ipcMain.handle('fs:create', (_event, dir: string, name: string, isDirectory: boolean) => createEntry(dir, name, isDirectory))
 ipcMain.handle('fs:rename', (_event, path: string, newName: string) => renameEntry(path, newName))
 // To the Recycle Bin (not a permanent delete), so mistakes can be undone.

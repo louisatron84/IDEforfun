@@ -35,6 +35,9 @@ export class Palette {
   private selected = 0
   private files: { path: string; rel: string }[] = []
   private returnFocus: HTMLElement | null = null
+  /** When set, the palette shows these choices instead of files/commands. */
+  private choices: { label: string; detail?: string; hint?: string; run: () => void }[] | null = null
+  private choicePrompt = ''
 
   constructor(private readonly deps: PaletteDeps) {
     this.overlay = document.createElement('div')
@@ -69,8 +72,20 @@ export class Palette {
     return !this.overlay.hidden
   }
 
+  /** Show a list of choices (e.g. encodings); picking one runs it. */
+  choose(prompt: string, choices: { label: string; detail?: string; hint?: string; run: () => void }[]): void {
+    if (!this.isOpen) this.returnFocus = document.activeElement as HTMLElement | null
+    this.choices = choices
+    this.choicePrompt = prompt
+    this.overlay.hidden = false
+    this.input.value = ''
+    this.input.focus()
+    this.update()
+  }
+
   /** Open with an initial prefix: '>' commands, ':' go to line, '' files. */
   async open(prefix: '>' | ':' | ''): Promise<void> {
+    this.choices = null
     if (!this.isOpen) this.returnFocus = document.activeElement as HTMLElement | null
     this.overlay.hidden = false
     this.input.value = prefix
@@ -85,11 +100,21 @@ export class Palette {
   close(): void {
     if (!this.isOpen) return
     this.overlay.hidden = true
+    this.choices = null
     this.returnFocus?.focus()
   }
 
   private update(): void {
     const value = this.input.value
+    if (this.choices) {
+      this.items = fuzzyFilter(value.trim(), this.choices, (c) => c.label, MAX_ITEMS).map(({ item, match }) => ({
+        label: item.label, positions: match.positions, detail: item.detail, hint: item.hint, run: item.run
+      }))
+      this.selected = 0
+      this.input.placeholder = this.choicePrompt
+      this.renderList()
+      return
+    }
     if (value.startsWith('>')) this.items = this.commandItems(value.slice(1).trim())
     else if (value.startsWith(':')) this.items = this.lineItems(value.slice(1).trim())
     else this.items = this.fileItems(value.trim())

@@ -7,11 +7,11 @@ function setup(files: Record<string, string>, allowDiscard = true) {
   const asked: string[] = []
   const ws = new Workspace(
     {
-      readFile: async (p) => {
+      readTextFile: async (p) => {
         if (!(p in files)) throw new Error('ENOENT ' + p)
-        return files[p]
+        return { kind: 'text', text: files[p], encoding: 'utf8', size: files[p].length }
       },
-      writeFile: async (p, t) => { written[p] = t }
+      writeTextFile: async (p, t) => { written[p] = t }
     },
     (doc: Doc) => { asked.push(doc.name); return allowDiscard }
   )

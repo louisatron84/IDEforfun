@@ -47,6 +47,8 @@ export interface EditorOptions {
   onGutterClick?: (line: number) => void
   /** The editor got keyboard focus (with a split view: this side became active). */
   onFocus?: () => void
+  /** The cursor or selection moved, or the text changed (e.g. to update the status bar). */
+  onCursor?: () => void
 }
 
 /**
@@ -1001,6 +1003,7 @@ export class Editor {
     this.renderLines()
     this.renderSelection()
     this.minimap.schedule()
+    this.opts.onCursor?.()
   }
 
   /** Size the scrollable area to the whole file, even though only visible lines are drawn. */

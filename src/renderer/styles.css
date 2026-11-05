@@ -983,3 +983,32 @@ body { display: flex; flex-direction: column; }
 }
 .minimap:hover { opacity: 1; }
 .minimap[hidden] { display: none; }
+
+/* ---- status bar ---- */
+#statusbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 24px;
+  padding: 0 8px;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+#statusbar .spacer { flex: 1; }
+.sb-item {
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+}
+.sb-item:empty { display: none; }
+button.sb-item { cursor: pointer; }
+button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
+#sb-problems .err { color: var(--sev-1); }
+#sb-problems .warn { color: var(--sev-2); }
+#sb-debug { color: var(--exec-arrow); }

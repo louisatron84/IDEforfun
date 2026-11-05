@@ -1,5 +1,6 @@
 import type { Settings } from './settings'
 import type { FindOptions } from './regex'
+import type { Encoding, TextFileResult } from './encoding'
 
 export interface DirEntry {
   name: string
@@ -46,6 +47,9 @@ export interface IdeApi {
   readDir(path: string): Promise<DirEntry[]>
   readFile(path: string): Promise<string>
   writeFile(path: string, text: string): Promise<void>
+  /** Read a file for the editor: detects its encoding, and reports binary / huge files. */
+  readTextFile(path: string, opts?: { force?: boolean; encoding?: Encoding }): Promise<TextFileResult>
+  writeTextFile(path: string, text: string, encoding: Encoding): Promise<void>
   /** Create an empty file or folder in `dir` ("pkg/mod.py" makes "pkg" too). Returns its path. */
   createEntry(dir: string, name: string, isDirectory: boolean): Promise<string>
   /** Rename in place; returns the new path. */

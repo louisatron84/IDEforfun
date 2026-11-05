@@ -26,9 +26,9 @@ to real source code or runtime behaviour.
 - [x] Code folding (functions, classes and blocks) (v0.20: gutter arrows, Ctrl+Shift+[ / ], Fold All / Unfold All; folds follow edits)
 - [x] Minimap (v0.21: token colors, on-screen box, click/drag to scroll, follows folds; "Toggle Minimap" in the palette)
 - [x] Multiple editor groups / split view (v0.22: two side-by-side groups with their own tabs and cursors; Ctrl+\, Ctrl+1/2, Move Tab to the Other Side)
-- [ ] File encoding detection and conversion
-- [ ] CRLF/LF line endings: show and convert (files already keep their own line endings when saved)
-- [ ] Large-file mode and graceful handling of binary files
+- [x] File encoding detection and conversion (v0.23: UTF-8, UTF-8 with BOM, UTF-16 LE/BE, Western; Reopen / Save with Encoding)
+- [x] CRLF/LF line endings: shown in the status bar, click to convert (v0.23)
+- [x] Large-file mode and graceful handling of binary files (v0.23: binary files ask first; over 5 MB skips the language server; over 50 MB asks; over 256 MB refused)
 - [ ] Recovery of unsaved buffers after unexpected crashes
 
 ## Tier 2: IDE foundations
