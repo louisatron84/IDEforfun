@@ -24,8 +24,8 @@ The roadmap. Work through it roughly top to bottom; each tier builds on the one 
 
 ## Tier 3: smart features
 - [ ] Language Server Protocol client (pyright/pylsp): errors, autocomplete, go-to-definition, hover
-- [ ] Search across the project
-- [ ] Git status in the file tree
+- [x] Search across the project (v0.12: Ctrl+Shift+F, case / word / regex)
+- [x] Git status in the file tree (v0.12: M/U/A/D badges, folder dots, auto-refresh)
 - [ ] Debugger (DAP, debugpy)
 - 
 

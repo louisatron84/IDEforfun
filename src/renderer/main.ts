@@ -10,6 +10,7 @@ import { OutputView } from './outputView'
 import { TerminalView } from './terminalView'
 import { SettingsView } from './settingsView'
 import { Palette } from './palette'
+import { SearchView } from './searchView'
 import { DEFAULT_SETTINGS, type Settings } from '../shared/settings'
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
@@ -22,7 +23,7 @@ const workspace = new Workspace(window.api, (doc: Doc) =>
 )
 const editor = new Editor($('editor'), { onEdit: () => workspace.notifyChanged() })
 const tabBar = new TabBar($('tabs'), workspace)
-const tree = new FileTree($('sidebar'), (entry) => void openFile(entry.path))
+const tree = new FileTree($('file-tree'), (entry) => void openFile(entry.path))
 export const commands = new CommandRegistry()
 const findBar = new FindBar($('editor-pane'), editor)
 const panel = new Panel($('editor-pane'))
@@ -90,6 +91,9 @@ async function saveActive(): Promise<boolean> {
   if (!doc) return false
   try {
     await workspace.save(doc)
+    void refreshGit()
+    // Project search reads files from disk: refresh visible results after saving.
+    if (!$('search-panel').hidden) searchView.refresh()
     return true
   } catch (err) {
     alert(`Couldn't save ${doc.path}:\n${String(err)}`)
@@ -109,6 +113,7 @@ async function openFolder(): Promise<void> {
   folderName.classList.remove('muted')
   await tree.setRoot(folder)
   workspace.notifyChanged()
+  void refreshGit()
 }
 
 // ---------- commands ----------
@@ -187,6 +192,57 @@ commands.register({
   id: 'view.toggleTheme', title: 'Toggle Light/Dark Theme',
   run: () => { const s: Settings = { ...settings, theme: settings.theme === 'dark' ? 'light' : 'dark' }; applySettings(s); settingsView.set(s); void window.api.saveSettings(s) }
 })
+
+// ---------- git status in the file tree ----------
+
+let gitBusy = false
+async function refreshGit(): Promise<void> {
+  if (!rootFolder || gitBusy) return
+  gitBusy = true
+  try {
+    tree.setGitStatus(await window.api.gitStatus(rootFolder))
+  } finally {
+    gitBusy = false
+  }
+}
+// Pick up changes made outside the editor (terminal, other apps): on focus and every few seconds.
+window.addEventListener('focus', () => void refreshGit())
+window.setInterval(() => {
+  if (document.hasFocus()) void refreshGit()
+}, 5000)
+
+// ---------- sidebar: Files | Search ----------
+
+const searchView = new SearchView(
+  () => rootFolder,
+  async (path, line, col, length) => {
+    if (await openFile(path)) editor.select({ line, col }, { line, col: col + length })
+    editor.focus()
+  }
+)
+$('search-panel').append(searchView.root)
+
+function showSidebar(view: 'files' | 'search'): void {
+  $('file-tree').hidden = view !== 'files'
+  $('search-panel').hidden = view !== 'search'
+  for (const b of document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs button')) {
+    b.setAttribute('aria-selected', String(b.dataset.view === view))
+  }
+}
+for (const b of document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs button')) {
+  b.addEventListener('click', () => {
+    showSidebar(b.dataset.view as 'files' | 'search')
+    if (b.dataset.view === 'search') searchView.focus()
+  })
+}
+commands.register({
+  id: 'search.project', title: 'Search in Project', keys: 'Ctrl+Shift+F', when: () => rootFolder !== null,
+  run: () => {
+    showSidebar('search')
+    searchView.focus(editor.getSelectedText() || undefined)
+  }
+})
+commands.register({ id: 'view.files', title: 'Show Files', keys: 'Ctrl+Shift+E', run: () => showSidebar('files') })
 
 // ---------- command palette / quick open / go to line ----------
 

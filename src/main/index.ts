@@ -3,6 +3,9 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { sortAndFilterEntries } from './dirEntries'
 import { listFiles } from './listFiles'
+import { searchProject } from './search'
+import { gitStatus } from './git'
+import type { FindOptions } from '../shared/regex'
 import { PythonRunner } from './python'
 import { Terminals } from './terminals'
 import { normalizeSettings } from '../shared/settings'
@@ -68,6 +71,10 @@ ipcMain.handle('fs:readDir', async (_event, dir: string) => {
 })
 
 ipcMain.handle('fs:listFiles', (_event, root: string) => listFiles(root))
+ipcMain.handle('git:status', (_event, folder: string) => gitStatus(folder))
+ipcMain.handle('search:project', (_event, root: string, query: string, opts: FindOptions) =>
+  searchProject(root, query, opts)
+)
 
 ipcMain.handle('fs:readFile', async (_event, path: string) => readFile(path, 'utf8'))
 

@@ -5,31 +5,14 @@
  */
 import type { Position } from './textBuffer'
 import { TextBuffer, comparePositions } from './textBuffer'
+import { buildRegExp, type FindOptions } from '../../shared/regex'
 
-export interface FindOptions {
-  caseSensitive: boolean
-  wholeWord: boolean
-  regex: boolean
-}
+// Re-exported so existing imports from './editor/find' keep working.
+export { buildRegExp, escapeRegExp, type FindOptions } from '../../shared/regex'
 
 export interface Match {
   start: Position
   end: Position
-}
-
-export function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-/** Build the RegExp for a query, or return an error message for an invalid regex. */
-export function buildRegExp(query: string, opts: FindOptions, global = true): RegExp | string {
-  let source = opts.regex ? query : escapeRegExp(query)
-  if (opts.wholeWord) source = `\\b(?:${source})\\b`
-  try {
-    return new RegExp(source, (global ? 'g' : '') + (opts.caseSensitive ? '' : 'i'))
-  } catch (err) {
-    return err instanceof Error ? err.message : String(err)
-  }
 }
 
 export function findMatches(

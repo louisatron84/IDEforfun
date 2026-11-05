@@ -25,6 +25,8 @@ const api: IdeApi = {
     return () => ipcRenderer.removeListener('term:event', handler)
   },
   listFiles: (root) => ipcRenderer.invoke('fs:listFiles', root),
+  searchProject: (root, query, opts) => ipcRenderer.invoke('search:project', root, query, opts),
+  gitStatus: (folder) => ipcRenderer.invoke('git:status', folder),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings)
 }

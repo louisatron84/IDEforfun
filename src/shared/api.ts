@@ -1,4 +1,5 @@
 import type { Settings } from './settings'
+import type { FindOptions } from './regex'
 
 export interface DirEntry {
   name: string
@@ -19,6 +20,25 @@ export type RunEvent = RunEventBody & { runId: number }
 export type TerminalEvent =
   | { type: 'data'; id: number; data: string }
   | { type: 'exit'; id: number; code: number }
+
+export interface ProjectSearchResult {
+  files: {
+    path: string
+    rel: string
+    matches: { line: number; col: number; length: number; preview: { text: string; start: number } }[]
+  }[]
+  total: number
+  truncated: boolean
+  error?: string
+}
+
+export type GitState = 'modified' | 'added' | 'untracked' | 'deleted' | 'renamed' | 'conflict'
+
+/** Changed files (absolute paths) and the folders that contain them. */
+export interface GitStatusMap {
+  files: Record<string, GitState>
+  folders: string[]
+}
 
 /** The only bridge between the UI (renderer) and the OS (main process). */
 export interface IdeApi {
@@ -44,6 +64,12 @@ export interface IdeApi {
 
   /** Every file under a folder (for quick open), skipping .git, node_modules, etc. */
   listFiles(root: string): Promise<{ path: string; rel: string }[]>
+
+  /** Search every text file under `root` (Ctrl+Shift+F). */
+  searchProject(root: string, query: string, opts: FindOptions): Promise<ProjectSearchResult>
+
+  /** Git status of files under a folder; null if it isn't a git repository. */
+  gitStatus(folder: string): Promise<GitStatusMap | null>
 
   getSettings(): Promise<Settings>
   saveSettings(settings: Settings): Promise<void>

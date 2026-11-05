@@ -1,4 +1,4 @@
-import type { DirEntry } from '../shared/api'
+import type { DirEntry, GitState, GitStatusMap } from '../shared/api'
 import { samePath } from './workspace'
 
 const INDENT_PX = 12
@@ -11,6 +11,10 @@ export class FileTree {
   private selected: HTMLElement | null = null
   /** File rows currently in the tree, so the active tab's file can be highlighted. */
   private readonly fileRows = new Map<string, HTMLElement>()
+  private readonly folderRows = new Map<string, HTMLElement>()
+  /** Latest git status, keyed by normalized path (applied to rows as they're created). */
+  private gitFiles = new Map<string, GitState>()
+  private gitFolders = new Set<string>()
 
   constructor(
     private readonly container: HTMLElement,
@@ -20,6 +24,9 @@ export class FileTree {
   async setRoot(rootPath: string): Promise<void> {
     this.selected = null
     this.fileRows.clear()
+    this.folderRows.clear()
+    this.gitFiles.clear()
+    this.gitFolders.clear()
     const list = document.createElement('div')
     this.container.replaceChildren(list)
     await this.renderChildren(list, rootPath, 0)
@@ -57,6 +64,8 @@ export class FileTree {
     wrapper.append(row)
 
     if (entry.isDirectory) {
+      this.folderRows.set(entry.path, row)
+      this.decorate(row, entry.path, true)
       const children = document.createElement('div')
       children.hidden = true
       wrapper.append(children)
@@ -72,9 +81,36 @@ export class FileTree {
       })
     } else {
       this.fileRows.set(entry.path, row)
+      this.decorate(row, entry.path, false)
       row.addEventListener('click', () => this.onOpenFile(entry))
     }
     return wrapper
+  }
+
+  /** Show git status: colored names and a letter badge for changed files, a dot on folders. */
+  setGitStatus(status: GitStatusMap | null): void {
+    this.gitFiles = new Map(Object.entries(status?.files ?? {}).map(([p, st]) => [normPath(p), st]))
+    this.gitFolders = new Set((status?.folders ?? []).map(normPath))
+    for (const [p, row] of this.fileRows) this.decorate(row, p, false)
+    for (const [p, row] of this.folderRows) this.decorate(row, p, true)
+  }
+
+  private decorate(row: HTMLElement, path: string, isFolder: boolean): void {
+    const key = normPath(path)
+    row.querySelector('.git-badge')?.remove()
+    if (isFolder) {
+      row.classList.toggle('git-dirty', this.gitFolders.has(key))
+      return
+    }
+    const state = this.gitFiles.get(key)
+    if (state) row.dataset.git = state
+    else delete row.dataset.git
+    if (!state) return
+    const badge = document.createElement('span')
+    badge.className = 'git-badge'
+    badge.textContent = GIT_LETTER[state]
+    badge.title = state
+    row.append(badge)
   }
 
   /** Highlight the row for this file (if its folder is expanded). */
@@ -100,4 +136,13 @@ export class FileTree {
     row.textContent = text
     return row
   }
+}
+
+const GIT_LETTER: Record<GitState, string> = {
+  modified: 'M', added: 'A', untracked: 'U', deleted: 'D', renamed: 'R', conflict: '!'
+}
+
+/** Windows paths compare case-insensitively. */
+function normPath(p: string): string {
+  return /^[a-zA-Z]:/.test(p) ? p.replace(/\//g, '\\').toLowerCase() : p
 }
