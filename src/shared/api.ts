@@ -1,3 +1,5 @@
+import type { Settings } from './settings'
+
 export interface DirEntry {
   name: string
   path: string
@@ -39,4 +41,7 @@ export interface IdeApi {
   terminalResize(id: number, cols: number, rows: number): void
   terminalKill(id: number): void
   onTerminalEvent(listener: (event: TerminalEvent) => void): () => void
+
+  getSettings(): Promise<Settings>
+  saveSettings(settings: Settings): Promise<void>
 }

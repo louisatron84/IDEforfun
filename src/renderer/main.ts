@@ -8,6 +8,8 @@ import { FindBar } from './findBar'
 import { Panel } from './panel'
 import { OutputView } from './outputView'
 import { TerminalView } from './terminalView'
+import { SettingsView } from './settingsView'
+import { DEFAULT_SETTINGS, type Settings } from '../shared/settings'
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 
@@ -31,6 +33,30 @@ const output = new OutputView(
 panel.addView('output', 'Output', output.body, output.actions)
 const terminal = new TerminalView(() => rootFolder)
 panel.addView('terminal', 'Terminal', terminal.body, terminal.actions, () => terminal.show())
+
+// ---------- settings ----------
+
+let settings: Settings = DEFAULT_SETTINGS
+
+function applySettings(s: Settings): void {
+  settings = s
+  const root = document.documentElement
+  root.style.setProperty('--code-size', `${s.fontSize}px`)
+  root.style.setProperty('--line-height', `${Math.round(s.fontSize * 1.45)}px`)
+  root.style.setProperty('--tab-size', String(s.tabSize))
+  root.dataset.theme = s.theme
+  editor.refreshLayout(s.tabSize)
+  terminal.applyTheme(s.fontSize)
+}
+
+const settingsView = new SettingsView(settings, (s) => {
+  applySettings(s)
+  void window.api.saveSettings(s)
+})
+void window.api.getSettings().then((s) => {
+  applySettings(s)
+  settingsView.set(s)
+})
 
 // Keep the editor, tabs, tree highlight and window title in sync with the workspace.
 workspace.subscribe(() => {
@@ -120,7 +146,7 @@ async function runCurrentFile(): Promise<void> {
     output.error('Run cancelled: the file could not be saved.')
     return
   }
-  await window.api.runPython(doc.path, rootFolder ?? parentDir(doc.path))
+  await window.api.runPython(doc.path, rootFolder ?? parentDir(doc.path), settings.pythonPath || undefined)
   editor.focus()
 }
 
@@ -147,6 +173,21 @@ commands.register({
   }
 })
 
+commands.register({ id: 'settings.open', title: 'Open Settings', keys: 'Ctrl+,', run: () => settingsView.isOpen ? settingsView.close() : settingsView.open() })
+commands.register({
+  id: 'view.zoomIn', title: 'Increase Font Size', keys: 'Ctrl+=',
+  run: () => { const s = { ...settings, fontSize: Math.min(28, settings.fontSize + 1) }; applySettings(s); settingsView.set(s); void window.api.saveSettings(s) }
+})
+commands.register({
+  id: 'view.zoomOut', title: 'Decrease Font Size', keys: 'Ctrl+-',
+  run: () => { const s = { ...settings, fontSize: Math.max(10, settings.fontSize - 1) }; applySettings(s); settingsView.set(s); void window.api.saveSettings(s) }
+})
+commands.register({
+  id: 'view.toggleTheme', title: 'Toggle Light/Dark Theme',
+  run: () => { const s: Settings = { ...settings, theme: settings.theme === 'dark' ? 'light' : 'dark' }; applySettings(s); settingsView.set(s); void window.api.saveSettings(s) }
+})
+
+$('open-settings').addEventListener('click', () => settingsView.open())
 $('run-file').addEventListener('click', () => void runCurrentFile())
 $('stop-run').addEventListener('click', () => void window.api.stopRun())
 $('open-folder').addEventListener('click', () => void openFolder())
@@ -157,7 +198,10 @@ const TERMINAL_PASSTHROUGH = new Set(['Ctrl+`', 'Ctrl+J', 'Ctrl+Shift+P', 'Ctrl+
 
 // Global shortcuts. Capture phase, so they win over the editor's own key handling.
 window.addEventListener('keydown', (e) => {
-  if (terminal.hasFocus && !TERMINAL_PASSTHROUGH.has(keyString(e))) return
+  const key = keyString(e)
+  if (terminal.hasFocus && !TERMINAL_PASSTHROUGH.has(key)) return
+  // Dialogs handle their own keys (Escape, arrows...); only their toggles pass through.
+  if (settingsView.isOpen && key !== 'Ctrl+,') return
   if (commands.handleKey(e)) {
     e.preventDefault()
     e.stopPropagation()

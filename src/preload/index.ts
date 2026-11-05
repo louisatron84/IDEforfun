@@ -23,7 +23,9 @@ const api: IdeApi = {
     const handler = (_e: Electron.IpcRendererEvent, event: TerminalEvent) => listener(event)
     ipcRenderer.on('term:event', handler)
     return () => ipcRenderer.removeListener('term:event', handler)
-  }
+  },
+  getSettings: () => ipcRenderer.invoke('settings:get'),
+  saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings)
 }
 
 contextBridge.exposeInMainWorld('api', api)

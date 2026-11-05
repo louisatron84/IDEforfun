@@ -105,7 +105,7 @@ body { display: flex; flex-direction: column; }
 .editor .gutter-lines { padding-right: 12px; text-align: right; }
 
 .editor .text-area { position: relative; flex: 1 0 auto; }
-.editor .content { position: relative; tab-size: 4; user-select: none; } /* above the selection boxes */
+.editor .content { position: relative; tab-size: var(--tab-size, 4); user-select: none; } /* above the selection boxes */
 
 .editor .gutter-lines,
 .editor .lines {
@@ -384,3 +384,104 @@ body { display: flex; flex-direction: column; }
 .terminal-view { position: absolute; inset: 0; padding: 4px 0 0 10px; background: var(--bg); }
 .terminal-view .xterm { height: 100%; }
 .terminal-view .xterm-viewport { background: transparent !important; }
+
+/* ---- light theme: same variables, different values ---- */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --bg-panel: #f3f3f5;
+  --bg-hover: #e4e5e9;
+  --bg-active: #d5e1fb;
+  --fg: #1f2328;
+  --fg-muted: #6e7681;
+  --border: #d9dbe0;
+  --accent: #2f6fdf;
+  --selection: #c3d6fb;
+  --selection-unfocused: #e1e4ea;
+  --match: rgba(240, 180, 30, 0.35);
+  --tok-keyword: #0033b3;
+  --tok-constant: #0033b3;
+  --tok-builtin: #000080;
+  --tok-self: #94558d;
+  --tok-function: #00627a;
+  --tok-class: #8a5a00;
+  --tok-call: #1b6f93;
+  --tok-decorator: #9e880d;
+  --tok-string: #067d17;
+  --tok-number: #1750eb;
+  --tok-comment: #8c8c8c;
+}
+:root { color-scheme: dark; }
+:root[data-theme="light"] .output-log .ok { color: #1a7f37; }
+:root[data-theme="light"] .output-log .fail, :root[data-theme="light"] .output-log .stderr { color: #cf222e; }
+:root[data-theme="light"] .output-log .file-link { color: #b35900; }
+
+/* ---- dialogs (settings, command palette) ---- */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 10vh;
+  background: rgba(0, 0, 0, 0.35);
+}
+.overlay[hidden] { display: none; }
+.settings-dialog {
+  width: min(520px, calc(100vw - 32px));
+  max-height: 80vh;
+  overflow: auto;
+  padding: 16px 20px 12px;
+  background: var(--bg-panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+}
+.settings-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.settings-header h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.icon-button {
+  width: 28px; height: 28px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--fg-muted); font-size: 18px; cursor: pointer;
+}
+.icon-button:hover { background: var(--bg-hover); color: var(--fg); }
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+.setting-row.stacked { flex-direction: column; align-items: stretch; gap: 8px; }
+.setting-text-block label { font-weight: 500; }
+.setting-hint { color: var(--fg-muted); font-size: 12px; margin-top: 2px; }
+.setting-control { display: flex; align-items: center; gap: 10px; }
+.setting-value { min-width: 38px; text-align: right; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.setting-control input[type="range"] { width: 160px; accent-color: var(--accent); }
+.setting-text {
+  flex: 1;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px var(--font-code);
+  outline: none;
+}
+.setting-text:focus { border-color: var(--accent); }
+.segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.segmented button {
+  min-width: 44px;
+  padding: 5px 12px;
+  border: 0;
+  background: var(--bg);
+  color: var(--fg-muted);
+  font: 12px var(--font-ui);
+  cursor: pointer;
+}
+.segmented button + button { border-left: 1px solid var(--border); }
+.segmented button[aria-checked="true"] { background: var(--accent); color: #fff; }
+.settings-footer { margin: 10px 0 0; color: var(--fg-muted); font-size: 12px; }
+#toolbar button.icon { width: 32px; padding: 5px 0; font-size: 15px; }

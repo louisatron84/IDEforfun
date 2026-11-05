@@ -20,7 +20,7 @@ The roadmap. Work through it roughly top to bottom; each tier builds on the one 
 - [x] Run the current Python file and show its output in a panel (v0.8: F5, auto-save, venv detection, input(), clickable tracebacks)
 - [x] Integrated terminal (xterm.js + node-pty, the one part we don't write ourselves) (v0.9: Ctrl+`)
 - [ ] Command palette (Ctrl+Shift+P)
-- [ ] Settings (font size, theme, tab width)
+- [x] Settings (font size, theme, tab width) (v0.10: + light theme, Python interpreter, Ctrl+= / Ctrl+-)
 
 ## Tier 3: smart features
 - [ ] Language Server Protocol client (pyright/pylsp): errors, autocomplete, go-to-definition, hover

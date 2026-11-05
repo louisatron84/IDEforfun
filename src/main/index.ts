@@ -1,9 +1,13 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
-import { readdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { sortAndFilterEntries } from './dirEntries'
 import { PythonRunner } from './python'
 import { Terminals } from './terminals'
+import { normalizeSettings } from '../shared/settings'
+
+// Lets automated tests use a throwaway profile instead of the real settings.
+if (process.env['IDEFORFUN_USER_DATA']) app.setPath('userData', process.env['IDEFORFUN_USER_DATA'])
 
 const runner = new PythonRunner()
 const terminals = new Terminals()
@@ -80,6 +84,22 @@ ipcMain.handle('term:create', (event, cwd: string | null, cols: number, rows: nu
 ipcMain.on('term:write', (_event, id: number, data: string) => terminals.write(id, data))
 ipcMain.on('term:resize', (_event, id: number, cols: number, rows: number) => terminals.resize(id, cols, rows))
 ipcMain.on('term:kill', (_event, id: number) => terminals.kill(id))
+
+// ---------- settings (userData/settings.json) ----------
+const settingsFile = () => join(app.getPath('userData'), 'settings.json')
+
+ipcMain.handle('settings:get', async () => {
+  try {
+    return normalizeSettings(JSON.parse(await readFile(settingsFile(), 'utf8')))
+  } catch {
+    return normalizeSettings(undefined) // first run, or unreadable file: defaults
+  }
+})
+
+ipcMain.handle('settings:save', async (_event, settings: unknown) => {
+  await mkdir(app.getPath('userData'), { recursive: true })
+  await writeFile(settingsFile(), JSON.stringify(normalizeSettings(settings), null, 2), 'utf8')
+})
 
 app.on('before-quit', () => {
   runner.stop()
