@@ -15,6 +15,8 @@
 import type { Position } from './textBuffer'
 import { TextBuffer } from './textBuffer'
 import * as cmd from './commands'
+import type { EditKind } from './history'
+import { History } from './history'
 
 const TAB_SIZE = 4
 const PAD_TOP = 4 // must match .editor pre padding-top in styles.css
@@ -34,6 +36,7 @@ export class Editor {
   private readonly input: HTMLTextAreaElement
 
   private buffer = new TextBuffer('')
+  private history = new History(this.buffer)
   private cursor: Position = { line: 0, col: 0 }
   /** On-screen column to aim for when moving up/down (null = use current). */
   private goalVisual: number | null = null
@@ -57,7 +60,7 @@ export class Editor {
     container.replaceChildren(this.root)
 
     this.input.addEventListener('keydown', (e) => this.onKeyDown(e))
-    this.input.addEventListener('input', () => this.onInput())
+    this.input.addEventListener('input', (e) => this.onInput(e as InputEvent))
     this.input.addEventListener('focus', () => this.root.classList.add('focused'))
     this.input.addEventListener('blur', () => this.root.classList.remove('focused'))
     this.textArea.addEventListener('mousedown', (e) => this.onMouseDown(e))
@@ -71,6 +74,7 @@ export class Editor {
 
   open(text: string): void {
     this.buffer = new TextBuffer(text)
+    this.history = new History(this.buffer)
     this.cursor = { line: 0, col: 0 }
     this.goalVisual = null
     this.root.className = 'editor'
@@ -87,6 +91,7 @@ export class Editor {
   }
 
   markSaved(): void {
+    this.history.markSaved()
     this.setDirty(false)
   }
 
@@ -108,6 +113,25 @@ export class Editor {
     let next: Position | null = null
     let edited = false
     let vertical = false
+    /** Run an editing command as one undoable step. */
+    const edit = (kind: EditKind, fn: () => Position): Position => {
+      edited = true
+      return this.history.transact(kind, pos, fn)
+    }
+
+    // Undo: Ctrl+Z. Redo: Ctrl+Y or Ctrl+Shift+Z.
+    const k = e.key.toLowerCase()
+    if (ctrl && (k === 'z' || k === 'y')) {
+      e.preventDefault()
+      const target = k === 'y' || e.shiftKey ? this.history.redo() : this.history.undo()
+      if (target) {
+        this.cursor = this.buffer.clamp(target)
+        this.goalVisual = null
+        this.setDirty(this.history.isDirty())
+        this.render(true)
+      }
+      return
+    }
 
     switch (e.key) {
       case 'ArrowLeft': next = cmd.moveLeft(b, pos); break
@@ -122,12 +146,12 @@ export class Editor {
       case 'End':
         next = ctrl ? b.clamp({ line: Infinity, col: Infinity }) : cmd.moveEnd(b, pos)
         break
-      case 'Backspace': next = cmd.backspace(b, pos, TAB_SIZE); edited = true; break
-      case 'Delete': next = cmd.deleteForward(b, pos); edited = true; break
-      case 'Enter': next = cmd.newline(b, pos, TAB_SIZE); edited = true; break
+      case 'Backspace': next = edit('delete', () => cmd.backspace(b, pos, TAB_SIZE)); break
+      case 'Delete': next = edit('delete', () => cmd.deleteForward(b, pos)); break
+      case 'Enter': next = edit('newline', () => cmd.newline(b, pos, TAB_SIZE)); break
       case 'Tab':
         if (ctrl) return // leave Ctrl+Tab for future tab switching
-        next = cmd.insertTab(b, pos, TAB_SIZE); edited = true
+        next = edit('other', () => cmd.insertTab(b, pos, TAB_SIZE))
         break
       default:
         return // normal characters arrive via the 'input' event
@@ -136,17 +160,19 @@ export class Editor {
     e.preventDefault()
     if (!vertical) this.goalVisual = null
     this.cursor = next
-    if (edited) this.setDirty(true)
+    if (edited) this.setDirty(this.history.isDirty())
     this.render(edited)
   }
 
-  private onInput(): void {
+  private onInput(e: InputEvent): void {
     const text = this.input.value
     this.input.value = ''
     if (!text) return
-    this.cursor = this.buffer.insert(this.cursor, text)
+    const kind: EditKind = e.inputType === 'insertFromPaste' ? 'paste' : 'typing'
+    const pos = this.cursor
+    this.cursor = this.history.transact(kind, pos, () => this.buffer.insert(pos, text))
     this.goalVisual = null
-    this.setDirty(true)
+    this.setDirty(this.history.isDirty())
     this.render(true)
   }
 

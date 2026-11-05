@@ -4,6 +4,23 @@ export interface Position {
   col: number
 }
 
+/**
+ * One low-level change. `text` always uses '\n' for line breaks.
+ * insert: `text` was inserted at `at`. delete: `text` was removed starting at `at`.
+ */
+export interface Change {
+  kind: 'insert' | 'delete'
+  at: Position
+  text: string
+}
+
+/** The position just after `text` if it were inserted at `at`. */
+export function endOf(at: Position, text: string): Position {
+  const pieces = splitLines(text)
+  if (pieces.length === 1) return { line: at.line, col: at.col + text.length }
+  return { line: at.line + pieces.length - 1, col: pieces[pieces.length - 1].length }
+}
+
 export function comparePositions(a: Position, b: Position): number {
   return a.line !== b.line ? a.line - b.line : a.col - b.col
 }
@@ -19,6 +36,8 @@ export class TextBuffer {
   private lines: string[]
   /** Line ending used when saving: kept the same as the file had. */
   readonly eol: '\n' | '\r\n'
+  /** Called after every change (used by History for undo/redo). */
+  onChange: ((change: Change) => void) | null = null
 
   constructor(text: string) {
     this.eol = text.includes('\r\n') ? '\r\n' : '\n'
@@ -49,20 +68,35 @@ export class TextBuffer {
 
   /** Insert `text` at `pos`; returns the position just after the inserted text. */
   insert(pos: Position, text: string): Position {
-    const { line, col } = this.clamp(pos)
-    const current = this.lines[line]
-    const before = current.slice(0, col)
-    const after = current.slice(col)
+    const at = this.clamp(pos)
+    if (text === '') return at
+    const current = this.lines[at.line]
+    const before = current.slice(0, at.col)
+    const after = current.slice(at.col)
     const pieces = splitLines(text)
 
     if (pieces.length === 1) {
-      this.lines[line] = before + text + after
-      return { line, col: col + text.length }
+      this.lines[at.line] = before + text + after
+    } else {
+      const last = pieces[pieces.length - 1]
+      this.lines.splice(at.line, 1, before + pieces[0], ...pieces.slice(1, -1), last + after)
     }
-    const last = pieces[pieces.length - 1]
-    const newLines = [before + pieces[0], ...pieces.slice(1, -1), last + after]
-    this.lines.splice(line, 1, ...newLines)
-    return { line: line + pieces.length - 1, col: last.length }
+    const normalized = pieces.join('\n')
+    this.onChange?.({ kind: 'insert', at, text: normalized })
+    return endOf(at, normalized)
+  }
+
+  /** The text between two positions (in either order), with '\n' line breaks. */
+  getRange(a: Position, b: Position): string {
+    let start = this.clamp(a)
+    let end = this.clamp(b)
+    if (comparePositions(start, end) > 0) [start, end] = [end, start]
+    if (start.line === end.line) return this.lines[start.line].slice(start.col, end.col)
+    return [
+      this.lines[start.line].slice(start.col),
+      ...this.lines.slice(start.line + 1, end.line),
+      this.lines[end.line].slice(0, end.col)
+    ].join('\n')
   }
 
   /** Delete the text between two positions (in either order). */
@@ -70,9 +104,12 @@ export class TextBuffer {
     let start = this.clamp(a)
     let end = this.clamp(b)
     if (comparePositions(start, end) > 0) [start, end] = [end, start]
+    if (comparePositions(start, end) === 0) return
+    const removed = this.onChange ? this.getRange(start, end) : ''
     const head = this.lines[start.line].slice(0, start.col)
     const tail = this.lines[end.line].slice(end.col)
     this.lines.splice(start.line, end.line - start.line + 1, head + tail)
+    this.onChange?.({ kind: 'delete', at: start, text: removed })
   }
 
   /** Character offset of a position, counting each line break as 1 character. */

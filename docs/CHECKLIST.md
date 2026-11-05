@@ -10,7 +10,7 @@ The roadmap. Work through it roughly top to bottom; each tier builds on the one 
 - [x] Typing, Backspace/Delete, Enter (with Python auto-indent after `:`)
 - [ ] Selection (shift+arrows, mouse drag), copy/cut/paste
 - [x] Save (Ctrl+S), dirty marker, warning about unsaved changes on close (v0.2)
-- [ ] Undo/redo
+- [x] Undo/redo (v0.3)
 - [ ] Scrolling that only renders the visible lines (so big files stay fast)
 
 ## Tier 2: it's an IDE
@@ -27,6 +27,10 @@ The roadmap. Work through it roughly top to bottom; each tier builds on the one 
 - [ ] Search across the project
 - [ ] Git status in the file tree
 - [ ] Debugger (DAP, debugpy)
+- 
+
+## Later: own visual identity
+- [ ] Redesign so it doesn't look like every other IDE (the current dark sidebar + tabs layout is a placeholder)
 
 ## Tier 4: visual tools (the thing that makes this IDE different)
 Rule: **the code is the source of truth**. Graphs are views of the code plus a way to edit it, and anything done in a graph turns into normal, readable Python.
