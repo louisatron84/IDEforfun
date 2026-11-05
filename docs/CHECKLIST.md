@@ -8,7 +8,7 @@ The roadmap. Work through it roughly top to bottom; each tier builds on the one 
 - [x] Text buffer model: insert, delete, line/column ↔ offset
 - [x] Cursor: arrows, Home/End, PgUp/PgDn, click to place
 - [x] Typing, Backspace/Delete, Enter (with Python auto-indent after `:`)
-- [ ] Selection (shift+arrows, mouse drag), copy/cut/paste
+- [x] Selection (shift+arrows, mouse drag, double/triple-click, Ctrl+A), copy/cut/paste, Tab/Shift+Tab indent (v0.4)
 - [x] Save (Ctrl+S), dirty marker, warning about unsaved changes on close (v0.2)
 - [x] Undo/redo (v0.3)
 - [ ] Scrolling that only renders the visible lines (so big files stay fast)

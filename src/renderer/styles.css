@@ -155,3 +155,16 @@ body { display: flex; flex-direction: column; }
   cursor: default;
 }
 #file-title.dirty { color: var(--fg); }
+
+/* ---- selection ---- */
+:root { --selection: #214283; --selection-unfocused: #3a3d44; }
+.editor .selection-layer { position: absolute; inset: 0; pointer-events: none; }
+.editor .sel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: var(--line-height);
+  background: var(--selection-unfocused);
+}
+.editor.focused .sel { background: var(--selection); }
+.editor .content { position: relative; } /* text paints above the selection boxes */
