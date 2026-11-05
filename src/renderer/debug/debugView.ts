@@ -86,14 +86,14 @@ export class DebugView {
     button('out', '↑ Out', 'Step Out (Shift+F11)', () => hooks.stepOut())
     button('restart', '⟳', 'Restart (Ctrl+Shift+F5)', () => hooks.restart())
     button('stop', '■ Stop', 'Stop debugging (Shift+F5)', () => hooks.stop())
-    button('clear', 'Clear', 'Clear console', () => this.log.replaceChildren())
+    button('clear', 'Clear', 'Clear console', () => this.clearLog())
     this.setState('idle')
   }
 
   // ---------- session lifecycle ----------
 
   begin(file: string): void {
-    this.log.replaceChildren()
+    this.clearLog()
     this.append(`🐞 Debugging ${file}\n`, 'meta')
     this.clearPaused()
   }
@@ -314,11 +314,33 @@ export class DebugView {
     this.appendNode(span)
   }
 
+  /** Nodes waiting to be added on the next frame (a chatty program would otherwise redraw per write). */
+  private pendingNodes: HTMLElement[] = []
+  private frame = 0
+
   private appendNode(node: HTMLElement): void {
+    this.pendingNodes.push(node)
+    // Far more than is kept is waiting: drop the oldest now.
+    if (this.pendingNodes.length > MAX_LOG) this.pendingNodes.splice(0, this.pendingNodes.length - MAX_LOG)
+    if (!this.frame) this.frame = requestAnimationFrame(() => this.flushNodes())
+  }
+
+  private flushNodes(): void {
+    this.frame = 0
+    const nodes = this.pendingNodes
+    this.pendingNodes = []
     const atBottom = this.log.scrollTop + this.log.clientHeight >= this.log.scrollHeight - 8
-    this.log.append(node)
+    this.log.append(...nodes)
     while (this.log.childElementCount > MAX_LOG) this.log.firstElementChild!.remove()
     if (atBottom) this.log.scrollTop = this.log.scrollHeight
+  }
+
+  /** Empty the console, including anything not drawn yet. */
+  private clearLog(): void {
+    this.pendingNodes = []
+    if (this.frame) cancelAnimationFrame(this.frame)
+    this.frame = 0
+    this.log.replaceChildren()
   }
 }
 

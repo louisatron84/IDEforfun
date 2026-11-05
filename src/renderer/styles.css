@@ -425,6 +425,7 @@ body { display: flex; flex-direction: column; }
   outline: none;
 }
 .output-log .meta { color: var(--fg-muted); }
+.output-trimmed { padding: 2px 0 6px; color: var(--fg-muted); font-style: italic; }
 .output-log .ok { color: #6aab73; }
 .output-log .fail, .output-log .stderr { color: #e06c75; }
 .output-log .echo { color: var(--tok-function); }

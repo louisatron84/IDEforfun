@@ -8,6 +8,10 @@
  */
 import type { TestFile, TestResult, DiscoveredTest } from '../shared/tests'
 import { failureLine, matchJUnit, parseJUnit, parseUnittest, pytestId, unittestId } from '../shared/tests'
+import { lastLines } from '../shared/outputBuffer'
+
+/** Lines of raw output kept in the Log view. */
+const MAX_LOG_LINES = 5000
 
 export interface TestHooks {
   root(): string | null
@@ -41,6 +45,26 @@ export class TestView {
   private readonly expanded = new Set<string>()
   private stopButton!: HTMLButtonElement
   private discovered = false
+  /** The raw output shown in Log, and output not drawn yet. */
+  private logText = ''
+  private logPending = ''
+  private logFrame = 0
+
+  private drawLog(): void {
+    this.logFrame = 0
+    this.logText = lastLines(this.logText + this.logPending, MAX_LOG_LINES).text
+    this.logPending = ''
+    this.logEl.textContent = this.logText
+    if (!this.logEl.hidden) this.logEl.scrollTop = this.logEl.scrollHeight
+  }
+
+  private setLog(text: string): void {
+    this.logPending = ''
+    if (this.logFrame) cancelAnimationFrame(this.logFrame)
+    this.logFrame = 0
+    this.logText = text
+    this.logEl.textContent = text
+  }
 
   constructor(private readonly hooks: TestHooks) {
     this.body = document.createElement('div')
@@ -76,9 +100,11 @@ export class TestView {
       if (!this.logEl.hidden) this.logEl.scrollTop = this.logEl.scrollHeight
     })
 
+    // Collect output and draw it once per frame, keeping only the last lines.
     window.api.onTestOutput((text) => {
-      this.logEl.textContent += text
-      if (!this.logEl.hidden) this.logEl.scrollTop = this.logEl.scrollHeight
+      this.logPending += text
+      if (this.logPending.length > 4_000_000) this.logPending = this.logPending.slice(-2_000_000)
+      if (!this.logFrame) this.logFrame = requestAnimationFrame(() => this.drawLog())
     })
     this.render()
   }
@@ -98,7 +124,7 @@ export class TestView {
     this.results.clear()
     this.summary = ''
     this.discovered = false
-    this.logEl.textContent = ''
+    this.setLog('')
     this.render()
   }
 
@@ -182,7 +208,7 @@ export class TestView {
 
     this.running = new Set(ids)
     this.stopButton.disabled = false
-    this.logEl.textContent = `$ ${pytest ? 'python -m pytest' : 'python -m unittest -v'} ${runIds.join(' ')}\n`
+    this.setLog(`$ ${pytest ? 'python -m pytest' : 'python -m unittest -v'} ${runIds.join(' ')}\n`)
     this.summary = `Running ${ids.length} test${ids.length === 1 ? '' : 's'} with ${this.framework}…`
     this.render()
     let res

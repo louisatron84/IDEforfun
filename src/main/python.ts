@@ -11,6 +11,12 @@ import { access } from 'node:fs/promises'
 import { win32, posix } from 'node:path'
 import type { WebContents } from 'electron'
 import type { RunEventBody } from '../shared/api'
+import { OutputQueue, skippedNote } from '../shared/outputBuffer'
+
+/** Output is sent to the window in batches this often... */
+const BATCH_MS = 40
+/** ...and at most this much is kept waiting (older output is skipped beyond that). */
+const MAX_WAITING_CHARS = 1_000_000
 
 /** Interpreters to try, best first. */
 export function pythonCandidates(root: string, platform: NodeJS.Platform, configured?: string): string[] {
@@ -96,11 +102,27 @@ export class PythonRunner {
       child.stdin?.on('error', () => {}) // typing input after the program ended: nothing to do
       child.stdout?.setEncoding('utf8')
       child.stderr?.setEncoding('utf8')
-      child.stdout?.on('data', (text: string) => send({ type: 'output', stream: 'stdout', text }))
-      child.stderr?.on('data', (text: string) => send({ type: 'output', stream: 'stderr', text }))
+      // A program can print far faster than the window can draw: send output in
+      // batches, and if it piles up, only the newest part (with a "skipped" note).
+      const queue = new OutputQueue(MAX_WAITING_CHARS)
+      let timer: NodeJS.Timeout | null = null
+      const flush = () => {
+        timer = null
+        const { pieces, dropped } = queue.take()
+        if (dropped) send({ type: 'output', stream: 'stderr', text: skippedNote(dropped) })
+        for (const p of pieces) send({ type: 'output', stream: p.stream, text: p.text })
+      }
+      const collect = (stream: 'stdout' | 'stderr') => (text: string) => {
+        queue.push(stream, text)
+        timer ??= setTimeout(flush, BATCH_MS)
+      }
+      child.stdout?.on('data', collect('stdout'))
+      child.stderr?.on('data', collect('stderr'))
       child.once('close', (code, signal) => {
         if (!started) return
         if (this.child === child) this.child = null
+        if (timer) clearTimeout(timer)
+        flush() // what's left, before saying it ended
         send({ type: 'exit', code, signal: signal ?? undefined, ms: Date.now() - startedAt })
       })
     })
