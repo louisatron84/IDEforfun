@@ -46,7 +46,11 @@ export interface SessionHooks {
 }
 
 export interface LaunchOptions {
-  program: string
+  /** The script to debug, or null to debug `module` (python -m). */
+  program: string | null
+  module?: string | null
+  args?: string[]
+  env?: Record<string, string>
   cwd: string
   breakpoints: { path: string; lines: readonly number[] }[]
 }
@@ -94,10 +98,11 @@ export class DebugSession {
     })
     const launch = this.client.request('launch', {
       name: 'IDEforfun', type: 'python', request: 'launch',
-      program: opts.program, cwd: opts.cwd,
+      ...(opts.module ? { module: opts.module } : { program: opts.program }),
+      args: opts.args ?? [], cwd: opts.cwd,
       console: 'internalConsole', redirectOutput: true,
       justMyCode: true, showReturnValue: true,
-      env: { PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }
+      env: { PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1', ...opts.env }
     })
     launch.catch(() => {}) // awaited below; avoid an "unhandled" warning if it fails early
     await Promise.race([this.initialized, launch])

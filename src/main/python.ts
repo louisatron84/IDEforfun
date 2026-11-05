@@ -6,6 +6,7 @@
  * streams stdout/stderr back to the window that asked.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
+import type { RunSpec } from '../shared/api'
 import { access } from 'node:fs/promises'
 import { win32, posix } from 'node:path'
 import type { WebContents } from 'electron'
@@ -31,7 +32,9 @@ export class PythonRunner {
   private child: ChildProcess | null = null
   private runId = 0
 
-  async run(sender: WebContents, file: string, cwd: string, configured?: string): Promise<void> {
+  /** Start a run; resolves with its id once it started (or failed to). */
+  async run(sender: WebContents, spec: RunSpec): Promise<number> {
+    const { root, python: configured } = spec
     this.stop()
     // Every event carries the run's id, so the window can ignore late events
     // from a previous run (e.g. its "exited" message after a restart).
@@ -40,7 +43,10 @@ export class PythonRunner {
       if (!sender.isDestroyed()) sender.send('run:event', { ...e, runId })
     }
 
-    for (const python of pythonCandidates(cwd, process.platform, configured)) {
+    // An interpreter chosen in Settings is used as-is: if it's wrong, say so rather
+    // than quietly running some other Python.
+    const candidates = configured ? [configured] : pythonCandidates(root, process.platform)
+    for (const python of candidates) {
       // Paths (virtualenvs) must exist; bare commands are found on PATH by spawn.
       if (!isBareCommand(python)) {
         try {
@@ -49,20 +55,28 @@ export class PythonRunner {
           continue
         }
       }
-      const started = await this.trySpawn(python, file, cwd, send)
-      if (started) return
+      const started = await this.trySpawn(python, spec, send)
+      if (started) return runId
     }
-    send({ type: 'error', message: 'Python was not found. Install it from python.org, or create a .venv in your project.' })
+    send({
+      type: 'error',
+      message: configured
+        ? `The Python interpreter set in Settings wasn't found:\n  ${configured}\nFix it in Settings (Ctrl+,), or clear it to pick one automatically.`
+        : 'Python was not found. Install it from python.org, or create a .venv in your project.'
+    })
     send({ type: 'exit', code: null, ms: 0 })
+    return runId
   }
 
   /** Resolves true once the process has started, false if this interpreter doesn't exist. */
-  private trySpawn(python: string, file: string, cwd: string, send: (e: RunEventBody) => void): Promise<boolean> {
+  private trySpawn(python: string, spec: RunSpec, send: (e: RunEventBody) => void): Promise<boolean> {
+    const file = spec.module ? `-m ${spec.module}` : spec.program ?? ''
     return new Promise((resolve) => {
       const startedAt = Date.now()
-      const child = spawn(python, ['-u', file], {
-        cwd,
-        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
+      const target = spec.module ? ['-m', spec.module] : [spec.program ?? '']
+      const child = spawn(python, ['-u', ...target, ...spec.args], {
+        cwd: spec.cwd,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1', ...spec.env },
         windowsHide: true
       })
       let started = false
@@ -79,6 +93,7 @@ export class PythonRunner {
         }
         send({ type: 'error', message: err.message })
       })
+      child.stdin?.on('error', () => {}) // typing input after the program ended: nothing to do
       child.stdout?.setEncoding('utf8')
       child.stderr?.setEncoding('utf8')
       child.stdout?.on('data', (text: string) => send({ type: 'output', stream: 'stdout', text }))

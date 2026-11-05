@@ -29,7 +29,7 @@ to real source code or runtime behaviour.
 - [x] File encoding detection and conversion (v0.23: UTF-8, UTF-8 with BOM, UTF-16 LE/BE, Western; Reopen / Save with Encoding)
 - [x] CRLF/LF line endings: shown in the status bar, click to convert (v0.23)
 - [x] Large-file mode and graceful handling of binary files (v0.23: binary files ask first; over 5 MB skips the language server; over 50 MB asks; over 256 MB refused)
-- [ ] Recovery of unsaved buffers after unexpected crashes
+- [x] Recovery of unsaved buffers after unexpected crashes (v0.24: backups of unsaved files, offered back when the folder is next opened)
 
 ## Tier 2: IDE foundations
 
@@ -40,19 +40,19 @@ to real source code or runtime behaviour.
 - [x] Integrated terminal (xterm.js + node-pty, Ctrl+`, v0.9)
 - [x] Command palette (Ctrl+Shift+P), quick open (Ctrl+P), go to line (Ctrl+G) (v0.11)
 - [x] Settings (font size, theme, tab width, Python interpreter, Ctrl+= / Ctrl+-) (v0.10)
-- [ ] Multiple terminal sessions
-- [ ] Terminal profiles and shell selection
-- [ ] Configurable keyboard shortcuts
-- [ ] Recent projects
-- [ ] Workspace persistence (restore tabs, terminal sessions and layout)
-- [ ] Project-specific settings
-- [ ] Task runner for predefined project commands
-- [ ] Run configurations (arguments, environment variables and working directory)
-- [ ] Python environment management (create, select and manage virtual environments)
-- [ ] Dependency management integration (pip, requirements.txt, pyproject.toml)
-- [ ] Test runner integration (pytest, unittest)
-  - [ ] Test discovery and running individual tests
-  - [ ] Test results panel with navigation to failures
+- [x] Multiple terminal sessions (v0.25: + / ▾ / 🗑 buttons, list on the right, Ctrl+Shift+`)
+- [x] Terminal profiles and shell selection (v0.25: finds PowerShell, PowerShell 7, Command Prompt, Git Bash, WSL / bash, zsh, fish; default in Settings)
+- [x] Configurable keyboard shortcuts (v0.26: press new keys from Keyboard Shortcuts…, clashes marked, keybindings.json, menu follows)
+- [x] Recent projects (v0.26: File → Open Recent, Ctrl+R, listed in the sidebar with no folder open)
+- [x] Workspace persistence (restore tabs, terminal sessions and layout) (v0.26: tabs, split, cursors, terminals' shells, bottom panel; last project reopens at startup)
+- [x] Project-specific settings (v0.26: .ideforfun/settings.json can set tabSize, pythonPath, shell)
+- [x] Task runner for predefined project commands (v0.27: tasks in .ideforfun/run.json, Ctrl+Shift+B, each in its own terminal)
+- [x] Run configurations (arguments, environment variables and working directory) (v0.27: file or module, for Run and Debug, picked in the status bar)
+- [x] Python environment management (create, select and manage virtual environments) (v0.28: 🐍 in the status bar, finds venvs and installed Pythons, creates .venv, saved per project)
+- [x] Dependency management integration (pip, requirements.txt, pyproject.toml) (v0.28: Python Packages…, missing-package warning, install/upgrade/uninstall, freeze)
+- [x] Test runner integration (pytest, unittest) (v0.29)
+  - [x] Test discovery and running individual tests (reads test files; ▶ per test / file, Run Test at Cursor)
+  - [x] Test results panel with navigation to failures (Tests tab: ✓ ✗ per test, click to the failing line, full traceback)
 
 ## Tier 3: Intelligence and developer tooling
 
@@ -65,11 +65,11 @@ to real source code or runtime behaviour.
 - [x] Debugger (DAP, debugpy): breakpoints, stepping, call stack, variables, debug console with expression evaluation, hover values, pause on uncaught exceptions (v0.17)
 
 Language features (Pyright already does the analysis for most of these; they're mostly UI work):
-- [ ] Find references
-- [ ] Rename symbol across project
+- [x] Find references (v0.31: Shift+F12, References tab with line previews)
+- [x] Rename symbol across project (v0.31: F2; open files undoable, closed files changed on disk after confirming)
 - [ ] Go to implementation
 - [ ] Call hierarchy
-- [ ] Document symbols / outline panel
+- [x] Document symbols / outline panel (v0.31: Outline sidebar tab follows the cursor, filter; Ctrl+Shift+O)
 - [ ] Import organisation and automatic import suggestions
 - [ ] Code actions and quick fixes
 - [ ] Format document / selection (Black, Ruff)

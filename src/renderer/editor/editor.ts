@@ -91,6 +91,8 @@ export class Editor {
   private view: ViewState = this.viewFor(this.doc)
   /** A redraw requested because the shown file changed elsewhere (e.g. the other side of a split). */
   private passiveFrame = 0
+  /** Counts full redraws, so a requested background redraw can be skipped if one already happened. */
+  private renders = 0
   /** On-screen column to aim for when moving up/down (null = use current). */
   private goalVisual: number | null = null
   private charWidth = 8
@@ -127,9 +129,11 @@ export class Editor {
   /** Redraw on the next frame without scrolling (the change may have come from elsewhere). */
   private schedulePassiveRender(): void {
     if (this.passiveFrame) return
+    const before = this.renders
     this.passiveFrame = requestAnimationFrame(() => {
       this.passiveFrame = 0
-      if (this.hasDoc) this.render(true, 'none')
+      // Our own edits redraw straight away; only changes made elsewhere need this.
+      if (this.hasDoc && this.renders === before) this.render(true, 'none')
     })
   }
 
@@ -155,7 +159,8 @@ export class Editor {
       rowCount: () => this.foldMap.visibleCount(this.buffer.lineCount),
       lineAtRow: (row) => this.foldMap.bufferLine(row),
       getLine: (line) => this.buffer.getLine(line),
-      tokens: (line) => this.highlighter.tokensFor(line),
+      tokens: (line) => this.highlighter.tokensIfCached(line),
+      warmUp: (ms, upTo) => this.highlighter.warmUp(ms, upTo),
       scroll: () => ({ top: Math.max(0, this.root.scrollTop - PAD_TOP), height: this.root.clientHeight, rowHeight: this.lineHeight }),
       scrollToRow: (row) => {
         this.root.scrollTop = PAD_TOP + row * this.lineHeight - this.root.clientHeight / 2
@@ -196,7 +201,7 @@ export class Editor {
       this.minimap.schedule()
     }).observe(this.root)
 
-    this.showPlaceholder('Open a folder and pick a file')
+    this.showPlaceholder('Open a folder to start: Ctrl+O, File → Open Folder, or drop a folder here.')
   }
 
   /** Show a document, remembering the scroll position of the one being left. */
@@ -218,6 +223,27 @@ export class Editor {
     this.renderSelection()
     this.positionCursor()
     if (focus) this.focus()
+  }
+
+  /** Where this editor's cursor and scroll are in `doc` (for remembering the layout). */
+  viewInfo(doc: Doc): { line: number; col: number; scrollTop: number } | null {
+    if (this.hasDoc && this.doc === doc) this.rememberScroll()
+    const v = this.views.get(doc)
+    return v ? { line: v.cursor.line, col: v.cursor.col, scrollTop: Math.round(v.scrollTop) } : null
+  }
+
+  /** Put the cursor and scroll back where they were in an earlier session. */
+  restoreView(doc: Doc, info: { line: number; col: number; scrollTop: number }): void {
+    const v = this.viewFor(doc)
+    const pos = doc.buffer.clamp({ line: info.line, col: info.col })
+    v.cursor = pos
+    v.anchor = pos
+    v.extras = []
+    v.scrollTop = info.scrollTop
+    if (this.hasDoc && this.doc === doc) {
+      this.root.scrollTop = info.scrollTop
+      this.render(false, 'none')
+    }
   }
 
   get currentDoc(): Doc | null {
@@ -305,6 +331,63 @@ export class Editor {
 
   private selectedText(): string {
     return this.buffer.getRange(this.anchor, this.cursor)
+  }
+
+  // ---------- actions (also used by the Edit menu) ----------
+
+  /** True when the editor has keyboard focus. */
+  get hasFocus(): boolean {
+    return document.activeElement === this.input
+  }
+
+  undo(): void {
+    if (!this.hasDoc) return
+    this.clearExtras()
+    const target = this.history.undo()
+    if (target) this.afterEdit(this.buffer.clamp(target))
+  }
+
+  redo(): void {
+    if (!this.hasDoc) return
+    this.clearExtras()
+    const target = this.history.redo()
+    if (target) this.afterEdit(this.buffer.clamp(target))
+  }
+
+  selectAll(): void {
+    if (!this.hasDoc) return
+    this.clearExtras()
+    this.anchor = { line: 0, col: 0 }
+    this.cursor = this.buffer.clamp({ line: Infinity, col: Infinity })
+    this.render(false)
+  }
+
+  copy(): void {
+    if (!this.hasDoc) return
+    if (this.multi) this.copyOrCutMulti(false)
+    else this.copyOrCut(false)
+  }
+
+  cut(): void {
+    if (!this.hasDoc) return
+    if (this.multi) this.copyOrCutMulti(true)
+    else this.copyOrCut(true)
+  }
+
+  /** Ctrl+/: comment or uncomment the selected lines (at every cursor). */
+  toggleComment(): void {
+    if (!this.hasDoc) return
+    const b = this.buffer
+    // Several cursors on one line must toggle it once, not once per cursor.
+    const done = new Set<number>()
+    this.editMulti('other', (s) => {
+      const [first, last] = sel.selectedLines(s)
+      let fresh = false
+      for (let l = first; l <= last; l++) if (!done.has(l)) fresh = true
+      if (!fresh) return s
+      for (let l = first; l <= last; l++) done.add(l)
+      return pairs.toggleComment(b, s)
+    })
   }
 
   // ---------- brackets ----------
@@ -552,16 +635,7 @@ export class Editor {
     // --- comments and brackets ---
     if (ctrl && !e.altKey && (e.key === '/' || e.code === 'Slash')) {
       e.preventDefault()
-      // Several cursors on one line must toggle it once, not once per cursor.
-      const done = new Set<number>()
-      this.editMulti('other', (s) => {
-        const [first, last] = sel.selectedLines(s)
-        let fresh = false
-        for (let l = first; l <= last; l++) if (!done.has(l)) fresh = true
-        if (!fresh) return s
-        for (let l = first; l <= last; l++) done.add(l)
-        return pairs.toggleComment(b, s)
-      })
+      this.toggleComment()
       return
     }
     if (ctrl && shift && !e.altKey && (e.code === 'BracketLeft' || e.code === 'BracketRight')) {
@@ -584,23 +658,19 @@ export class Editor {
     // --- shortcuts with Ctrl ---
     if (ctrl && (k === 'z' || k === 'y')) {
       e.preventDefault()
-      this.clearExtras()
-      const target = k === 'y' || shift ? this.history.redo() : this.history.undo()
-      if (target) this.afterEdit(this.buffer.clamp(target))
+      if (k === 'y' || shift) this.redo()
+      else this.undo()
       return
     }
     if (ctrl && k === 'a') {
       e.preventDefault()
-      this.clearExtras()
-      this.anchor = { line: 0, col: 0 }
-      this.cursor = b.clamp({ line: Infinity, col: Infinity })
-      this.render(false)
+      this.selectAll()
       return
     }
     if (ctrl && (k === 'c' || k === 'x')) {
       e.preventDefault()
-      if (this.multi) this.copyOrCutMulti(k === 'x')
-      else this.copyOrCut(k === 'x')
+      if (k === 'x') this.cut()
+      else this.copy()
       return
     }
 
@@ -984,6 +1054,7 @@ export class Editor {
    * (used for jumps such as find results and error links).
    */
   private render(textChanged = true, scroll: 'nearest' | 'center' | 'none' = 'nearest'): void {
+    this.renders++
     if (textChanged) this.rebuildFolds()
     if (this.foldMap.isHidden(this.cursor.line)) {
       // The cursor moved into a folded block (e.g. go to line, find): open it.

@@ -55,7 +55,11 @@ export class SearchView {
     this.results.className = 'search-results'
     this.root.append(bar, this.status, this.results)
 
-    this.input.addEventListener('input', () => this.schedule())
+    this.input.addEventListener('input', () => {
+      // Results for the old text stay until the new ones arrive: dim them so they don't look current.
+      this.results.classList.add('stale')
+      this.schedule()
+    })
     this.input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault()
@@ -116,6 +120,7 @@ export class SearchView {
   }
 
   private render(r: ProjectSearchResult): void {
+    this.results.classList.remove('stale')
     this.input.classList.toggle('invalid', !!r.error)
     if (r.error) {
       this.status.textContent = `Invalid regex: ${r.error}`
@@ -128,6 +133,12 @@ export class SearchView {
       ? 'No results'
       : `${r.total}${r.truncated ? '+' : ''} ${resultWord} in ${r.files.length} ${fileWord}` +
         (r.truncated ? ' (stopped early, narrow the search)' : '')
+    const skipped = r.skipped ?? []
+    if (skipped.length) {
+      // Say what wasn't searched, so "No results" never hides a big file.
+      this.status.textContent += ` · ${skipped.length} file${skipped.length > 1 ? 's' : ''} over 20 MB not searched`
+      this.status.title = skipped.slice(0, 20).join('\n')
+    } else this.status.title = ''
 
     const groups = r.files.map((file) => {
       const group = document.createElement('div')
@@ -159,10 +170,13 @@ export class SearchView {
         row.className = 'search-match'
         row.title = `Line ${m.line + 1}`
         const { text, start } = m.preview
+        const lineNo = document.createElement('span')
+        lineNo.className = 'search-line-no'
+        lineNo.textContent = String(m.line + 1)
         // Text nodes + <mark>, never innerHTML: file contents are untrusted.
         const mark = document.createElement('mark')
         mark.textContent = text.slice(start, start + m.length)
-        row.append(text.slice(0, start), mark, text.slice(start + m.length))
+        row.append(lineNo, text.slice(0, start), mark, text.slice(start + m.length))
         row.addEventListener('click', () => this.openMatch(file.path, m.line, m.col, m.length))
         list.append(row)
       }

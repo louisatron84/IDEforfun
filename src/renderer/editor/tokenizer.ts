@@ -84,6 +84,57 @@ function findStringEnd(text: string, from: number, quote: string): number {
   return -1
 }
 
+/**
+ * An f-string on one line, f"total: {price * qty:.2f}": the text parts are
+ * 'string', the {expressions} are highlighted as code. {{ and }} are
+ * literal braces. `start..end` is the whole string, `body..bodyEnd` the
+ * part between the quotes.
+ */
+function fStringTokens(text: string, start: number, end: number, body: number, bodyEnd: number): Token[] {
+  const out: Token[] = []
+  let strFrom = start
+  let i = body
+  while (i < bodyEnd) {
+    if (text[i] === '\\') {
+      i += 2
+      continue
+    }
+    if ((text[i] === '{' || text[i] === '}') && text[i + 1] === text[i]) {
+      i += 2 // {{ or }}: a literal brace
+      continue
+    }
+    if (text[i] !== '{') {
+      i++
+      continue
+    }
+    // Find the matching } (expressions can nest brackets and contain strings).
+    let depth = 0
+    let j = i + 1
+    let quote = ''
+    for (; j < bodyEnd; j++) {
+      const c = text[j]
+      if (quote) {
+        if (c === quote) quote = ''
+      } else if (c === '"' || c === "'") quote = c
+      else if (c === '{' || c === '(' || c === '[') depth++
+      else if (c === ')' || c === ']') depth--
+      else if (c === '}') {
+        if (depth === 0) break
+        depth--
+      }
+    }
+    if (j >= bodyEnd) break // unclosed {: leave the rest as string
+    if (i + 1 > strFrom) out.push({ start: strFrom, end: i + 1, type: 'string' }) // ...text{
+    for (const t of tokenizeLine(text.slice(i + 1, j), '').tokens) {
+      out.push({ start: t.start + i + 1, end: t.end + i + 1, type: t.type })
+    }
+    strFrom = j // }...
+    i = j + 1
+  }
+  if (end > strFrom) out.push({ start: strFrom, end, type: 'string' })
+  return out
+}
+
 export function tokenizeLine(text: string, state: LineState): { tokens: Token[]; endState: LineState } {
   const tokens: Token[] = []
   let i = 0
@@ -127,7 +178,8 @@ export function tokenizeLine(text: string, state: LineState): { tokens: Token[];
         tokens.push({ start: i, end: text.length, type: 'string' })
         return { tokens, endState: (triple as LineState) || '' }
       }
-      tokens.push({ start: i, end, type: 'string' })
+      if (/f/i.test(prefix)) tokens.push(...fStringTokens(text, i, end, qStart + quote.length, end - quote.length))
+      else tokens.push({ start: i, end, type: 'string' })
       i = end
       prevWord = ''
       onlySpaceSoFar = false

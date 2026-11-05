@@ -8,21 +8,72 @@
 import * as pty from 'node-pty'
 import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
+import { win32 } from 'node:path'
 import type { WebContents } from 'electron'
-import type { TerminalEvent } from '../shared/api'
+import type { ShellProfile, TerminalEvent } from '../shared/api'
 
 export function defaultShell(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): { file: string; args: string[] } {
   if (platform === 'win32') return { file: 'powershell.exe', args: ['-NoLogo'] }
   return { file: env.SHELL || '/bin/bash', args: ['-l'] }
 }
 
+/**
+ * Shells installed on this machine, default first. `exists` checks a path
+ * (injected so this can be tested anywhere).
+ */
+export function findShells(
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+  exists: (path: string) => boolean
+): ShellProfile[] {
+  const out: ShellProfile[] = []
+  const add = (id: string, name: string, file: string, args: string[]) => {
+    if (!out.some((s) => s.id === id)) out.push({ id, name, file, args })
+  }
+  if (platform === 'win32') {
+    const join = win32.join
+    const sysRoot = env.SystemRoot || env.windir || join('C:', 'Windows')
+    const programFiles = [env.ProgramFiles, env['ProgramFiles(x86)'], env.ProgramW6432].filter(Boolean) as string[]
+    add('powershell', 'PowerShell', 'powershell.exe', ['-NoLogo'])
+    for (const pf of programFiles) {
+      const pwsh = join(pf, 'PowerShell', '7', 'pwsh.exe')
+      if (exists(pwsh)) add('pwsh', 'PowerShell 7', pwsh, ['-NoLogo'])
+    }
+    add('cmd', 'Command Prompt', join(sysRoot, 'System32', 'cmd.exe'), [])
+    for (const pf of programFiles) {
+      const bash = join(pf, 'Git', 'bin', 'bash.exe')
+      if (exists(bash)) add('gitbash', 'Git Bash', bash, ['--login', '-i'])
+    }
+    const wsl = join(sysRoot, 'System32', 'wsl.exe')
+    if (exists(wsl)) add('wsl', 'WSL', wsl, [])
+    return out
+  }
+  if (env.SHELL) add(env.SHELL.split('/').pop()!, env.SHELL.split('/').pop()!, env.SHELL, ['-l'])
+  for (const [name, paths] of [
+    ['bash', ['/bin/bash', '/usr/bin/bash', '/opt/homebrew/bin/bash']],
+    ['zsh', ['/bin/zsh', '/usr/bin/zsh']],
+    ['fish', ['/usr/bin/fish', '/opt/homebrew/bin/fish', '/usr/local/bin/fish']]
+  ] as const) {
+    const found = paths.find(exists)
+    if (found) add(name, name, found, ['-l'])
+  }
+  if (!out.length) add('sh', 'sh', '/bin/sh', [])
+  return out
+}
+
 export class Terminals {
   private readonly terms = new Map<number, pty.IPty>()
   private nextId = 1
 
-  create(sender: WebContents, cwd: string | null, cols: number, rows: number): number {
+  /** Installed shells, default first. */
+  shells(): ShellProfile[] {
+    return findShells(process.platform, process.env, existsSync)
+  }
+
+  /** Start a shell (`profileId` from shells(); default if missing or unknown). Returns its id. */
+  create(sender: WebContents, cwd: string | null, cols: number, rows: number, profileId?: string): number {
     const id = this.nextId++
-    const shell = defaultShell(process.platform, process.env)
+    const shell = this.shells().find((s) => s.id === profileId) ?? defaultShell(process.platform, process.env)
     const term = pty.spawn(shell.file, shell.args, {
       name: 'xterm-256color',
       cols: Math.max(2, cols),

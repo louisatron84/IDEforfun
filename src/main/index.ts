@@ -1,10 +1,20 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
+import { buildMenu, type EditAction, type MenuState } from './menu'
+import { ensureProjectFile, ensureProjectSettings, readProjectFile, readProjectSettings, updateProjectSettings, UserState } from './userState'
+import { checkDependencies, describePython, findInterpreters, freeze, listPackages } from './pyenv'
+import { discoverTests, hasPytest, TestRunner } from './tests'
+import type { TestRunRequest } from '../shared/api'
+import type { KeyOverrides } from '../shared/keybindings'
+import type { ProjectSettings } from '../shared/settings'
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
+import { realpath } from 'node:fs/promises'
 import { sortAndFilterEntries } from './dirEntries'
 import { listFiles } from './listFiles'
 import { createEntry, renameEntry } from './fileOps'
 import { readTextFile, writeTextFile } from './textFile'
+import { Backups } from './backups'
+import type { BackupData, RunSpec } from '../shared/api'
 import type { Encoding } from '../shared/encoding'
 import { searchProject } from './search'
 import { gitStatus } from './git'
@@ -22,6 +32,13 @@ const runner = new PythonRunner()
 const terminals = new Terminals()
 const languageServer = new LanguageServer()
 const debugAdapter = new DebugAdapter()
+const backups = new Backups(() => join(app.getPath('userData'), 'backups'))
+const userState = new UserState(() => app.getPath('userData'))
+const testRunner = new TestRunner()
+
+// The menu shows the window's current shortcuts and the recent folders, so it's rebuilt when they change.
+const menuState: MenuState = { keys: {}, recent: [] }
+const refreshMenu = () => Menu.setApplicationMenu(buildMenu(menuState))
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -39,6 +56,7 @@ function createWindow(): void {
 
   // A reload or closed window abandons its terminals: don't leave shells running.
   win.webContents.on('did-start-loading', () => {
+    testRunner.stop()
     terminals.killAll()
     languageServer.stop()
     debugAdapter.stop()
@@ -60,7 +78,11 @@ function createWindow(): void {
       message: 'You have unsaved changes.',
       detail: 'Close anyway and lose them?'
     })
-    if (choice === 0) event.preventDefault() // preventDefault here = ignore the block and close
+    if (choice === 0) {
+      // The user chose to lose the changes: drop their crash-recovery copies too.
+      backups.clearSync()
+      event.preventDefault() // preventDefault here = ignore the block and close
+    }
   })
 
   if (process.env['ELECTRON_RENDERER_URL']) {
@@ -74,23 +96,103 @@ ipcMain.handle('dialog:openFolder', async (event) => {
   const win = BrowserWindow.fromWebContents(event.sender)
   const opts = { properties: ['openDirectory' as const] }
   const result = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
-  return result.canceled ? null : result.filePaths[0]
+  if (result.canceled) return null
+  // Some Linux dialogs return nothing when a path is typed and Enter pressed: say so instead of doing nothing.
+  const picked = result.filePaths[0]
+  if (!picked) return { error: "The folder dialog didn't return a folder. Try selecting it with the mouse, or use Open Folder by Path (Ctrl+Shift+P)." }
+  return checkFolder(picked)
 })
+// Edit menu actions for text boxes (and pasting into the editor): done natively by Chromium.
+ipcMain.on('edit:native', (event, action: EditAction) => {
+  if (['undo', 'redo', 'cut', 'copy', 'paste', 'selectAll'].includes(action)) event.sender[action]()
+})
+// "Save changes?" with real buttons. Synchronous, because closing a tab asks and answers in one step.
+ipcMain.on('dialog:unsaved', (event, name: string, detail?: string) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const opts = {
+    type: 'warning' as const,
+    buttons: ['Save', "Don't Save", 'Cancel'],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true,
+    message: `Do you want to save the changes you made to ${name}?`,
+    detail: detail ?? "Your changes will be lost if you don't save them."
+  }
+  const choice = win ? dialog.showMessageBoxSync(win, opts) : dialog.showMessageBoxSync(opts)
+  event.returnValue = (['save', 'discard', 'cancel'] as const)[choice] ?? 'cancel'
+})
+ipcMain.handle('fs:checkFolder', (_event, path: string) => checkFolder(path))
+// New File with no folder open: pick where it goes, create it empty (an existing file is left as it is).
+ipcMain.handle('dialog:newFile', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const opts = {
+    title: 'New File',
+    buttonLabel: 'Create',
+    defaultPath: join(app.getPath('documents'), 'untitled.py'),
+    filters: [{ name: 'Python', extensions: ['py'] }, { name: 'All files', extensions: ['*'] }]
+  }
+  const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+  if (res.canceled || !res.filePath) return null
+  try {
+    await writeFile(res.filePath, '', { flag: 'wx' })
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') return { error: `Couldn't create ${res.filePath}:\n${String(err)}` }
+  }
+  return res.filePath
+})
+// New Folder with no folder open: where the new project folder should go.
+ipcMain.handle('dialog:pickParent', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const opts = { title: 'Where should the new folder go?', buttonLabel: 'Choose', properties: ['openDirectory' as const, 'createDirectory' as const] }
+  const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+  if (res.canceled || !res.filePaths[0]) return null
+  return checkFolder(res.filePaths[0])
+})
+
+/** A folder path that exists (symlinks resolved), or why it can't be opened. */
+async function checkFolder(path: string): Promise<string | { error: string }> {
+  const trimmed = path.trim().replace(/^["']|["']$/g, '')
+  if (!trimmed) return { error: 'Type the path of a folder.' }
+  const full = resolve(trimmed.replace(/^~(?=$|[\\/])/, app.getPath('home')))
+  try {
+    const st = await stat(full)
+    if (!st.isDirectory()) return { error: `That's a file, not a folder:\n${full}` }
+    await readdir(full) // can we read it?
+    return await realpath(full)
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    const why = code === 'ENOENT' ? "doesn't exist" : code === 'EACCES' || code === 'EPERM' ? "can't be read (permission denied)" : `can't be opened (${code ?? String(err)})`
+    return { error: `The folder ${why}:\n${full}` }
+  }
+}
 
 ipcMain.handle('fs:readDir', async (_event, dir: string) => {
   const dirents = await readdir(dir, { withFileTypes: true })
-  return sortAndFilterEntries(
-    dir,
-    dirents.map((d) => ({ name: d.name, isDirectory: d.isDirectory() }))
-  )
+  const raw = await Promise.all(dirents.map(async (d) => {
+    // A symlink shows as what it points to; a broken one shows as a file (opening it explains).
+    let isDirectory = d.isDirectory()
+    if (d.isSymbolicLink()) {
+      try {
+        isDirectory = (await stat(join(dir, d.name))).isDirectory()
+      } catch {
+        isDirectory = false
+      }
+    }
+    return { name: d.name, isDirectory }
+  }))
+  return sortAndFilterEntries(dir, raw)
 })
 
 ipcMain.handle('fs:readText', (_event, path: string, opts?: { force?: boolean; encoding?: Encoding }) => readTextFile(path, opts))
 ipcMain.handle('fs:writeText', (_event, path: string, text: string, encoding: Encoding) => writeTextFile(path, text, encoding))
+ipcMain.handle('backup:write', (_event, data: BackupData) => backups.write(data))
+ipcMain.handle('backup:remove', (_event, path: string) => backups.remove(path))
+ipcMain.handle('backup:list', () => backups.list())
 ipcMain.handle('fs:create', (_event, dir: string, name: string, isDirectory: boolean) => createEntry(dir, name, isDirectory))
 ipcMain.handle('fs:rename', (_event, path: string, newName: string) => renameEntry(path, newName))
 // To the Recycle Bin (not a permanent delete), so mistakes can be undone.
 ipcMain.handle('fs:trash', (_event, path: string) => shell.trashItem(path))
+ipcMain.handle('fs:delete', (_event, path: string) => rm(path, { recursive: true }))
 ipcMain.handle('fs:listFiles', (_event, root: string) => listFiles(root))
 ipcMain.handle('lsp:start', (event) => {
   languageServer.start(event.sender)
@@ -110,9 +212,7 @@ ipcMain.handle('fs:writeFile', async (_event, path: string, text: string) => {
   await writeFile(path, text, 'utf8')
 })
 
-ipcMain.handle('run:start', (event, file: string, cwd: string, python?: string) =>
-  runner.run(event.sender, file, cwd, python)
-)
+ipcMain.handle('run:start', (event, spec: RunSpec) => runner.run(event.sender, spec))
 ipcMain.handle('run:stop', () => runner.stop())
 ipcMain.handle('run:input', (_event, text: string) => runner.sendInput(text))
 
@@ -125,12 +225,61 @@ ipcMain.handle('debug:start', (event, python: string, cwd: string) => debugAdapt
 ipcMain.on('debug:send', (_event, message: unknown) => debugAdapter.send(message))
 ipcMain.handle('debug:stop', () => debugAdapter.stop())
 
-ipcMain.handle('term:create', (event, cwd: string | null, cols: number, rows: number) =>
-  terminals.create(event.sender, cwd, cols, rows)
+ipcMain.handle('term:create', (event, cwd: string | null, cols: number, rows: number, profileId?: string) =>
+  terminals.create(event.sender, cwd, cols, rows, profileId)
 )
+ipcMain.handle('term:shells', () => terminals.shells())
 ipcMain.on('term:write', (_event, id: number, data: string) => terminals.write(id, data))
 ipcMain.on('term:resize', (_event, id: number, cols: number, rows: number) => terminals.resize(id, cols, rows))
 ipcMain.on('term:kill', (_event, id: number) => terminals.kill(id))
+
+// ---------- shortcuts, recent folders, per-project layout and settings ----------
+ipcMain.handle('keys:get', () => userState.keybindings())
+ipcMain.handle('keys:save', (_event, overrides: KeyOverrides) => userState.saveKeybindings(overrides))
+ipcMain.handle('keys:ensureFile', () => userState.ensureKeybindingsFile())
+ipcMain.on('menu:setKeys', (_event, keys: Record<string, string | null>) => {
+  if (!keys || typeof keys !== 'object') return
+  menuState.keys = keys
+  refreshMenu()
+})
+const updateRecent = (list: string[]) => {
+  menuState.recent = list
+  refreshMenu()
+  return list
+}
+ipcMain.handle('recent:list', () => userState.recent())
+ipcMain.handle('recent:add', async (_event, folder: string) => updateRecent(await userState.addRecent(folder)))
+ipcMain.handle('recent:remove', async (_event, folder: string) => updateRecent(await userState.removeRecent(folder)))
+ipcMain.handle('recent:clear', async () => {
+  await userState.clearRecent()
+  return updateRecent([])
+})
+ipcMain.handle('state:get', (_event, root: string) => userState.workspace(root))
+// A plain message (not invoke) handled synchronously, so it's saved even while the window closes.
+ipcMain.on('state:save', (_event, root: string, state: unknown) => {
+  try {
+    if (typeof root === 'string' && root) userState.saveWorkspaceSync(root, state)
+  } catch (err) {
+    console.error('Could not save the workspace layout:', err)
+  }
+})
+ipcMain.handle('project:settings', (_event, root: string) => readProjectSettings(root))
+ipcMain.handle('project:ensureSettings', (_event, root: string, initial: ProjectSettings) => ensureProjectSettings(root, initial))
+ipcMain.handle('project:updateSettings', (_event, root: string, patch: Record<string, unknown>) => updateProjectSettings(root, patch))
+ipcMain.handle('py:interpreters', (_event, root: string | null) => findInterpreters(root))
+ipcMain.handle('py:current', async (_event, root: string, configured?: string) => {
+  const python = await resolvePython(root, configured)
+  return python ? describePython(python) : null
+})
+ipcMain.handle('py:packages', (_event, python: string) => listPackages(python))
+ipcMain.handle('py:freeze', (_event, python: string) => freeze(python))
+ipcMain.handle('py:deps', (_event, root: string, python: string) => checkDependencies(root, python))
+ipcMain.handle('tests:discover', (_event, root: string) => discoverTests(root))
+ipcMain.handle('tests:hasPytest', (_event, python: string) => hasPytest(python))
+ipcMain.handle('tests:run', (event, req: TestRunRequest) => testRunner.run(event.sender, req))
+ipcMain.handle('tests:stop', () => testRunner.stop())
+ipcMain.handle('project:readFile', (_event, root: string, name: string) => readProjectFile(root, name))
+ipcMain.handle('project:ensureFile', (_event, root: string, name: string, initial: unknown) => ensureProjectFile(root, name, initial))
 
 // ---------- settings (userData/settings.json) ----------
 const settingsFile = () => join(app.getPath('userData'), 'settings.json')
@@ -149,6 +298,7 @@ ipcMain.handle('settings:save', async (_event, settings: unknown) => {
 })
 
 app.on('before-quit', () => {
+  testRunner.stop()
   runner.stop()
   debugAdapter.stop()
   terminals.killAll()
@@ -156,6 +306,8 @@ app.on('before-quit', () => {
 })
 
 app.whenReady().then(() => {
+  menuState.recent = userState.recentSync()
+  refreshMenu()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

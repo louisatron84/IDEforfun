@@ -87,6 +87,33 @@ export class FileTree {
     return this.root !== null
   }
 
+  /** With no folder open: list recently opened folders to reopen with one click. */
+  showRecent(folders: string[], open: (folder: string) => void): void {
+    if (this.root) return
+    if (!folders.length) {
+      this.list.replaceChildren()
+      return
+    }
+    const heading = document.createElement('div')
+    heading.className = 'recent-heading'
+    heading.textContent = 'Recent folders'
+    const rows = folders.map((folder) => {
+      const b = document.createElement('button')
+      b.className = 'recent-folder'
+      b.title = folder
+      const name = document.createElement('span')
+      name.className = 'recent-name'
+      name.textContent = folder.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || folder
+      const path = document.createElement('span')
+      path.className = 'recent-path'
+      path.textContent = folder
+      b.append(name, path)
+      b.addEventListener('click', () => open(folder))
+      return b
+    })
+    this.list.replaceChildren(heading, ...rows)
+  }
+
   async setRoot(rootPath: string): Promise<void> {
     this.editing?.cancel()
     this.root = rootPath

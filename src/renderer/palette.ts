@@ -5,7 +5,7 @@
  *   else quick open a file in the project (Ctrl+P)
  * Arrow keys move, Enter picks, Escape closes.
  */
-import type { CommandRegistry } from './keymap'
+import { keyString, type CommandRegistry } from './keymap'
 import { fuzzyFilter } from './fuzzy'
 
 interface Item {
@@ -38,6 +38,12 @@ export class Palette {
   /** When set, the palette shows these choices instead of files/commands. */
   private choices: { label: string; detail?: string; hint?: string; run: () => void }[] | null = null
   private choicePrompt = ''
+  /** In prompt mode: what to do with the typed text. */
+  private textSubmit: ((text: string) => void) | null = null
+  /** In key-capture mode: what to do with the next shortcut pressed. */
+  private keyCapture: ((key: string) => void) | null = null
+  /** The action word shown in prompt mode ("Open", "Install"...). */
+  private promptVerb = 'Open'
 
   constructor(private readonly deps: PaletteDeps) {
     this.overlay = document.createElement('div')
@@ -72,9 +78,38 @@ export class Palette {
     return !this.overlay.hidden
   }
 
+  /** True while waiting for a shortcut to be pressed (every key goes to the palette). */
+  get capturing(): boolean {
+    return this.isOpen && this.keyCapture !== null
+  }
+
+  /** Wait for a shortcut to be pressed (to change a command's keys); Escape cancels. */
+  captureKey(prompt: string, onKey: (key: string) => void): void {
+    this.choose(prompt, [])
+    this.keyCapture = onKey
+    this.input.readOnly = true
+    this.update()
+  }
+
+  private stopCapture(): void {
+    this.keyCapture = null
+    this.input.readOnly = false
+  }
+
+  /** Ask for a line of text (e.g. a folder path); Enter calls `submit` with it. */
+  prompt(placeholder: string, submit: (text: string) => void, initial = '', verb = 'Open'): void {
+    this.choose(placeholder, [])
+    this.textSubmit = submit
+    this.promptVerb = verb
+    this.input.value = initial
+    this.update()
+  }
+
   /** Show a list of choices (e.g. encodings); picking one runs it. */
   choose(prompt: string, choices: { label: string; detail?: string; hint?: string; run: () => void }[]): void {
     if (!this.isOpen) this.returnFocus = document.activeElement as HTMLElement | null
+    this.textSubmit = null
+    this.stopCapture()
     this.choices = choices
     this.choicePrompt = prompt
     this.overlay.hidden = false
@@ -86,6 +121,8 @@ export class Palette {
   /** Open with an initial prefix: '>' commands, ':' go to line, '' files. */
   async open(prefix: '>' | ':' | ''): Promise<void> {
     this.choices = null
+    this.textSubmit = null
+    this.stopCapture()
     if (!this.isOpen) this.returnFocus = document.activeElement as HTMLElement | null
     this.overlay.hidden = false
     this.input.value = prefix
@@ -101,11 +138,29 @@ export class Palette {
     if (!this.isOpen) return
     this.overlay.hidden = true
     this.choices = null
+    this.textSubmit = null
+    this.stopCapture()
     this.returnFocus?.focus()
   }
 
   private update(): void {
     const value = this.input.value
+    if (this.keyCapture) {
+      this.items = [{ label: 'Press the new shortcut now (Escape cancels)', positions: [], run: () => {} }]
+      this.selected = 0
+      this.input.placeholder = this.choicePrompt
+      this.renderList()
+      return
+    }
+    if (this.textSubmit) {
+      const submit = this.textSubmit
+      const text = value.trim()
+      this.items = [{ label: text ? `${this.promptVerb} "${text}"` : 'Type here and press Enter', positions: [], run: () => { if (text) submit(text) } }]
+      this.selected = 0
+      this.input.placeholder = this.choicePrompt
+      this.renderList()
+      return
+    }
     if (this.choices) {
       this.items = fuzzyFilter(value.trim(), this.choices, (c) => c.label, MAX_ITEMS).map(({ item, match }) => ({
         label: item.label, positions: match.positions, detail: item.detail, hint: item.hint, run: item.run
@@ -128,7 +183,7 @@ export class Palette {
     return fuzzyFilter(query, commands, (c) => c.title, MAX_ITEMS).map(({ item, match }) => ({
       label: item.title,
       positions: match.positions,
-      hint: item.keys,
+      hint: this.deps.commands.keysOf(item.id)[0],
       run: () => this.deps.commands.run(item.id)
     }))
   }
@@ -238,6 +293,17 @@ export class Palette {
   }
 
   private onKey(e: KeyboardEvent): void {
+    if (this.keyCapture) {
+      e.preventDefault()
+      e.stopPropagation()
+      const key = keyString(e)
+      if (!key) return // only a modifier so far
+      if (key === 'Escape') return this.close()
+      const done = this.keyCapture
+      this.stopCapture()
+      done(key)
+      return
+    }
     if (e.key === 'Escape') {
       e.preventDefault()
       this.close()

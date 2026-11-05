@@ -27,6 +27,8 @@ export interface SearchResult {
   files: FileResult[]
   total: number
   truncated: boolean
+  /** Files not searched because they're too big (relative paths). */
+  skipped: string[]
   error?: string
 }
 
@@ -68,8 +70,8 @@ export async function searchProject(
   limits: SearchLimits = {}
 ): Promise<SearchResult> {
   const maxResults = limits.maxResults ?? 5000
-  const maxFileBytes = limits.maxFileBytes ?? 1_000_000
-  const result: SearchResult = { files: [], total: 0, truncated: false }
+  const maxFileBytes = limits.maxFileBytes ?? 20_000_000
+  const result: SearchResult = { files: [], total: 0, truncated: false, skipped: [] }
   if (!query) return result
   const re = buildRegExp(query, opts)
   if (typeof re === 'string') return { ...result, error: re }
@@ -77,7 +79,10 @@ export async function searchProject(
   const files = (await listFiles(root)).sort((a, b) => a.rel.localeCompare(b.rel))
   for (const file of files) {
     try {
-      if ((await stat(file.path)).size > maxFileBytes) continue
+      if ((await stat(file.path)).size > maxFileBytes) {
+        result.skipped.push(file.rel)
+        continue
+      }
       const buf = await readFile(file.path)
       if (isBinary(buf)) continue
       const lines = buf.toString('utf8').split(/\r\n|\r|\n/)

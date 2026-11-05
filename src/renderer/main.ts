@@ -1,7 +1,9 @@
 import { FileTree } from './fileTree'
 import { Editor, type EditorOptions } from './editor/editor'
 import type { Doc } from './editor/document'
-import { OpenRefused, Workspace, samePath } from './workspace'
+import type { Position } from './editor/textBuffer'
+import { OpenRefused, Workspace, isInside, samePath } from './workspace'
+import { BackupKeeper } from './backups'
 import { ENCODINGS, encodingLabel } from '../shared/encoding'
 import { TabBar } from './tabBar'
 import { CommandRegistry, keyString } from './keymap'
@@ -23,16 +25,41 @@ import { Completion } from './completion'
 import { hoverSections } from './lsp/markdown'
 import type { TooltipSection } from './tooltip'
 import { wordStartAt } from './lsp/completionLogic'
-import { DEFAULT_SETTINGS, type Settings } from '../shared/settings'
+import { DEFAULT_SETTINGS, effectiveSettings, type ProjectSettings, type Settings } from '../shared/settings'
+import type { WorkspaceState } from '../shared/projectState'
+import { Shortcuts } from './shortcuts'
+import { PythonEnv, type PythonTool } from './pythonEnv'
+import { TestView } from './testView'
+import { WelcomePage } from './welcome'
+import { ReferencesView } from './referencesView'
+import { OutlineView } from './outlineView'
+import { applyEdits, type DocSymbol, type Location, type TextEdit, SYMBOL_KIND } from './lsp/navigation'
+import { isTestFile } from '../shared/tests'
+import { normalizeRunFile, resolveConfiguration, resolveTask, RUN_FILE, starterRunFile, type LaunchSpec, type RunFile, type Task } from '../shared/runConfig'
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 
 const folderName = $('folder-name')
+const PLACEHOLDER_START = 'Open a folder to start: Ctrl+O, File → Open Folder, or drop a folder here.'
+const PLACEHOLDER_FOLDER = 'Pick a file in the tree, Ctrl+P to find one, or Ctrl+N for a new file.'
 let rootFolder: string | null = null
 
-const workspace = new Workspace(window.api, (doc: Doc) =>
-  confirm(`${doc.name} has unsaved changes. Close it without saving?`)
-)
+/**
+ * Closing a file with unsaved changes: Save / Don't Save / Cancel.
+ * Returns true if the tab may close now. "Save" saves first and then
+ * closes it (so this returns false and closes it once saved).
+ */
+const workspace: Workspace = new Workspace(window.api, (doc: Doc) => {
+  const choice = window.api.askUnsaved(doc.name)
+  if (choice === 'discard') return true
+  if (choice === 'save') {
+    void workspace.save(doc).then(
+      () => workspace.close(doc),
+      (err) => alert(`Couldn't save ${doc.name}:\n${String(err)}`)
+    )
+  }
+  return false
+})
 // ---------- editors (one per tab group; two when the view is split) ----------
 
 /** Callbacks for the editor of group `index`. */
@@ -134,8 +161,15 @@ const tree = new FileTree($('file-tree'), {
     try {
       await window.api.trashEntry(path)
     } catch (err) {
-      alert(`Couldn't delete ${path}:\n${String(err)}`)
-      return false
+      // No usable trash (common on Linux without a desktop trash service): offer a real delete.
+      const reason = String(err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
+      if (!confirm(`Couldn't move ${name} to the trash (${reason}).\n\nDelete it permanently instead? This can't be undone.`)) return false
+      try {
+        await window.api.deletePermanently(path)
+      } catch (err2) {
+        alert(`Couldn't delete ${path}:\n${String(err2)}`)
+        return false
+      }
     }
     workspace.discard(open)
     breakpoints.removeUnder(path)
@@ -145,6 +179,56 @@ const tree = new FileTree($('file-tree'), {
   error: (message) => alert(message)
 })
 export const commands = new CommandRegistry()
+
+// ---------- Welcome page (no files open, or Help → Welcome) ----------
+
+const welcome = new WelcomePage({
+  commands,
+  folder: () => rootFolder,
+  recent: () => window.api.recentList(),
+  openRecent: (folder) => void openRecentFolder(folder),
+  removeRecent: async (folder) => {
+    await window.api.recentRemove(folder)
+    refreshRecentSidebar()
+  },
+  showWhenEmpty: () => userSettings.showWelcome,
+  setShowWhenEmpty: (on) => {
+    updateUserSettings({ showWelcome: on })
+    updateWelcome()
+  },
+  canClose: () => workspace.docs.length > 0,
+  close: () => closeWelcomePage()
+})
+$('groups').append(welcome.el)
+/** Help → Welcome over open files (until a file is picked or it's closed). */
+let welcomeForced = false
+
+function updateWelcome(): void {
+  const show = welcomeForced || (workspace.docs.length === 0 && userSettings.showWelcome)
+  if (show && !welcome.isVisible) {
+    welcome.show()
+    // Keys mustn't go to a hidden editor behind the page.
+    if (editors.some((ed) => ed.hasFocus)) (document.activeElement as HTMLElement | null)?.blur()
+  } else if (!show && welcome.isVisible) welcome.hide()
+}
+
+function showWelcomePage(): void {
+  welcomeForced = true
+  updateWelcome()
+  welcome.refresh()
+}
+
+function closeWelcomePage(): void {
+  welcomeForced = false
+  updateWelcome()
+  if (!welcome.isVisible) editor.focus()
+}
+
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !welcomeForced || !welcome.isVisible) return
+  if (palette.isOpen || settingsView.isOpen) return // Escape closes those first
+  closeWelcomePage()
+})
 const findBar = new FindBar($('editor-pane'), editor)
 const panel = new Panel($('editor-pane'))
 const output = new OutputView(
@@ -153,7 +237,11 @@ const output = new OutputView(
   { run: () => void runCurrentFile(), stop: () => void window.api.stopRun() }
 )
 panel.addView('output', 'Output', output.body, output.actions)
-const terminal = new TerminalView(() => rootFolder)
+const terminal = new TerminalView(
+  () => rootFolder,
+  (shells, pick) => palette.choose('Shell for the new terminal', shells.map((s) => ({ label: s.name, detail: s.file, run: () => pick(s) }))),
+  () => settings.shell
+)
 panel.addView('terminal', 'Terminal', terminal.body, terminal.actions, () => terminal.show())
 
 // ---------- debugger (debugpy over the Debug Adapter Protocol) ----------
@@ -164,7 +252,8 @@ const watchedDocs = new WeakSet<Doc>()
 let session: DebugSession | null = null
 /** Where the paused program is (shown with a ▶ in the gutter and a highlighted line). */
 let pausedAt: { path: string; line: number } | null = null
-let debugFile: string | null = null
+/** What the last debug session ran (for Restart). */
+let lastDebugSpec: LaunchSpec | null = null
 
 const debugView = new DebugView({
   continue: () => void session?.continue(),
@@ -214,30 +303,44 @@ function toggleBreakpoint(line = editor.getCursor().line): void {
 const debugging = () => session?.active === true
 const debugPaused = () => session?.state === 'paused'
 
-async function startDebugging(path = workspace.active?.path): Promise<void> {
-  if (!path) return
-  if (session?.active) await stopDebugging()
-  panel.show('debug')
-  debugView.begin(path)
-  if (!path.toLowerCase().endsWith('.py')) {
-    debugView.error('Debugging works with Python files (.py).')
-    return
-  }
-  // Save every open file first: debugpy reads the files from disk.
+/** Save every changed file (programs read them from disk). Returns false if one couldn't be saved. */
+async function saveAllDirty(report: (message: string) => void): Promise<boolean> {
   for (const doc of workspace.docs.filter((d) => d.dirty)) {
     try {
       await workspace.save(doc)
       python.didSave(doc)
     } catch (err) {
-      debugView.error(`Debugging cancelled: couldn't save ${doc.name} (${String(err)})`)
-      return
+      report(`couldn't save ${doc.name} (${String(err)})`)
+      return false
     }
   }
-  const cwd = rootFolder ?? parentDir(path)
+  return true
+}
+
+async function startDebugging(given?: LaunchSpec): Promise<void> {
+  const resolved = given ?? launchSpec()
+  if (session?.active) await stopDebugging()
+  panel.show('debug')
+  if ('error' in resolved) {
+    debugView.begin('')
+    debugView.error(resolved.error)
+    return
+  }
+  const spec = resolved
+  debugView.begin(describeLaunch(spec))
+  if (spec.program && !spec.program.toLowerCase().endsWith('.py')) {
+    debugView.error('Debugging works with Python files (.py).')
+    return
+  }
+  // Save every open file first: debugpy reads the files from disk.
+  if (!(await saveAllDirty((m) => debugView.error(`Debugging cancelled: ${m}`)))) return
+  const cwd = spec.cwd
   debugView.setState('starting')
-  const prep = await window.api.debugPrepare(cwd, settings.pythonPath || undefined)
+  const prep = await window.api.debugPrepare(rootFolder ?? cwd, settings.pythonPath || undefined)
   if (!prep.python) {
-    debugView.error('Python was not found. Install it from python.org, or pick an interpreter in Settings (Ctrl+,).')
+    debugView.error(settings.pythonPath
+      ? `The Python interpreter set in Settings wasn't found:\n  ${settings.pythonPath}\nFix it in Settings (Ctrl+,), or clear it to pick one automatically.`
+      : 'Python was not found. Install it from python.org, or pick an interpreter in Settings (Ctrl+,).')
     debugView.setState('idle')
     return
   }
@@ -261,7 +364,7 @@ async function startDebugging(path = workspace.active?.path): Promise<void> {
     }
   }
   debugView.started(prep.python)
-  debugFile = path
+  lastDebugSpec = spec
 
   const s: DebugSession = new DebugSession({
     send: (m) => window.api.debugSend(m),
@@ -291,7 +394,7 @@ async function startDebugging(path = workspace.active?.path): Promise<void> {
   session = s
   await window.api.debugStart(prep.python, cwd)
   try {
-    await s.start({ program: path, cwd, breakpoints: breakpoints.all() })
+    await s.start({ program: spec.program, module: spec.module, args: spec.args, env: spec.env, cwd, breakpoints: breakpoints.all() })
   } catch (err) {
     if (session !== s || !s.active) return
     debugView.error(`Couldn't start debugging: ${err instanceof Error ? err.message : String(err)}`)
@@ -319,9 +422,9 @@ async function stopDebugging(): Promise<void> {
 }
 
 async function restartDebugging(): Promise<void> {
-  const file = debugFile
+  const spec = lastDebugSpec
   await stopDebugging()
-  if (file) await startDebugging(file)
+  if (spec) await startDebugging(spec)
 }
 
 window.api.onDebugMessage((m) => session?.handleMessage(m))
@@ -373,6 +476,8 @@ async function startLanguageServer(): Promise<void> {
     await python.start(rootFolder, py)
     python.syncDocs(workspace.docs.filter((d) => !d.large))
     problems.setStatus('')
+    outlineDoc = null
+    refreshOutlineSoon(0)
   } catch (err) {
     problems.setStatus(`Python language server failed to start: ${String(err)}`)
   }
@@ -468,6 +573,17 @@ function expressionAt(line: string, col: number): string {
 
 const navigationStack: { path: string; line: number; col: number }[] = []
 
+/**
+ * The cursor, moved onto the name it touches: with the cursor right after
+ * a name ("add_tax|("), the language server needs a position inside it.
+ */
+function cursorOnWord(): { line: number; col: number } {
+  const pos = editor.getCursor()
+  const line = workspace.active?.buffer.getLine(pos.line) ?? ''
+  const word = (ch: string | undefined) => !!ch && /[\p{L}\p{N}_]/u.test(ch)
+  return !word(line[pos.col]) && word(line[pos.col - 1]) ? { line: pos.line, col: pos.col - 1 } : pos
+}
+
 async function goToDefinition(pos = editor.getCursor()): Promise<void> {
   const doc = workspace.active
   if (!doc) return
@@ -491,14 +607,237 @@ async function goBack(): Promise<void> {
   if (await openFile(prev.path)) editor.goTo(prev.line, prev.col)
 }
 
+// ---------- find references, rename, outline ----------
+
+const hasDocNow = () => workspace.active !== null
+
+/** The name at `pos` in a line (for messages). */
+function nameAt(line: string, col: number): string {
+  let a = col
+  let b = col
+  while (a > 0 && /[\p{L}\p{N}_]/u.test(line[a - 1])) a--
+  while (b < line.length && /[\p{L}\p{N}_]/u.test(line[b])) b++
+  return line.slice(a, b)
+}
+
+const referencesView = new ReferencesView(
+  (loc) => void openFile(loc.path).then((doc) => {
+    if (!doc) return
+    editor.select(loc.start, loc.end)
+    editor.focus()
+  }),
+  (path) => (rootFolder && isInside(path, rootFolder) ? path.slice(rootFolder.length).replace(/^[\\/]+/, '') : path)
+)
+panel.addView('references', 'References', referencesView.body, referencesView.actions)
+
+async function findReferences(): Promise<void> {
+  const doc = workspace.active
+  if (!doc) return
+  panel.show('references')
+  if (!python.knows(doc)) {
+    referencesView.message(doc.large ? 'This file is too large for the Python language server.' : 'Find references works in Python files, once the language server has started.')
+    return
+  }
+  const pos = cursorOnWord()
+  const name = nameAt(doc.buffer.getLine(pos.line), pos.col)
+  referencesView.message(`Looking for references to "${name}"…`)
+  let locations: Location[] = []
+  try {
+    locations = await python.references(doc, pos)
+  } catch (err) {
+    referencesView.message(`Couldn't find references: ${String(err)}`)
+    return
+  }
+  // Lines for the previews: open files from the editor, others read once from disk.
+  const cache = new Map<string, Promise<string[]>>()
+  const lineText = async (path: string, line: number) => {
+    const open = workspace.find(path)
+    if (open) return open.buffer.getLine(line)
+    if (!cache.has(path)) {
+      cache.set(path, window.api.readTextFile(path).then((r) => (r.kind === 'text' ? r.text.split(/\r\n|\r|\n/) : [])))
+    }
+    return (await cache.get(path)!)[line] ?? ''
+  }
+  await referencesView.show(name, locations, lineText)
+}
+
+/** Apply edits to an open document as one undoable step. */
+function applyEditsToDoc(doc: Doc, edits: TextEdit[]): void {
+  const sorted = [...edits].sort((a, b) => b.start.line - a.start.line || b.start.col - a.start.col)
+  const before = workspace.active === doc ? editor.getCursor() : { line: 0, col: 0 }
+  doc.history.transact('other', before, () => {
+    let at = before
+    for (const e of sorted) {
+      doc.buffer.delete(e.start, e.end)
+      at = doc.buffer.insert(e.start, e.text)
+    }
+    return at
+  })
+  python.docChanged(doc)
+}
+
+async function renameSymbol(): Promise<void> {
+  const doc = workspace.active
+  if (!doc) return
+  if (!python.knows(doc)) {
+    alert('Rename works in Python files, once the language server has started.')
+    return
+  }
+  const pos = cursorOnWord()
+  let prep: Awaited<ReturnType<typeof python.prepareRename>> = null
+  try {
+    prep = await python.prepareRename(doc, pos)
+  } catch { /* treated as "can't rename" */ }
+  if (!prep) {
+    alert("That can't be renamed. Put the cursor on a name defined in your code (a variable, function, class, parameter...).")
+    return
+  }
+  const oldName = prep.name
+  palette.prompt(`Rename "${oldName}" everywhere to…`, (text) => void doRename(doc, pos, oldName, text.trim()), oldName, 'Rename to')
+}
+
+async function doRename(doc: Doc, pos: Position, oldName: string, newName: string): Promise<void> {
+  if (newName === oldName || !newName) return
+  if (!/^[\p{L}_][\p{L}\p{N}_]*$/u.test(newName)) {
+    alert(`"${newName}" isn't a valid Python name (letters, digits and _, not starting with a digit).`)
+    return
+  }
+  let edits
+  try {
+    edits = await python.rename(doc, pos, newName)
+  } catch (err) {
+    alert(`Rename failed: ${err instanceof Error ? err.message : String(err)}`)
+    return
+  }
+  if (!edits.size) {
+    alert('Nothing to rename.')
+    return
+  }
+  const count = [...edits.values()].reduce((n, l) => n + l.length, 0)
+  const closed = [...edits.keys()].filter((p) => !workspace.find(p))
+  const rel = (p: string) => (rootFolder && isInside(p, rootFolder) ? p.slice(rootFolder.length).replace(/^[\\/]+/, '') : p)
+  if (closed.length) {
+    const list = closed.slice(0, 10).map((p) => `  • ${rel(p)}`).join('\n') + (closed.length > 10 ? `\n  …and ${closed.length - 10} more` : '')
+    const ok = confirm(
+      `Rename "${oldName}" to "${newName}": ${count} change${count === 1 ? '' : 's'} in ${edits.size} file${edits.size === 1 ? '' : 's'}.\n\n` +
+      `${closed.length} of them ${closed.length === 1 ? "isn't" : "aren't"} open and will be changed and saved on disk:\n${list}\n\nContinue?`
+    )
+    if (!ok) return
+  }
+  // Open files: edited in place (unsaved, Ctrl+Z undoes it).
+  for (const [path, list] of edits) {
+    const open = workspace.find(path)
+    if (open) applyEditsToDoc(open, list)
+  }
+  // Closed files: changed on disk.
+  const failed: string[] = []
+  for (const path of closed) {
+    try {
+      const res = await window.api.readTextFile(path)
+      if (res.kind !== 'text') throw new Error('not a text file')
+      await window.api.writeTextFile(path, applyEdits(res.text, edits.get(path)!), res.encoding)
+    } catch (err) {
+      failed.push(`${rel(path)} (${err instanceof Error ? err.message : String(err)})`)
+    }
+  }
+  python.filesChangedOnDisk(closed)
+  workspace.notifyChanged()
+  if (closed.length) void refreshGit()
+  if (failed.length) alert(`These files couldn't be changed, so the rename is incomplete there:\n${failed.join('\n')}`)
+}
+
+const outline = new OutlineView((s: DocSymbol) => {
+  editor.goTo(s.nameStart.line, s.nameStart.col)
+  editor.focus()
+})
+$('outline-panel').append(outline.root)
+let outlineTimer: number | undefined
+let outlineGeneration = 0
+let outlineDoc: Doc | null = null
+let outlineVersion = -1
+
+function refreshOutlineSoon(delay = 500): void {
+  window.clearTimeout(outlineTimer)
+  outlineTimer = window.setTimeout(() => void refreshOutline(), delay)
+}
+
+/** Ask the language server for the open file's symbols (only while the Outline tab shows). */
+async function refreshOutline(): Promise<void> {
+  if ($('outline-panel').hidden) return
+  const doc = workspace.active
+  if (!doc) return outline.set([], 'Open a Python file to see its outline.')
+  if (!/\.pyi?$/i.test(doc.path)) return outline.set([], 'The outline is for Python files.')
+  if (!python.knows(doc)) {
+    return outline.set([], doc.large ? 'This file is too large for the Python language server.' : 'Waiting for the Python language server…')
+  }
+  if (doc === outlineDoc && doc.version === outlineVersion) return
+  const gen = ++outlineGeneration
+  let symbols: DocSymbol[] = []
+  try {
+    symbols = await python.symbols(doc)
+  } catch {
+    return
+  }
+  if (gen !== outlineGeneration || workspace.active !== doc) return
+  outlineDoc = doc
+  outlineVersion = doc.version
+  outline.set(symbols)
+  outline.highlight(editor.getCursor())
+}
+
+/** Ctrl+Shift+O: jump to a class / function / method in this file. */
+async function goToSymbol(): Promise<void> {
+  const doc = workspace.active
+  if (!doc) return
+  if (!python.knows(doc)) {
+    palette.choose('Go to symbol works in Python files, once the language server has started.', [])
+    return
+  }
+  const symbols = await python.symbols(doc).catch(() => [] as DocSymbol[])
+  const items: { label: string; detail?: string; hint?: string; run: () => void }[] = []
+  const walk = (list: DocSymbol[], parent: string) => {
+    for (const s of list) {
+      const kind = SYMBOL_KIND[s.kind]?.name ?? 'symbol'
+      items.push({
+        label: s.name,
+        detail: parent ? `${kind} in ${parent}` : kind,
+        hint: `line ${s.nameStart.line + 1}`,
+        run: () => {
+          editor.goTo(s.nameStart.line, s.nameStart.col)
+          editor.focus()
+        }
+      })
+      walk(s.children, parent ? `${parent}.${s.name}` : s.name)
+    }
+  }
+  walk(symbols, '')
+  palette.choose(items.length ? 'Go to a symbol in this file' : 'No classes or functions in this file', items)
+}
+
+const editorFocused = () => editors.some((e) => e.hasFocus)
+commands.register({ id: 'nav.references', title: 'Find All References', keys: 'Shift+F12', when: hasDocNow, run: () => void findReferences() })
+commands.register({ id: 'editor.renameSymbol', title: 'Rename Symbol…', keys: 'F2', when: () => hasDocNow() && editorFocused(), run: () => void renameSymbol() })
+commands.register({ id: 'nav.symbol', title: 'Go to Symbol in File…', keys: 'Ctrl+Shift+O', when: hasDocNow, run: () => void goToSymbol() })
+commands.register({ id: 'view.outline', title: 'Show Outline', run: () => showSidebar('outline') })
+commands.register({ id: 'panel.references', title: 'Show References', run: () => panel.show('references') })
+
 // ---------- settings ----------
 
+/** The settings in effect: yours, with the open project's overrides on top. */
 let settings: Settings = DEFAULT_SETTINGS
+/** Your own settings (settings.json), as shown in the Settings dialog. */
+let userSettings: Settings = DEFAULT_SETTINGS
+/** What the open project's .ideforfun/settings.json overrides. */
+let projectSettings: ProjectSettings = {}
+let projectSettingsPath: string | null = null
 
-function applySettings(s: Settings): void {
+function applySettings(s: Settings, restartLsp = true): void {
   const pythonChanged = s.pythonPath !== settings.pythonPath
   settings = s
-  if (pythonChanged && rootFolder) void startLanguageServer()
+  if (pythonChanged && rootFolder && restartLsp) {
+    void startLanguageServer()
+    refreshPythonEnv()
+  }
   const root = document.documentElement
   root.style.setProperty('--code-size', `${s.fontSize}px`)
   root.style.setProperty('--line-height', `${Math.round(s.fontSize * 1.45)}px`)
@@ -508,17 +847,67 @@ function applySettings(s: Settings): void {
   terminal.applyTheme(s.fontSize)
 }
 
+/** A relative interpreter path in project settings (.venv/bin/python) is relative to the project. */
+function resolveInProject(path: string | undefined): string | undefined {
+  if (!path || !rootFolder || /^([a-zA-Z]:|[\\/]|~)/.test(path) || !/[\\/]/.test(path)) return path
+  const sep = rootFolder.includes('\\') ? '\\' : '/'
+  return rootFolder.replace(/[\\/]+$/, '') + sep + path.replace(/^\.[\\/]/, '')
+}
+
+const SETTING_NAMES: Record<string, string> = { tabSize: 'Tab width', pythonPath: 'Python interpreter', shell: 'Terminal shell' }
+
+/** Recompute the settings in effect after yours or the project's change. */
+function applyEffective(restartLsp = true): void {
+  const project = { ...projectSettings }
+  if (project.pythonPath !== undefined) project.pythonPath = resolveInProject(project.pythonPath) ?? ''
+  applySettings(effectiveSettings(userSettings, project), restartLsp)
+  const keys = Object.keys(projectSettings)
+  settingsView.setProjectNote(
+    keys.length
+      ? `This project's .ideforfun/settings.json sets: ${keys.map((k) => SETTING_NAMES[k] ?? k).join(', ')}. ` +
+        'Those rows show your own setting; the project\'s value is used while it is open.'
+      : rootFolder ? 'A project can set tabSize, pythonPath and shell in .ideforfun/settings.json (Project Settings below).' : null
+  )
+}
+
+/** Change your own settings (and save them). */
+function updateUserSettings(patch: Partial<Settings>): void {
+  userSettings = { ...userSettings, ...patch }
+  settingsView.set(userSettings)
+  applyEffective()
+  void window.api.saveSettings(userSettings)
+}
+
 const settingsView = new SettingsView(settings, (s) => {
-  applySettings(s)
+  userSettings = s
+  applyEffective()
   void window.api.saveSettings(s)
 })
-void window.api.getSettings().then((s) => {
-  applySettings(s)
-  settingsView.set(s)
-})
+
+/** Read <project>/.ideforfun/settings.json (a missing file means no overrides). */
+async function loadProjectSettings(folder: string, restartLsp = true): Promise<void> {
+  let res
+  try {
+    res = await window.api.projectSettings(folder)
+  } catch {
+    return
+  }
+  if (rootFolder !== folder) return
+  projectSettings = res.settings
+  projectSettingsPath = res.path
+  if (res.error) alert(`This project's settings file couldn't be read, so it's ignored for now:\n${res.path}\n\n${res.error}`)
+  applyEffective(restartLsp)
+}
 
 // Keep the editor, tabs, tree highlight and window title in sync with the workspace.
+let lastActiveDoc: Doc | null = null
 workspace.subscribe(() => {
+  if (workspace.active !== lastActiveDoc) {
+    if (workspace.active) welcomeForced = false // a file was opened or picked
+    lastActiveDoc = workspace.active
+  }
+  updateWelcome()
+  refreshOutlineSoon(workspace.active === outlineDoc ? 600 : 50)
   syncGroups()
   workspace.groups.forEach((g, i) => {
     tabBars[i].render()
@@ -526,7 +915,7 @@ workspace.subscribe(() => {
     if (g.active !== ed.currentDoc || !g.active) {
       // Only the active side takes keyboard focus.
       if (g.active) ed.show(g.active, i === workspace.activeGroup)
-      else ed.showPlaceholder(rootFolder ? 'Pick a file from the tree' : 'Open a folder and pick a file')
+      else ed.showPlaceholder(rootFolder ? PLACEHOLDER_FOLDER : PLACEHOLDER_START)
     }
   })
   const doc = workspace.active
@@ -538,6 +927,8 @@ workspace.subscribe(() => {
   findBar.refresh()
   completion.syncDoc()
   python.syncDocs(workspace.docs.filter((d) => !d.large))
+  backups.sync(workspace.docs)
+  saveStateSoon()
   scheduleStatus()
   showDiagnostics()
   const folder = rootFolder?.split(/[\\/]/).pop()
@@ -575,6 +966,11 @@ async function saveActive(): Promise<boolean> {
   try {
     await workspace.save(doc)
     python.didSave(doc)
+    if (shortcuts.path && samePath(doc.path, shortcuts.path)) void shortcuts.load()
+    if (rootFolder && projectSettingsPath && samePath(doc.path, projectSettingsPath)) void loadProjectSettings(rootFolder)
+    if (rootFolder && runFilePath && samePath(doc.path, runFilePath)) void loadRunFile(rootFolder)
+    if (rootFolder && /^(requirements\.txt|pyproject\.toml)$/i.test(doc.name) && samePath(parentDir(doc.path), rootFolder)) refreshPythonEnv()
+    if (isTestFile(doc.name) && panel.activeView === 'tests') void tests.discover()
     void refreshGit()
     // Project search reads files from disk: refresh visible results after saving.
     if (!$('search-panel').hidden) searchView.refresh()
@@ -586,20 +982,183 @@ async function saveActive(): Promise<boolean> {
 }
 
 async function openFolder(): Promise<void> {
-  if (!workspace.closeAll()) return
-  const folder = await window.api.openFolder()
-  if (!folder) {
-    workspace.notifyChanged()
+  const picked = await window.api.openFolder()
+  if (!picked) return // cancelled
+  if (typeof picked !== 'string') {
+    alert(picked.error)
     return
   }
-  rootFolder = folder
-  folderName.textContent = folder
-  folderName.classList.remove('muted')
-  await tree.setRoot(folder)
+  await openFolderPath(picked)
+}
+
+/** Ask for a folder path to type (or paste) instead of using the dialog. */
+function openFolderByPath(): void {
+  palette.prompt('Folder to open, e.g. C:\\Users\\me\\project or ~/project', (text) => {
+    void window.api.checkFolder(text).then((res) => {
+      if (typeof res === 'string') void openFolderPath(res)
+      else alert(res.error)
+    })
+  }, rootFolder ?? '')
+}
+
+/** Open a folder that's known to exist, with the tabs and layout it had last time. */
+async function openFolderPath(folder: string): Promise<void> {
+  saveStateNow() // the project being left
+  restoringState = true
+  try {
+    if (!workspace.closeAll()) return
+    rootFolder = folder
+    folderName.textContent = folder
+    folderName.classList.remove('muted')
+    void window.api.recentAdd(folder).catch(() => {})
+    await loadProjectSettings(folder, false)
+    runConfigName = null
+    lastTask = null
+    tests.reset()
+    await loadRunFile(folder)
+    await tree.setRoot(folder)
+    workspace.notifyChanged()
+    void refreshGit()
+    lspRestarts = 0
+    void startLanguageServer()
+    refreshPythonEnv()
+    await restoreLayout(folder)
+  } finally {
+    restoringState = false
+  }
+  welcome.refresh()
+  await offerRestore(folder)
+}
+
+// ---------- remembering each project's tabs, layout and terminals ----------
+
+let restoringState = false
+let stateTimer: number | undefined
+
+function captureState(): WorkspaceState {
+  return {
+    groups: workspace.groups.map((g, i) => ({
+      tabs: g.docs.map((d) => ({ path: d.path, ...(editors[i]?.viewInfo(d) ?? { line: 0, col: 0, scrollTop: 0 }) })),
+      active: g.active?.path ?? null
+    })),
+    activeGroup: workspace.activeGroup,
+    terminals: terminal.shellIds(),
+    panel: panel.activeView,
+    runConfig: runConfigName
+  }
+}
+
+/** Save the layout a moment after it changes (tabs opened, closed, moved...). */
+function saveStateSoon(): void {
+  if (!rootFolder || restoringState) return
+  window.clearTimeout(stateTimer)
+  stateTimer = window.setTimeout(saveStateNow, 1000)
+}
+
+function saveStateNow(): void {
+  window.clearTimeout(stateTimer)
+  if (!rootFolder || restoringState) return
+  try {
+    window.api.saveWorkspaceState(rootFolder, captureState())
+  } catch { /* not worth bothering the user about */ }
+}
+
+/** Reopen the tabs, split, cursor positions, terminals and panel the project had last time. */
+async function restoreLayout(folder: string): Promise<void> {
+  let state: WorkspaceState | null = null
+  try {
+    state = await window.api.workspaceState(folder)
+  } catch { /* unreadable: start fresh */ }
+  if (!state || rootFolder !== folder) return
+  // Only files inside the project come back (the state could be from a renamed or moved folder).
+  const layout = state.groups.map((g) => ({ paths: g.tabs.map((t) => t.path).filter((p) => isInside(p, folder)), active: g.active }))
+  await workspace.restore(layout, state.activeGroup)
+  // Cursor and scroll position of each tab (preferring the same side it was on).
+  workspace.groups.forEach((g, i) => {
+    for (const doc of g.docs) {
+      const tab = state.groups[i]?.tabs.find((t) => samePath(t.path, doc.path)) ??
+        state.groups.flatMap((sg) => sg.tabs).find((t) => samePath(t.path, doc.path))
+      if (tab) editors[i]?.restoreView(doc, tab)
+    }
+  })
+  if (state.runConfig && runFile.configurations.some((c) => c.name === state.runConfig)) runConfigName = state.runConfig
+  scheduleStatus()
+  terminal.setPending(state.terminals)
+  if (state.panel) panel.show(state.panel)
+}
+
+// ---------- recent folders ----------
+
+/** Open a folder from the recent list; offer to forget it if it's gone. */
+async function openRecentFolder(folder: string): Promise<void> {
+  const res = await window.api.checkFolder(folder)
+  if (typeof res === 'string') return openFolderPath(res)
+  if (confirm(`${res.error}\n\nRemove it from the recent folders?`)) {
+    await window.api.recentRemove(folder)
+    refreshRecentSidebar()
+  }
+}
+
+const folderLabel = (folder: string) => folder.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || folder
+
+function showRecentPicker(): void {
+  void window.api.recentList().then((list) => {
+    palette.choose(list.length ? 'Open a recent folder' : 'No recent folders yet', list.map((folder) => ({
+      label: folderLabel(folder),
+      detail: folder,
+      run: () => void openRecentFolder(folder)
+    })))
+  })
+}
+
+/** With no folder open, the sidebar lists recent folders. */
+function refreshRecentSidebar(): void {
+  welcome.refresh()
+  if (rootFolder) return
+  void window.api.recentList().then((list) => tree.showRecent(list, (f) => void openRecentFolder(f))).catch(() => {})
+}
+
+window.api.onMenuOpenRecent((folder) => void openRecentFolder(folder))
+
+// ---------- crash recovery ----------
+
+/** Keeps a backup of every unsaved file; left-over backups mean the app didn't close properly. */
+const backups = new BackupKeeper(window.api)
+
+/** Offer to bring back unsaved changes to files in `folder` that were lost in a crash. */
+async function offerRestore(folder: string): Promise<void> {
+  let found
+  try {
+    found = (await window.api.backupList()).filter((b) => isInside(b.path, folder))
+  } catch {
+    return
+  }
+  if (!found.length || rootFolder !== folder) return
+  const rel = (p: string) => p.slice(folder.length).replace(/^[\\/]+/, '')
+  const list = found.slice(0, 8).map((b) => `  • ${rel(b.path)}`).join('\n') + (found.length > 8 ? `\n  …and ${found.length - 8} more` : '')
+  const restore = confirm(
+    `IDEforfun didn't close properly last time, and ${found.length} file${found.length > 1 ? 's had' : ' had'} unsaved changes:\n\n${list}\n\n` +
+    'Restore those changes? (They open as unsaved; Ctrl+Z goes back to the file on disk.) Cancel throws them away.'
+  )
+  if (!restore) {
+    for (const b of found) void window.api.backupRemove(b.path)
+    return
+  }
+  for (const b of found) {
+    const doc = await openFile(b.path)
+    if (!doc) continue // deleted or unreadable: the alert said so
+    // One undoable step from the file on disk to the backed-up text.
+    if (doc.buffer.getLines().join('\n') !== b.text) {
+      doc.history.transact('other', { line: 0, col: 0 }, () => {
+        doc.buffer.delete({ line: 0, col: 0 }, doc.buffer.clamp({ line: Infinity, col: Infinity }))
+        return doc.buffer.insert({ line: 0, col: 0 }, b.text)
+      })
+    }
+    doc.eol = b.eol
+    doc.encoding = b.encoding
+    python.docChanged(doc)
+  }
   workspace.notifyChanged()
-  void refreshGit()
-  lspRestarts = 0
-  void startLanguageServer()
 }
 
 // ---------- commands ----------
@@ -607,6 +1166,40 @@ async function openFolder(): Promise<void> {
 const hasDoc = () => workspace.active !== null
 
 commands.register({ id: 'file.openFolder', title: 'Open Folder…', keys: 'Ctrl+O', run: openFolder })
+commands.register({ id: 'editor.toggleComment', title: 'Toggle Comment', when: hasDoc, run: () => editor.toggleComment() })
+
+// Menu bar: commands by id, and Edit actions for the editor or whatever text box has focus.
+window.api.onMenuCommand((id) => commands.run(id))
+window.api.onMenuEdit((action) => {
+  const ed = editors.find((e) => e.hasFocus)
+  if (!ed || action === 'paste') return window.api.nativeEdit(action) // paste arrives in the editor as a normal paste
+  ed[action]()
+})
+commands.register({ id: 'file.openFolderByPath', title: 'Open Folder by Path…', run: openFolderByPath })
+commands.register({ id: 'file.openRecent', title: 'Open Recent Folder…', keys: 'Ctrl+R', run: showRecentPicker })
+commands.register({
+  id: 'file.clearRecent', title: 'Clear Recent Folders',
+  run: async () => {
+    await window.api.recentClear()
+    refreshRecentSidebar()
+  }
+})
+
+// Drop a folder (or a file) onto the window to open it.
+window.addEventListener('dragover', (e) => {
+  if (e.dataTransfer?.types.includes('Files')) e.preventDefault()
+})
+window.addEventListener('drop', (e) => {
+  const file = e.dataTransfer?.files[0]
+  if (!file) return
+  e.preventDefault()
+  const path = window.api.pathForFile(file)
+  if (!path) return
+  void window.api.checkFolder(path).then((res) => {
+    if (typeof res === 'string') void openFolderPath(res)
+    else void openFile(path) // not a folder: open it as a file
+  })
+})
 commands.register({ id: 'file.save', title: 'Save', keys: 'Ctrl+S', when: hasDoc, run: () => void saveActive() })
 const hasFolder = () => rootFolder !== null
 /** New items go next to the open file, or wherever is selected in the tree. */
@@ -614,8 +1207,30 @@ const newItem = (isDirectory: boolean) => {
   showSidebar('files')
   void tree.startCreate(isDirectory)
 }
-commands.register({ id: 'file.new', title: 'New File…', keys: 'Ctrl+N', when: hasFolder, run: () => newItem(false) })
-commands.register({ id: 'file.newFolder', title: 'New Folder…', when: hasFolder, run: () => newItem(true) })
+/** New File with no folder open: choose where to save it, then open it. */
+async function newFileAnywhere(): Promise<void> {
+  const res = await window.api.newFileDialog()
+  if (!res) return
+  if (typeof res !== 'string') return alert(res.error)
+  await openFile(res)
+}
+
+/** New Folder with no folder open: make a project folder somewhere and open it. */
+async function newProjectFolder(): Promise<void> {
+  const parent = await window.api.pickParentFolder()
+  if (!parent) return
+  if (typeof parent !== 'string') return alert(parent.error)
+  palette.prompt(`Name of the new folder (inside ${parent})`, (name) => {
+    void window.api.createEntry(parent, name, true).then(
+      (path) => openFolderPath(path),
+      (err) => alert(err instanceof Error ? err.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(err))
+    )
+  }, '', 'Create')
+}
+
+commands.register({ id: 'file.new', title: 'New File…', keys: 'Ctrl+N', run: () => (hasFolder() ? newItem(false) : void newFileAnywhere()) })
+commands.register({ id: 'file.newFolder', title: 'New Folder…', run: () => (hasFolder() ? newItem(true) : void newProjectFolder()) })
+commands.register({ id: 'help.welcome', title: 'Welcome', run: () => (welcome.isVisible && welcomeForced ? closeWelcomePage() : showWelcomePage()) })
 commands.register({
   id: 'file.rename', title: 'Rename Current File…', when: hasDoc,
   run: () => {
@@ -631,8 +1246,8 @@ commands.register({
   id: 'tab.close', title: 'Close Tab', keys: 'Ctrl+W', when: hasDoc,
   run: () => { if (workspace.active) workspace.close(workspace.active) }
 })
-commands.register({ id: 'tab.next', title: 'Next Tab', keys: 'Ctrl+Tab', when: hasDoc, run: () => workspace.next(1) })
-commands.register({ id: 'tab.prev', title: 'Previous Tab', keys: 'Ctrl+Shift+Tab', when: hasDoc, run: () => workspace.next(-1) })
+commands.register({ id: 'tab.next', title: 'Next Tab', keys: ['Ctrl+Tab', 'Ctrl+PageDown'], when: hasDoc, run: () => workspace.next(1) })
+commands.register({ id: 'tab.prev', title: 'Previous Tab', keys: ['Ctrl+Shift+Tab', 'Ctrl+PageUp'], when: hasDoc, run: () => workspace.next(-1) })
 
 commands.register({ id: 'find.open', title: 'Find', keys: 'Ctrl+F', when: hasDoc, run: () => findBar.open(false) })
 commands.register({ id: 'find.replace', title: 'Find and Replace', keys: 'Ctrl+H', when: hasDoc, run: () => findBar.open(true) })
@@ -643,23 +1258,126 @@ commands.register({ id: 'find.close', title: 'Close Find', keys: 'Escape', when:
 const parentDir = (path: string) => path.replace(/[\\/][^\\/]*$/, '')
 let lastRunId = 0
 
+/** Run the selected run configuration, or the open file (Ctrl+F5). */
 async function runCurrentFile(): Promise<void> {
-  const doc = workspace.active
-  if (!doc) return
   panel.show('output')
-  output.begin(doc.path)
-  if (!doc.path.toLowerCase().endsWith('.py')) {
-    output.error('Run works with Python files (.py) for now.')
+  const spec = launchSpec()
+  if ('error' in spec) {
+    output.clear()
+    output.error(spec.error)
+    return
+  }
+  output.begin(describeLaunch(spec))
+  if (spec.program && !spec.program.toLowerCase().endsWith('.py')) {
+    output.error('Run works with Python files (.py). To run something else, add a task (Run Task… → Configure).')
     return
   }
   // Auto-save before running, so Python sees what's in the editor.
-  if (doc.dirty && !(await saveActive())) {
-    output.error('Run cancelled: the file could not be saved.')
-    return
-  }
-  await window.api.runPython(doc.path, rootFolder ?? parentDir(doc.path), settings.pythonPath || undefined)
+  if (!(await saveAllDirty((m) => output.error(`Run cancelled: ${m}`)))) return
+  await window.api.runPython({ ...spec, root: rootFolder ?? spec.cwd, python: settings.pythonPath || undefined })
   editor.focus()
 }
+
+// ---------- run configurations and tasks (.ideforfun/run.json) ----------
+
+let runFile: RunFile = { configurations: [], tasks: [] }
+let runFilePath: string | null = null
+/** The configuration Run and Debug use; null = the open file. */
+let runConfigName: string | null = null
+let lastTask: Task | null = null
+
+const selectedConfig = () => runFile.configurations.find((c) => c.name === runConfigName) ?? null
+
+/** What Run / Debug start: the selected configuration, or the open file. */
+function launchSpec(): LaunchSpec | { error: string } {
+  const file = workspace.active?.path ?? null
+  const cfg = selectedConfig()
+  if (cfg && rootFolder) return resolveConfiguration(cfg, { project: rootFolder, file })
+  if (!file) return { error: rootFolder ? 'Open a Python file first (pick one in the tree, or Ctrl+P), or pick a run configuration.' : 'Open a folder (Ctrl+O) and a Python file first.' }
+  return { program: file, module: null, args: [], env: {}, cwd: rootFolder ?? parentDir(file) }
+}
+
+/** "app.py --port 8000" or "-m flask run", for the Output / Debug headers. */
+function describeLaunch(spec: LaunchSpec): string {
+  const quote = (a: string) => (/[\s"]/.test(a) || a === '' ? JSON.stringify(a) : a)
+  const what = spec.program ?? `-m ${spec.module}`
+  const cfg = selectedConfig()
+  return [cfg ? `[${cfg.name}]` : '', what, ...spec.args.map(quote)].filter(Boolean).join(' ')
+}
+
+/** Can Run / Debug start something right now? */
+const canLaunch = () => hasDoc() || selectedConfig() !== null
+
+async function loadRunFile(folder: string): Promise<void> {
+  try {
+    const res = await window.api.readProjectFile(folder, RUN_FILE)
+    if (rootFolder !== folder) return
+    runFile = normalizeRunFile(res.value)
+    runFilePath = res.path
+    if (res.error) alert(`The project's run configurations couldn't be read, so none are used for now:\n${res.path}\n\n${res.error}`)
+  } catch {
+    runFile = { configurations: [], tasks: [] }
+  }
+  if (runConfigName && !selectedConfig()) runConfigName = null
+  scheduleStatus()
+}
+
+/** Open run.json, creating it with examples first if needed. */
+async function editRunFile(): Promise<void> {
+  if (!rootFolder) return
+  const folder = rootFolder
+  try {
+    const files = await window.api.listFiles(folder).catch(() => [])
+    const hasRequirements = files.some((f) => f.rel === 'requirements.txt')
+    const path = await window.api.ensureProjectFile(folder, RUN_FILE, starterRunFile(hasRequirements))
+    await tree.refreshAll()
+    await openFile(path)
+    await loadRunFile(folder)
+  } catch (err) {
+    alert(`Couldn't create the run configurations file: ${String(err)}`)
+  }
+}
+
+function pickRunConfig(): void {
+  const items = [
+    { label: 'Current file', detail: 'run whichever Python file is open', hint: runConfigName === null ? '✓' : undefined, run: () => setRunConfig(null) },
+    ...runFile.configurations.map((c) => ({
+      label: c.name,
+      detail: [c.module ? `-m ${c.module}` : c.file ?? '${file}', ...c.args].join(' '),
+      hint: c.name === runConfigName ? '✓' : undefined,
+      run: () => setRunConfig(c.name)
+    })),
+    { label: runFile.configurations.length ? 'Edit run configurations…' : 'Add a run configuration…', detail: '.ideforfun/run.json', run: () => void editRunFile() }
+  ]
+  palette.choose('Run configuration for F5 / Ctrl+F5', items)
+}
+
+function setRunConfig(name: string | null): void {
+  runConfigName = name
+  scheduleStatus()
+  saveStateSoon()
+}
+
+function runTask(task: Task): void {
+  if (!rootFolder) return
+  const res = resolveTask(task, { project: rootFolder, file: workspace.active?.path ?? null })
+  if ('error' in res) return alert(res.error)
+  lastTask = task
+  panel.show('terminal')
+  void terminal.runCommand(task.name, res.command, res.cwd)
+}
+
+function pickTask(): void {
+  const items = [
+    ...runFile.tasks.map((t) => ({ label: t.name, detail: t.command, run: () => runTask(t) })),
+    { label: runFile.tasks.length ? 'Edit tasks…' : 'Add a task…', detail: '.ideforfun/run.json', run: () => void editRunFile() }
+  ]
+  palette.choose(runFile.tasks.length ? 'Run a task (in a new terminal)' : 'No tasks yet: add some to .ideforfun/run.json', items)
+}
+
+/** What to do when a tool run (pip, venv) ends, by run id. */
+const afterRun = new Map<number, (code: number | null) => void>()
+let lastExit: { runId: number; code: number | null } | null = null
 
 window.api.onRunEvent((e) => {
   if (e.runId < lastRunId) return // late event from a run we already replaced
@@ -667,12 +1385,30 @@ window.api.onRunEvent((e) => {
   if (e.type === 'start') output.started(e.python)
   else if (e.type === 'output') output.append(e.stream, e.text)
   else if (e.type === 'error') output.error(e.message)
-  else if (e.type === 'exit') output.finished(e.code, e.ms, e.signal)
+  else if (e.type === 'exit') {
+    output.finished(e.code, e.ms, e.signal)
+    lastExit = { runId: e.runId, code: e.code }
+    const after = afterRun.get(e.runId)
+    afterRun.delete(e.runId)
+    after?.(e.code)
+  }
 })
+
+/** Run python -m pip / venv in the Output panel (in the project folder). */
+async function runTool(title: string, tool: PythonTool, after?: (code: number | null) => void): Promise<void> {
+  if (!rootFolder) return
+  panel.show('output')
+  output.begin(title)
+  const id = await window.api.runPython({ root: rootFolder, program: null, module: tool.module, args: tool.args, env: {}, cwd: rootFolder, python: tool.python })
+  if (!after) return
+  // A run that fails to start may have ended before we got its id.
+  if (lastExit?.runId === id) after(lastExit.code)
+  else afterRun.set(id, after)
+}
 
 commands.register({
   id: 'run.smart', title: 'Run (or Debug if there are breakpoints) / Continue', keys: 'F5',
-  when: () => hasDoc() || debugPaused(),
+  when: () => canLaunch() || debugPaused(),
   run: () => {
     if (debugPaused()) return void session!.continue()
     if (debugging()) return // starting or running: nothing to do
@@ -680,12 +1416,23 @@ commands.register({
     void runCurrentFile()
   }
 })
-commands.register({ id: 'run.file', title: 'Run Python File (without debugging)', keys: 'Ctrl+F5', when: hasDoc, run: runCurrentFile })
+commands.register({ id: 'run.file', title: 'Run Python File (without debugging)', keys: 'Ctrl+F5', when: canLaunch, run: runCurrentFile })
+commands.register({ id: 'run.selectConfig', title: 'Select Run Configuration…', when: () => rootFolder !== null, run: pickRunConfig })
+commands.register({ id: 'run.editConfigs', title: 'Edit Run Configurations and Tasks (run.json)', when: () => rootFolder !== null, run: () => void editRunFile() })
+commands.register({ id: 'tasks.run', title: 'Run Task…', keys: 'Ctrl+Shift+B', when: () => rootFolder !== null, run: pickTask })
+commands.register({ id: 'tasks.rerun', title: 'Run Last Task Again', when: () => lastTask !== null && rootFolder !== null, run: () => runTask(lastTask!) })
 commands.register({
   id: 'run.stop', title: 'Stop Running / Debugging', keys: 'Shift+F5',
-  run: () => (debugging() ? void stopDebugging() : void window.api.stopRun())
+  run: () => {
+    if (debugging()) void stopDebugging()
+    else if (output.isRunning) void window.api.stopRun()
+    else {
+      panel.show('output')
+      output.error('Nothing is running.')
+    }
+  }
 })
-commands.register({ id: 'debug.start', title: 'Start Debugging', when: () => hasDoc() && !debugging(), run: () => void startDebugging() })
+commands.register({ id: 'debug.start', title: 'Start Debugging', when: () => canLaunch() && !debugging(), run: () => void startDebugging() })
 commands.register({ id: 'debug.restart', title: 'Restart Debugging', keys: 'Ctrl+Shift+F5', when: debugging, run: () => void restartDebugging() })
 commands.register({ id: 'debug.stepOver', title: 'Step Over', keys: 'F10', when: debugPaused, run: () => void session!.stepOver() })
 commands.register({ id: 'debug.stepInto', title: 'Step Into', keys: 'F11', when: debugPaused, run: () => void session!.stepInto() })
@@ -723,7 +1470,7 @@ commands.register({ id: 'editor.unfoldAll', title: 'Unfold All', when: hasDoc, r
 commands.register({ id: 'panel.debug', title: 'Show Debug Panel', run: () => panel.show('debug') })
 commands.register({ id: 'panel.toggle', title: 'Toggle Bottom Panel', keys: 'Ctrl+J', run: () => panel.toggle() })
 commands.register({ id: 'panel.output', title: 'Show Output', run: () => panel.show('output') })
-commands.register({ id: 'nav.definition', title: 'Go to Definition', keys: 'F12', when: hasDoc, run: () => void goToDefinition() })
+commands.register({ id: 'nav.definition', title: 'Go to Definition', keys: 'F12', when: hasDoc, run: () => void goToDefinition(cursorOnWord()) })
 commands.register({ id: 'nav.back', title: 'Go Back', keys: 'Alt+ArrowLeft', run: () => void goBack() })
 commands.register({ id: 'panel.problems', title: 'Show Problems', keys: 'Ctrl+Shift+M', run: () => panel.show('problems') })
 commands.register({ id: 'python.restartServer', title: 'Restart Python Language Server', when: () => rootFolder !== null, run: () => { lspRestarts = 0; void startLanguageServer() } })
@@ -740,15 +1487,29 @@ commands.register({
 commands.register({ id: 'settings.open', title: 'Open Settings', keys: 'Ctrl+,', run: () => settingsView.isOpen ? settingsView.close() : settingsView.open() })
 commands.register({
   id: 'view.zoomIn', title: 'Increase Font Size', keys: 'Ctrl+=',
-  run: () => { const s = { ...settings, fontSize: Math.min(28, settings.fontSize + 1) }; applySettings(s); settingsView.set(s); void window.api.saveSettings(s) }
+  run: () => updateUserSettings({ fontSize: Math.min(28, userSettings.fontSize + 1) })
 })
 commands.register({
   id: 'view.zoomOut', title: 'Decrease Font Size', keys: 'Ctrl+-',
-  run: () => { const s = { ...settings, fontSize: Math.max(10, settings.fontSize - 1) }; applySettings(s); settingsView.set(s); void window.api.saveSettings(s) }
+  run: () => updateUserSettings({ fontSize: Math.max(10, userSettings.fontSize - 1) })
 })
 commands.register({
   id: 'view.toggleTheme', title: 'Toggle Light/Dark Theme',
-  run: () => { const s: Settings = { ...settings, theme: settings.theme === 'dark' ? 'light' : 'dark' }; applySettings(s); settingsView.set(s); void window.api.saveSettings(s) }
+  run: () => updateUserSettings({ theme: userSettings.theme === 'dark' ? 'light' : 'dark' })
+})
+commands.register({
+  id: 'settings.project', title: 'Open Project Settings', when: () => rootFolder !== null,
+  run: async () => {
+    const folder = rootFolder!
+    try {
+      const path = await window.api.ensureProjectSettings(folder, {})
+      await tree.refreshAll()
+      await openFile(path)
+      await loadProjectSettings(folder)
+    } catch (err) {
+      alert(`Couldn't create the project settings file: ${String(err)}`)
+    }
+  }
 })
 
 // ---------- git status in the file tree ----------
@@ -780,16 +1541,18 @@ const searchView = new SearchView(
 )
 $('search-panel').append(searchView.root)
 
-function showSidebar(view: 'files' | 'search'): void {
+function showSidebar(view: 'files' | 'search' | 'outline'): void {
   $('file-tree').hidden = view !== 'files'
   $('search-panel').hidden = view !== 'search'
+  $('outline-panel').hidden = view !== 'outline'
   for (const b of document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs button')) {
     b.setAttribute('aria-selected', String(b.dataset.view === view))
   }
+  if (view === 'outline') void refreshOutline()
 }
 for (const b of document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs button')) {
   b.addEventListener('click', () => {
-    showSidebar(b.dataset.view as 'files' | 'search')
+    showSidebar(b.dataset.view as 'files' | 'search' | 'outline')
     if (b.dataset.view === 'search') searchView.focus()
   })
 }
@@ -811,6 +1574,93 @@ const palette = new Palette({
   goToLine: (line) => editor.goTo(line),
   lineCount: () => workspace.active?.buffer.lineCount ?? null
 })
+
+// ---------- Python environment and packages ----------
+
+const pyEnv = new PythonEnv({
+  palette,
+  root: () => rootFolder,
+  configuredPython: () => settings.pythonPath || undefined,
+  setProjectPython: async (path) => {
+    if (!rootFolder) return
+    const folder = rootFolder
+    await window.api.updateProjectSettings(folder, { pythonPath: path })
+    await loadProjectSettings(folder)
+    void tree.refreshAll()
+  },
+  runTool,
+  writeFile: async (path, text) => {
+    const open = workspace.find(path)
+    if (open?.dirty) {
+      alert(`${open.name} has unsaved changes. Save or close it first.`)
+      return false
+    }
+    try {
+      await window.api.writeTextFile(path, text, open?.encoding ?? 'utf8')
+      if (open) workspace.discard([open]) // reopened fresh below
+      void tree.refreshAll()
+      return true
+    } catch (err) {
+      alert(`Couldn't write ${path}:\n${String(err)}`)
+      return false
+    }
+  },
+  openFile: (path) => void openFile(path),
+  changed: scheduleStatus,
+  report: (message) => alert(message)
+})
+
+let envTimer: number | undefined
+/** Re-check the interpreter and dependencies shortly (several triggers in a row check once). */
+function refreshPythonEnv(): void {
+  window.clearTimeout(envTimer)
+  envTimer = window.setTimeout(() => void pyEnv.refresh(), 300)
+}
+
+commands.register({ id: 'python.selectInterpreter', title: 'Select Python Interpreter…', when: () => rootFolder !== null, run: () => void pyEnv.pickInterpreter() })
+commands.register({ id: 'python.createVenv', title: 'Create Virtual Environment (.venv)…', when: () => rootFolder !== null, run: () => void pyEnv.createVenv() })
+commands.register({ id: 'python.packages', title: 'Python Packages…', when: () => rootFolder !== null, run: () => void pyEnv.showPackages() })
+commands.register({ id: 'python.installRequirements', title: 'Install Requirements (requirements.txt)', when: () => rootFolder !== null, run: () => pyEnv.installRequirements() })
+commands.register({ id: 'python.checkDeps', title: 'Check Dependencies', when: () => rootFolder !== null, run: () => void pyEnv.refresh().then(() => pyEnv.missing.length ? pyEnv.showMissing() : alert('Every package in requirements.txt / pyproject.toml is installed.')) })
+
+// ---------- tests (pytest / unittest) ----------
+
+const tests = new TestView({
+  root: () => rootFolder,
+  python: async () => {
+    if (!pyEnv.current) await pyEnv.refresh()
+    return pyEnv.current?.path ?? null
+  },
+  open: (path, line) => void openFile(path, line),
+  saveAll: () => saveAllDirty((m) => alert(`Couldn't save before testing: ${m}`)),
+  installPytest: () => pyEnv.install('pytest'),
+  changed: (failed) => panel.setTitle('tests', failed ? `Tests (${failed} ✗)` : 'Tests')
+})
+panel.addView('tests', 'Tests', tests.body, tests.actions, () => tests.show())
+
+const showTests = () => panel.show('tests')
+commands.register({ id: 'tests.show', title: 'Show Tests', when: () => rootFolder !== null, run: showTests })
+commands.register({ id: 'tests.runAll', title: 'Run All Tests', when: () => rootFolder !== null && !tests.isRunning, run: () => { showTests(); void tests.run('all') } })
+commands.register({ id: 'tests.runFailed', title: 'Run Failed Tests Again', when: () => rootFolder !== null && !tests.isRunning, run: () => { showTests(); void tests.run('failed') } })
+commands.register({
+  id: 'tests.runFile', title: 'Run Tests in This File', when: () => hasDoc() && !tests.isRunning,
+  run: () => { showTests(); void tests.runFile(workspace.active!.path) }
+})
+commands.register({
+  id: 'tests.runAtCursor', title: 'Run Test at Cursor', when: () => hasDoc() && !tests.isRunning,
+  run: () => { showTests(); void tests.runAt(workspace.active!.path, editor.getCursor().line) }
+})
+commands.register({ id: 'tests.stop', title: 'Stop Tests', when: () => tests.isRunning, run: () => void window.api.stopTests() })
+
+// ---------- keyboard shortcuts you can change ----------
+
+const shortcuts = new Shortcuts(commands, palette, (message) => alert(message))
+commands.register({ id: 'keys.show', title: 'Keyboard Shortcuts…', run: () => shortcuts.showList() })
+commands.register({ id: 'keys.openFile', title: 'Edit Keyboard Shortcuts File (keybindings.json)', run: () => void shortcuts.openFile((p) => void openFile(p)) })
+settingsView.setLinks([
+  { label: 'Keyboard Shortcuts…', run: () => shortcuts.showList() },
+  { label: 'Project Settings…', run: () => commands.run('settings.project') }
+])
 // ---------- status bar ----------
 
 let statusFrame = 0
@@ -859,7 +1709,12 @@ function updateStatus(): void {
       problemsEl.append(e, w)
     }
   }
+  if (!$('outline-panel').hidden) outline.highlight(doc ? editor.getCursor() : null)
   set('sb-debug', session?.state === 'paused' ? '🐞 Paused' : session?.active ? '🐞 Debugging' : '')
+  set('sb-run', rootFolder ? `▶ ${runConfigName ?? 'Current file'}` : '')
+  set('sb-python', pyEnv.statusText)
+  set('sb-deps', pyEnv.missingText)
+  $('sb-python').title = pyEnv.current ? `${pyEnv.current.path}\nClick to pick another interpreter or create a .venv` : 'Click to pick a Python interpreter'
 }
 
 function changeLineEndings(): void {
@@ -916,9 +1771,28 @@ $('sb-encoding').addEventListener('click', () => {
 $('sb-cursor').addEventListener('click', () => void palette.open(':'))
 $('sb-indent').addEventListener('click', () => commands.run('settings.open'))
 $('sb-problems').addEventListener('click', () => panel.show('problems'))
+$('sb-run').addEventListener('click', () => commands.run('run.selectConfig'))
+$('sb-python').addEventListener('click', () => commands.run('python.selectInterpreter'))
+$('sb-deps').addEventListener('click', () => pyEnv.showMissing())
 python.onDiagnostics(scheduleStatus)
 updateStatus()
 
+commands.register({
+  id: 'terminal.new', title: 'New Terminal', keys: 'Ctrl+Shift+`',
+  run: () => {
+    panel.show('terminal')
+    void terminal.newTerminal()
+  }
+})
+commands.register({
+  id: 'terminal.newWithShell', title: 'New Terminal with Shell…',
+  run: () => {
+    panel.show('terminal')
+    void terminal.newTerminalWithShell()
+  }
+})
+commands.register({ id: 'terminal.kill', title: 'Kill Terminal', when: () => panel.activeView === 'terminal', run: () => terminal.killActive() })
+commands.register({ id: 'terminal.next', title: 'Next Terminal', when: () => panel.activeView === 'terminal', run: () => terminal.next() })
 commands.register({ id: 'palette.commands', title: 'Show All Commands', keys: 'Ctrl+Shift+P', run: () => void palette.open('>') })
 commands.register({ id: 'palette.files', title: 'Go to File…', keys: 'Ctrl+P', when: () => rootFolder !== null, run: () => void palette.open('') })
 commands.register({ id: 'palette.line', title: 'Go to Line…', keys: 'Ctrl+G', when: hasDoc, run: () => void palette.open(':') })
@@ -930,28 +1804,59 @@ $('stop-run').addEventListener('click', () => void window.api.stopRun())
 $('open-folder').addEventListener('click', () => void openFolder())
 
 // While typing in the terminal, keys belong to the shell (Ctrl+C, Ctrl+W, Ctrl+F...).
-// Only these IDE shortcuts still work there.
-const TERMINAL_PASSTHROUGH = new Set(['Ctrl+`', 'Ctrl+J', 'Ctrl+Shift+P', 'Ctrl+Tab', 'Ctrl+Shift+Tab', 'F5', 'Shift+F5', 'Ctrl+,', 'Ctrl+F5', 'Ctrl+Shift+F5', 'F9', 'F10', 'F11', 'Shift+F11'])
+// Only these IDE commands' shortcuts still work there (whatever keys they're set to).
+const TERMINAL_PASSTHROUGH = new Set([
+  'terminal.new', 'terminal.toggle', 'panel.toggle', 'palette.commands', 'tab.next', 'tab.prev',
+  'run.smart', 'run.stop', 'run.file', 'settings.open', 'debug.restart',
+  'debug.toggleBreakpoint', 'debug.stepOver', 'debug.stepInto', 'debug.stepOut'
+])
+const PALETTE_TOGGLES = new Set(['palette.commands', 'palette.files', 'palette.line'])
 
 // Global shortcuts. Capture phase, so they win over the editor's own key handling.
 window.addEventListener('keydown', (e) => {
-  const key = keyString(e)
-  if (terminal.hasFocus && !TERMINAL_PASSTHROUGH.has(key)) return
+  if (palette.capturing) return // the palette is recording a new shortcut
+  const command = commands.commandForKey(keyString(e))
+  if (!command) return
+  if (terminal.hasFocus && !TERMINAL_PASSTHROUGH.has(command.id)) return
   // Dialogs handle their own keys (Escape, arrows...); only their toggles pass through.
-  if (settingsView.isOpen && key !== 'Ctrl+,') return
-  if (palette.isOpen && !['Ctrl+Shift+P', 'Ctrl+P', 'Ctrl+G'].includes(key)) return
-  if (commands.handleKey(e)) {
-    e.preventDefault()
-    e.stopPropagation()
-  }
+  if (settingsView.isOpen && command.id !== 'settings.open') return
+  if (palette.isOpen && !PALETTE_TOGGLES.has(command.id)) return
+  e.preventDefault()
+  e.stopPropagation()
+  void command.run()
 }, { capture: true })
 
 // Block closing the window with unsaved changes; the main process then asks the user.
 window.addEventListener('beforeunload', (e) => {
+  saveStateNow()
   if (workspace.anyDirty) {
     e.preventDefault()
     e.returnValue = ''
   }
+})
+
+// ---------- startup ----------
+
+// Every command is registered by now, so the menu can show all their shortcuts.
+void shortcuts.load()
+
+void window.api.getSettings().then(async (s) => {
+  userSettings = s
+  settingsView.set(s)
+  applyEffective()
+  updateWelcome()
+  // Reopen the last project (with its tabs), unless that's turned off or it's gone.
+  if (s.reopenLastProject && !rootFolder) {
+    try {
+      const [last] = await window.api.recentList()
+      const res = last ? await window.api.checkFolder(last) : null
+      if (typeof res === 'string' && !rootFolder) {
+        await openFolderPath(res)
+        return
+      }
+    } catch { /* fall through to the recent list */ }
+  }
+  refreshRecentSidebar()
 })
 
 export { workspace, editor, saveActive }

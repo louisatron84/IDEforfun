@@ -47,7 +47,7 @@ describe('tokenizeLine', () => {
 
   it('handles string prefixes and escaped quotes', () => {
     expect(toks(`f"hi {name}" + rb'\\d' + "say \\"hi\\""`)).toEqual([
-      ['f"hi {name}"', 'string'], [`rb'\\d'`, 'string'], ['"say \\"hi\\""', 'string']
+      ['f"hi {', 'string'], ['}"', 'string'], [`rb'\\d'`, 'string'], ['"say \\"hi\\""', 'string']
     ])
   })
 
@@ -89,5 +89,21 @@ describe('multi-line (triple-quoted) strings', () => {
 
   it('handles escaped quotes inside a triple-quoted string', () => {
     expect(tokenizeLine('a \\""" b', '"""').endState).toBe('"""')
+  })
+})
+
+describe('f-strings', () => {
+  const parts = (line: string) => tokenizeLine(line, '').tokens.map((t) => [line.slice(t.start, t.end), t.type])
+  it('highlights {expressions} as code', () => {
+    expect(parts('s = f"hi {name}!"')).toEqual([['f"hi {', 'string'], ['}!"', 'string']])
+    expect(parts('f"{len(items)} items"')).toEqual([['f"{', 'string'], ['len', 'builtin'], ['} items"', 'string']])
+    expect(parts("f'{x:.2f} {self.y}'")).toEqual([["f'{", 'string'], ['.2', 'number'], ['} {', 'string'], ['self', 'self'], ["}'", 'string']])
+  })
+  it('{{ and }} are plain text, and normal strings are untouched', () => {
+    expect(parts('f"{{literal}}"')).toEqual([['f"{{literal}}"', 'string']])
+    expect(parts('"{not code}"')).toEqual([['"{not code}"', 'string']])
+  })
+  it('strings inside the expression', () => {
+    expect(parts(`f"{d['k']}"`)).toEqual([['f"{', 'string'], ["'k'", 'string'], ['}"', 'string']])
   })
 })

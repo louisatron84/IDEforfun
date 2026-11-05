@@ -205,3 +205,47 @@ describe('Workspace: split into two groups', () => {
     expect(ws.docs.map((d) => d.name)).toEqual(['c.py'])
   })
 })
+
+describe('Workspace: opening several files quickly', () => {
+  it('keeps the tabs in the order they were opened, however long each read takes', async () => {
+    const delays: Record<string, number> = { '/p/a.py': 30, '/p/b.py': 0, '/p/c.py': 10 }
+    const ws = new Workspace({
+      readTextFile: (p) => new Promise((resolve) => setTimeout(() => resolve({ kind: 'text', text: p, encoding: 'utf8', size: 1 }), delays[p])),
+      writeTextFile: async () => {}
+    }, () => true)
+    await Promise.all(['/p/a.py', '/p/b.py', '/p/c.py'].map((p) => ws.open(p)))
+    expect(ws.docs.map((d) => d.name)).toEqual(['a.py', 'b.py', 'c.py'])
+    expect(ws.active?.name).toBe('c.py')
+  })
+  it('a failed open does not block the next one', async () => {
+    const { ws } = setup({ '/p/a.py': 'a' })
+    await expect(ws.open('/p/missing.py')).rejects.toThrow()
+    expect((await ws.open('/p/a.py')).name).toBe('a.py')
+  })
+})
+
+describe('Workspace: restoring a saved layout', () => {
+  it('reopens tabs per side, with the right active tab and focused side', async () => {
+    const { ws } = setup({ '/a.py': 'a', '/b.py': 'b', '/c.py': 'c' })
+    const res = await ws.restore([
+      { paths: ['/a.py', '/b.py'], active: '/b.py' },
+      { paths: ['/b.py', '/c.py'], active: '/c.py' }
+    ], 1)
+    expect(ws.groups.map((g) => g.docs.map((d) => d.path))).toEqual([['/a.py', '/b.py'], ['/b.py', '/c.py']])
+    expect(ws.groups[0].active?.path).toBe('/b.py')
+    expect(ws.active?.path).toBe('/c.py')
+    // A file open on both sides is one document.
+    expect(ws.groups[0].docs[1]).toBe(ws.groups[1].docs[0])
+    expect(res.skipped).toEqual([])
+  })
+  it('skips files that are gone, and a side left empty', async () => {
+    const { ws } = setup({ '/a.py': 'a' })
+    const res = await ws.restore([
+      { paths: ['/gone.py'], active: '/gone.py' },
+      { paths: ['/a.py', '/also-gone.py'], active: '/also-gone.py' }
+    ], 1)
+    expect(res.skipped).toEqual(['/gone.py', '/also-gone.py'])
+    expect(ws.groups).toHaveLength(1)
+    expect(ws.active?.path).toBe('/a.py')
+  })
+})
