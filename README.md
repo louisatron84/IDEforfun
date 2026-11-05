@@ -50,7 +50,7 @@ your terminal has `ELECTRON_RUN_AS_NODE` set. Clear it first: `$env:ELECTRON_RUN
 | Ctrl+D / Ctrl+Shift+L | Select the next match too / select every match (multi-cursor) |
 | Escape | Back to one cursor |
 | Ctrl+/ | Comment / uncomment the selected lines |
-| Ctrl+Shift+\ | Jump to the matching bracket |
+| Ctrl+Shift+\\ | Jump to the matching bracket |
 
 ## Layout
 - `src/main/`: Electron main process: file system, running Python (`python.ts`), terminals (`terminals.ts`), settings
