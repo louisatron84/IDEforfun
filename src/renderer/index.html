@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+    />
+    <title>IDEforfun</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header id="toolbar">
+      <button id="open-folder">Open Folder</button>
+      <span id="folder-name" class="muted">No folder open</span>
+    </header>
+    <div id="workspace">
+      <aside id="sidebar"></aside>
+      <main id="editor-pane">
+        <div id="file-title" class="muted"></div>
+        <div id="editor"></div>
+      </main>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
