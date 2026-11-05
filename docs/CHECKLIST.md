@@ -23,7 +23,7 @@ to real source code or runtime behaviour.
 - [x] Bracket matching and automatic bracket completion (v0.19: highlight the pair, Ctrl+Shift+\ to jump, Enter between brackets, Backspace deletes empty pairs, wrap a selection)
 - [x] Automatic quote completion (v0.19: skips apostrophes, understands f""/r"" prefixes and """docstrings""")
 - [x] Comment/uncomment selection (v0.19: Ctrl+/)
-- [ ] Code folding (functions, classes and blocks)
+- [x] Code folding (functions, classes and blocks) (v0.20: gutter arrows, Ctrl+Shift+[ / ], Fold All / Unfold All; folds follow edits)
 - [ ] Minimap
 - [ ] Multiple editor groups / split view
 - [ ] File encoding detection and conversion

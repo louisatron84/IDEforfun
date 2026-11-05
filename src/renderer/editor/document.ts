@@ -8,6 +8,7 @@ import { TextBuffer } from './textBuffer'
 import { History } from './history'
 import { Highlighter } from './highlighter'
 import type { Selection } from './selection'
+import { shiftLines } from './lines'
 
 export class Doc {
   readonly buffer: TextBuffer
@@ -17,6 +18,8 @@ export class Doc {
   anchor: Position = { line: 0, col: 0 }
   /** Extra cursors/selections besides the main one (multi-cursor editing). Usually empty. */
   extras: Selection[] = []
+  /** Header lines of folded blocks (they move with edits, like breakpoints). */
+  folds: number[] = []
   scrollTop = 0
   scrollLeft = 0
 
@@ -24,6 +27,9 @@ export class Doc {
     this.buffer = new TextBuffer(text)
     this.history = new History(this.buffer)
     this.highlighter = new Highlighter(this.buffer)
+    this.buffer.subscribe((change) => {
+      if (this.folds.length && change.text.includes('\n')) this.folds = shiftLines(this.folds, change)
+    })
   }
 
   get name(): string {

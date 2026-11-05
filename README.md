@@ -50,6 +50,7 @@ your terminal has `ELECTRON_RUN_AS_NODE` set. Clear it first: `$env:ELECTRON_RUN
 | Ctrl+D / Ctrl+Shift+L | Select the next match too / select every match (multi-cursor) |
 | Escape | Back to one cursor |
 | Ctrl+/ | Comment / uncomment the selected lines |
+| Ctrl+Shift+[ / Ctrl+Shift+] | Fold / unfold the block (or click the arrows next to the line numbers) |
 | Ctrl+Shift+\\ | Jump to the matching bracket |
 
 ## Layout

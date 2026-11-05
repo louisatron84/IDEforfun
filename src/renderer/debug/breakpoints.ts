@@ -4,31 +4,8 @@
  * added or removed above it.
  */
 import type { Change } from '../editor/textBuffer'
+import { shiftLines } from '../editor/lines'
 import { isInside } from '../workspace'
-
-const newlines = (text: string) => text.split('\n').length - 1
-
-/** Where breakpoint lines end up after one edit. Result is sorted, without duplicates. */
-export function shiftBreakpoints(lines: readonly number[], change: Change): number[] {
-  const n = newlines(change.text)
-  if (n === 0) return [...lines]
-  const L = change.at.line
-  const out: number[] = []
-  if (change.kind === 'insert') {
-    // Enter at the very start of a line pushes that line (and its breakpoint) down.
-    for (const b of lines) out.push(b > L || (b === L && change.at.col === 0) ? b + n : b)
-  } else if (change.at.col === 0 && change.text.endsWith('\n')) {
-    // Whole lines L .. L+n-1 removed (e.g. cut line): their breakpoints go too.
-    for (const b of lines) {
-      if (b < L) out.push(b)
-      else if (b >= L + n) out.push(b - n)
-    }
-  } else {
-    // Lines L+1 .. L+n joined onto line L.
-    for (const b of lines) out.push(b <= L ? b : b <= L + n ? L : b - n)
-  }
-  return [...new Set(out)].sort((a, b) => a - b)
-}
 
 const norm = (p: string) => (/^[a-zA-Z]:/.test(p) ? p.replace(/\//g, '\\').toLowerCase() : p)
 
@@ -69,8 +46,8 @@ export class BreakpointStore {
   /** Keep breakpoints on their code after an edit to this file. */
   applyChange(path: string, change: Change): void {
     const lines = this.linesFor(path)
-    if (!lines.length || newlines(change.text) === 0) return
-    const next = shiftBreakpoints(lines, change)
+    if (!lines.length || !change.text.includes('\n')) return
+    const next = shiftLines(lines, change)
     if (next.join() !== lines.join()) this.set(path, next)
   }
 
@@ -99,3 +76,6 @@ export class BreakpointStore {
     for (const l of this.listeners) l(path)
   }
 }
+
+/** Kept for older imports: breakpoints move like any other line markers. */
+export const shiftBreakpoints = shiftLines

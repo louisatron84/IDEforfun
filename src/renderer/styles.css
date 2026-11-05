@@ -117,7 +117,7 @@ body { display: flex; flex-direction: column; }
   user-select: none;
   cursor: default;
 }
-.editor .gutter-lines { padding-right: 12px; text-align: right; }
+.editor .gutter-lines { padding-right: 24px; text-align: right; }
 
 .editor .text-area { position: relative; flex: 1 0 auto; }
 .editor .content { position: relative; tab-size: var(--tab-size, 4); user-select: none; } /* above the selection boxes */
@@ -933,3 +933,27 @@ body { display: flex; flex-direction: column; }
 /* ---- multi-cursor ---- */
 .editor .selection-layer .extra-cursor { display: none; }
 .editor.focused .selection-layer .extra-cursor { display: block; }
+
+/* ---- code folding ---- */
+.editor .fold-toggle {
+  position: absolute;
+  right: 6px;
+  top: 0;
+  width: 12px;
+  text-align: center;
+  color: var(--fg-muted);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.editor .gutter:hover .fold-toggle,
+.editor .fold-toggle.folded { opacity: 1; }
+.editor .fold-toggle:hover { color: var(--fg); }
+.editor .fold-placeholder {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: var(--bg-hover);
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.editor .fold-placeholder:hover { color: var(--fg); }

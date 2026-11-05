@@ -21,11 +21,12 @@ import type { EditKind } from './history'
 import { Doc } from './document'
 import * as mc from './multiCursor'
 import * as pairs from './pairs'
+import { FoldMap, enclosingBlock, foldEnd, isFoldable } from './folding'
 
 const PAD_TOP = 4 // space above the first line
 const PAD_LEFT = 12 // must match .editor .lines padding-left in styles.css
 const PAD_RIGHT = 24
-const GUTTER_PAD = 40 // gutter's left (room for breakpoint dots) + right padding around the numbers
+const GUTTER_PAD = 52 // gutter's left (breakpoint dots) + right (fold arrows) padding around the numbers
 /** Extra lines drawn above/below the visible area so fast scrolling doesn't flash. */
 const OVERSCAN = 5
 
@@ -115,8 +116,10 @@ export class Editor {
     this.gutter.addEventListener('mousedown', (e) => {
       if (!this.hasDoc || e.button !== 0) return
       e.preventDefault() // keep focus in the editor
-      const line = Math.floor((e.clientY - this.content.getBoundingClientRect().top - PAD_TOP) / this.lineHeight)
-      if (line >= 0 && line < this.buffer.lineCount) this.opts.onGutterClick?.(line)
+      const line = this.lineAtY(e.clientY - this.content.getBoundingClientRect().top)
+      if (line < 0 || line >= this.buffer.lineCount) return
+      if ((e.target as HTMLElement).closest('.fold-toggle')) this.toggleFold(line)
+      else this.opts.onGutterClick?.(line)
     })
     this.root.addEventListener('scroll', () => {
       this.renderLines()
@@ -135,6 +138,7 @@ export class Editor {
     this.root.className = 'editor'
     this.root.replaceChildren(this.gutter, this.textArea)
     this.measure()
+    this.rebuildFolds()
     this.updateSize()
     this.root.scrollTop = doc.scrollTop
     this.root.scrollLeft = doc.scrollLeft
@@ -486,6 +490,12 @@ export class Editor {
       })
       return
     }
+    if (ctrl && shift && !e.altKey && (e.code === 'BracketLeft' || e.code === 'BracketRight')) {
+      e.preventDefault()
+      if (e.code === 'BracketLeft') this.fold()
+      else this.unfold()
+      return
+    }
     if (ctrl && shift && e.code === 'Backslash') {
       e.preventDefault()
       const m = this.findBracketMatch()
@@ -683,6 +693,12 @@ export class Editor {
   private onMouseDown(e: MouseEvent): void {
     if (e.button !== 0) return
     e.preventDefault() // keep focus in our hidden textarea
+    const placeholder = (e.target as HTMLElement).closest?.('.fold-placeholder') as HTMLElement | null
+    if (placeholder) {
+      this.unfold(Number(placeholder.dataset.line))
+      this.focus()
+      return
+    }
     const pos = this.positionFromMouse(e)
 
     // Alt+click: add another cursor (it becomes the main one).
@@ -735,7 +751,7 @@ export class Editor {
 
   private positionFromMouse(e: MouseEvent): Position {
     const rect = this.content.getBoundingClientRect()
-    const rawLine = Math.floor((e.clientY - rect.top - PAD_TOP) / this.lineHeight)
+    const rawLine = this.lineAtY(e.clientY - rect.top)
     if (rawLine < 0) return { line: 0, col: 0 }
     if (rawLine >= this.buffer.lineCount) return this.buffer.clamp({ line: Infinity, col: Infinity })
     const visual = Math.round((e.clientX - rect.left - PAD_LEFT) / this.charWidth)
@@ -746,7 +762,110 @@ export class Editor {
     if (this.goalVisual === null) {
       this.goalVisual = cmd.visualCol(this.buffer.getLine(this.cursor.line), this.cursor.col, this._tabSize)
     }
+    if (!this.foldMap.isEmpty) {
+      // Move by rows on screen, so folded blocks are stepped over.
+      const rows = this.foldMap.visibleCount(this.buffer.lineCount)
+      const row = this.foldMap.visualLine(this.cursor.line) + delta
+      if (row >= 0 && row < rows) delta = this.foldMap.bufferLine(row) - this.cursor.line
+    }
     return cmd.moveVertical(this.buffer, this.cursor, delta, this.goalVisual, this._tabSize)
+  }
+
+  // ---------- folding ----------
+
+  private foldMap: FoldMap = FoldMap.empty
+
+  /** Recompute which lines are hidden (after edits or fold changes). */
+  private rebuildFolds(): void {
+    const b = this.buffer
+    const get = (l: number) => b.getLine(l)
+    // Forget folds whose block went away (e.g. its body was deleted).
+    this.doc.folds = this.doc.folds.filter((h) => h < b.lineCount && foldEnd(get, b.lineCount, h) !== null)
+    this.foldMap = this.doc.folds.length ? new FoldMap(this.doc.folds, (h) => foldEnd(get, b.lineCount, h)) : FoldMap.empty
+  }
+
+  /** Pixel y of a line's top (hidden lines: their block's header row). */
+  private yOf(line: number): number {
+    return PAD_TOP + this.foldMap.visualLine(line) * this.lineHeight
+  }
+
+  /** The line at a y inside the content (-1 above the text, lineCount below it). */
+  private lineAtY(y: number): number {
+    const row = Math.floor((y - PAD_TOP) / this.lineHeight)
+    if (row < 0) return -1
+    if (row >= this.foldMap.visibleCount(this.buffer.lineCount)) return this.buffer.lineCount
+    return this.foldMap.bufferLine(row)
+  }
+
+  private get getLine(): (l: number) => string {
+    const b = this.buffer
+    return (l) => b.getLine(l)
+  }
+
+  /** Fold the block at `line` (its own, or the one around it). Folding a folded block folds its parent. */
+  fold(line = this.cursor.line): void {
+    if (!this.hasDoc) return
+    const n = this.buffer.lineCount
+    let header = enclosingBlock(this.getLine, n, line)
+    while (header !== null && this.foldMap.isFolded(header)) {
+      // Already folded: go one level out.
+      let parent: number | null = null
+      for (let h = header - 1; h >= 0; h--) {
+        const end = foldEnd(this.getLine, n, h)
+        if (end !== null && end >= header) {
+          parent = h
+          break
+        }
+      }
+      header = parent
+    }
+    if (header === null) return
+    this.setFolds([...this.doc.folds, header])
+  }
+
+  /** Unfold the folded block at (or containing) `line`. */
+  unfold(line = this.cursor.line): void {
+    if (!this.hasDoc) return
+    const n = this.buffer.lineCount
+    this.setFolds(this.doc.folds.filter((h) => {
+      if (h === line) return false
+      const end = foldEnd(this.getLine, n, h)
+      return !(end !== null && h < line && line <= end)
+    }))
+  }
+
+  toggleFold(line = this.cursor.line): void {
+    if (this.foldMap.isFolded(line)) this.unfold(line)
+    else this.fold(line)
+  }
+
+  /** Fold every block in the file. */
+  foldAll(): void {
+    if (!this.hasDoc) return
+    const n = this.buffer.lineCount
+    const headers: number[] = []
+    for (let l = 0; l < n; l++) if (isFoldable(this.getLine, n, l)) headers.push(l)
+    this.setFolds(headers)
+  }
+
+  unfoldAll(): void {
+    if (this.hasDoc) this.setFolds([])
+  }
+
+  private setFolds(headers: number[]): void {
+    this.doc.folds = [...new Set(headers)].sort((a, b) => a - b)
+    this.rebuildFolds()
+    // A cursor inside a block that just folded moves up to the block's first line.
+    for (const p of [this.cursor, this.anchor]) {
+      const range = this.foldMap.rangeOf(p.line)
+      if (range) {
+        const header = range[0] - 1
+        this.cursor = this.anchor = { line: header, col: this.buffer.getLine(header).length }
+        this.clearExtras()
+        break
+      }
+    }
+    this.render(true)
   }
 
   private pageLines(): number {
@@ -770,6 +889,18 @@ export class Editor {
    * (used for jumps such as find results and error links).
    */
   private render(textChanged = true, scroll: 'nearest' | 'center' = 'nearest'): void {
+    if (textChanged) this.rebuildFolds()
+    if (this.foldMap.isHidden(this.cursor.line)) {
+      // The cursor moved into a folded block (e.g. go to line, find): open it.
+      const n = this.buffer.lineCount
+      const line = this.cursor.line
+      this.doc.folds = this.doc.folds.filter((h) => {
+        const end = foldEnd(this.getLine, n, h)
+        return !(end !== null && h < line && line <= end)
+      })
+      this.rebuildFolds()
+      textChanged = true
+    }
     if (textChanged) this.updateSize()
     this.bracketMatch = this.hasSelection() || this.multi ? null : this.findBracketMatch()
     const { x, y } = this.positionCursor()
@@ -786,18 +917,19 @@ export class Editor {
       const cols = line.includes('\t') ? cmd.visualCol(line, line.length, this._tabSize) : line.length
       if (cols > widest) widest = cols
     }
-    const height = `calc(${PAD_TOP + lines.length * this.lineHeight}px + 40vh)` // 40vh: let the last line scroll up
+    const rows = this.foldMap.visibleCount(lines.length)
+    const height = `calc(${PAD_TOP + rows * this.lineHeight}px + 40vh)` // 40vh: let the last line scroll up
     this.content.style.height = height
     this.content.style.width = `${PAD_LEFT + widest * this.charWidth + PAD_RIGHT}px`
     this.gutter.style.height = height
     this.gutter.style.width = `${String(lines.length).length * this.charWidth + GUTTER_PAD}px`
   }
 
-  /** Which lines are on screen, plus a few extra above and below. */
+  /** Which screen rows are visible, plus a few extra above and below. */
   private visibleRange(): [number, number] {
     const first = Math.floor((this.root.scrollTop - PAD_TOP) / this.lineHeight) - OVERSCAN
     const count = Math.ceil(this.root.clientHeight / this.lineHeight) + OVERSCAN * 2
-    return [Math.max(0, first), Math.min(this.buffer.lineCount - 1, first + count)]
+    return [Math.max(0, first), Math.min(this.foldMap.visibleCount(this.buffer.lineCount) - 1, first + count)]
   }
 
   /** Draw just the visible lines, colored by the highlighter. */
@@ -805,10 +937,19 @@ export class Editor {
     const [first, last] = this.visibleRange()
     const lineEls: HTMLElement[] = []
     const numberEls: HTMLElement[] = []
-    for (let i = first; i <= last; i++) {
+    const n = this.buffer.lineCount
+    for (let row = first; row <= last; row++) {
+      const i = this.foldMap.bufferLine(row)
       lineEls.push(this.renderLine(i))
       const num = el('div', this.breakpoints.has(i) ? (i === this.execLine ? 'bp exec' : 'bp') : i === this.execLine ? 'exec' : '')
       num.textContent = String(i + 1)
+      if (isFoldable(this.getLine, n, i)) {
+        const folded = this.foldMap.isFolded(i)
+        const toggle = el('span', folded ? 'fold-toggle folded' : 'fold-toggle')
+        toggle.textContent = folded ? '▸' : '▾'
+        toggle.title = folded ? 'Unfold (Ctrl+Shift+])' : 'Fold (Ctrl+Shift+[)'
+        num.append(toggle)
+      }
       numberEls.push(num)
     }
     const offset = `translateY(${PAD_TOP + first * this.lineHeight}px)`
@@ -831,6 +972,13 @@ export class Editor {
       pos = tok.end
     }
     if (pos < text.length) lineEl.append(text.slice(pos))
+    if (this.foldMap.isFolded(index)) {
+      const more = el('span', 'fold-placeholder')
+      more.textContent = '⋯'
+      more.title = 'Folded: click to unfold'
+      more.dataset.line = String(index)
+      lineEl.append(more)
+    }
     return lineEl
   }
 
@@ -865,7 +1013,7 @@ export class Editor {
   hitTest(clientX: number, clientY: number): Position | null {
     if (!this.hasDoc) return null
     const rect = this.content.getBoundingClientRect()
-    const line = Math.floor((clientY - rect.top - PAD_TOP) / this.lineHeight)
+    const line = this.lineAtY(clientY - rect.top)
     if (line < 0 || line >= this.buffer.lineCount) return null
     const text = this.buffer.getLine(line)
     const visual = Math.floor((clientX - rect.left - PAD_LEFT) / this.charWidth)
@@ -880,7 +1028,7 @@ export class Editor {
   coordsAt(pos: Position): { left: number; top: number; bottom: number } {
     const rect = this.content.getBoundingClientRect()
     const x = PAD_LEFT + cmd.visualCol(this.buffer.getLine(pos.line), pos.col, this._tabSize) * this.charWidth
-    const y = PAD_TOP + pos.line * this.lineHeight
+    const y = this.yOf(pos.line)
     return { left: rect.left + x, top: rect.top + y, bottom: rect.top + y + this.lineHeight }
   }
 
@@ -894,13 +1042,16 @@ export class Editor {
    * currently on screen.
    */
   private renderSelection(): void {
-    const firstVisible = Math.floor((this.root.scrollTop - PAD_TOP) / this.lineHeight) - 1
-    const lastVisible = firstVisible + Math.ceil(this.root.clientHeight / this.lineHeight) + 2
+    const firstRow = Math.floor((this.root.scrollTop - PAD_TOP) / this.lineHeight) - 1
+    const lastRow = firstRow + Math.ceil(this.root.clientHeight / this.lineHeight) + 2
+    const rows = this.foldMap.visibleCount(this.buffer.lineCount)
+    const firstVisible = this.foldMap.bufferLine(Math.max(0, firstRow))
+    const lastVisible = lastRow >= rows ? this.buffer.lineCount - 1 : this.foldMap.bufferLine(lastRow)
     const boxes: HTMLElement[] = []
 
     if (this.execLine !== null && this.execLine >= firstVisible && this.execLine <= lastVisible) {
       const box = el('div', 'exec-line')
-      box.style.transform = `translateY(${PAD_TOP + this.execLine * this.lineHeight}px)`
+      box.style.transform = `translateY(${this.yOf(this.execLine)}px)`
       boxes.push(box)
     }
     for (const m of this.matches) {
@@ -928,9 +1079,10 @@ export class Editor {
       const { start, end } = sel.selectionRange(s)
       if (end.line < firstVisible || start.line > lastVisible) continue
       if (!sel.isEmpty(s)) this.addBoxes(boxes, start, end, 'sel', firstVisible, lastVisible)
+      if (this.foldMap.isHidden(s.head.line)) continue
       const x = PAD_LEFT + cmd.visualCol(this.buffer.getLine(s.head.line), s.head.col, this._tabSize) * this.charWidth
       const c = el('div', 'cursor extra-cursor')
-      c.style.transform = `translate(${x}px, ${PAD_TOP + s.head.line * this.lineHeight}px)`
+      c.style.transform = `translate(${x}px, ${this.yOf(s.head.line)}px)`
       boxes.push(c)
     }
     this.selectionLayer.replaceChildren(...boxes)
@@ -943,6 +1095,7 @@ export class Editor {
     const from = Math.max(start.line, firstVisible)
     const to = Math.min(end.line, lastVisible)
     for (let line = from; line <= to; line++) {
+      if (this.foldMap.isHidden(line)) continue
       const text = this.buffer.getLine(line)
       const x1 = line === start.line ? cmd.visualCol(text, start.col, this._tabSize) : 0
       // Lines that continue past the range end get one extra cell to show the line break.
@@ -953,7 +1106,7 @@ export class Editor {
       const width = atLeastOneChar ? Math.max(x2 - x1, 1) : x2 - x1
       if (width <= 0) continue
       const box = el('div', className)
-      box.style.transform = `translate(${PAD_LEFT + x1 * this.charWidth}px, ${PAD_TOP + line * this.lineHeight}px)`
+      box.style.transform = `translate(${PAD_LEFT + x1 * this.charWidth}px, ${this.yOf(line)}px)`
       box.style.width = `${width * this.charWidth}px`
       boxes.push(box)
     }
@@ -963,7 +1116,7 @@ export class Editor {
   private positionCursor(): { x: number; y: number } {
     const { line, col } = this.cursor
     const x = PAD_LEFT + cmd.visualCol(this.buffer.getLine(line), col, this._tabSize) * this.charWidth
-    const y = PAD_TOP + line * this.lineHeight
+    const y = this.yOf(line)
     for (const node of [this.cursorEl, this.input]) {
       node.style.transform = `translate(${x}px, ${y}px)`
     }
