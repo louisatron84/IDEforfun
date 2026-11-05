@@ -24,6 +24,7 @@ const api: IdeApi = {
     ipcRenderer.on('term:event', handler)
     return () => ipcRenderer.removeListener('term:event', handler)
   },
+  listFiles: (root) => ipcRenderer.invoke('fs:listFiles', root),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings)
 }

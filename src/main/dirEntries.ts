@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import type { DirEntry } from '../shared/api'
 
-const HIDDEN = new Set(['.git', 'node_modules', '__pycache__', '.venv', 'venv', '.mypy_cache', '.pytest_cache'])
+export const HIDDEN = new Set(['.git', 'node_modules', '__pycache__', '.venv', 'venv', '.mypy_cache', '.pytest_cache'])
 
 export function sortAndFilterEntries(
   dir: string,

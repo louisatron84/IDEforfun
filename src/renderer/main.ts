@@ -9,6 +9,7 @@ import { Panel } from './panel'
 import { OutputView } from './outputView'
 import { TerminalView } from './terminalView'
 import { SettingsView } from './settingsView'
+import { Palette } from './palette'
 import { DEFAULT_SETTINGS, type Settings } from '../shared/settings'
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
@@ -187,6 +188,19 @@ commands.register({
   run: () => { const s: Settings = { ...settings, theme: settings.theme === 'dark' ? 'light' : 'dark' }; applySettings(s); settingsView.set(s); void window.api.saveSettings(s) }
 })
 
+// ---------- command palette / quick open / go to line ----------
+
+const palette = new Palette({
+  commands,
+  listFiles: async () => (rootFolder ? window.api.listFiles(rootFolder) : []),
+  openFile: (path) => void openFile(path),
+  goToLine: (line) => editor.goTo(line),
+  lineCount: () => workspace.active?.buffer.lineCount ?? null
+})
+commands.register({ id: 'palette.commands', title: 'Show All Commands', keys: 'Ctrl+Shift+P', run: () => void palette.open('>') })
+commands.register({ id: 'palette.files', title: 'Go to File…', keys: 'Ctrl+P', when: () => rootFolder !== null, run: () => void palette.open('') })
+commands.register({ id: 'palette.line', title: 'Go to Line…', keys: 'Ctrl+G', when: hasDoc, run: () => void palette.open(':') })
+
 $('open-settings').addEventListener('click', () => settingsView.open())
 $('run-file').addEventListener('click', () => void runCurrentFile())
 $('stop-run').addEventListener('click', () => void window.api.stopRun())
@@ -202,6 +216,7 @@ window.addEventListener('keydown', (e) => {
   if (terminal.hasFocus && !TERMINAL_PASSTHROUGH.has(key)) return
   // Dialogs handle their own keys (Escape, arrows...); only their toggles pass through.
   if (settingsView.isOpen && key !== 'Ctrl+,') return
+  if (palette.isOpen && !['Ctrl+Shift+P', 'Ctrl+P', 'Ctrl+G'].includes(key)) return
   if (commands.handleKey(e)) {
     e.preventDefault()
     e.stopPropagation()

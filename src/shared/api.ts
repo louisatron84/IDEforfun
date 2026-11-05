@@ -42,6 +42,9 @@ export interface IdeApi {
   terminalKill(id: number): void
   onTerminalEvent(listener: (event: TerminalEvent) => void): () => void
 
+  /** Every file under a folder (for quick open), skipping .git, node_modules, etc. */
+  listFiles(root: string): Promise<{ path: string; rel: string }[]>
+
   getSettings(): Promise<Settings>
   saveSettings(settings: Settings): Promise<void>
 }

@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { sortAndFilterEntries } from './dirEntries'
+import { listFiles } from './listFiles'
 import { PythonRunner } from './python'
 import { Terminals } from './terminals'
 import { normalizeSettings } from '../shared/settings'
@@ -65,6 +66,8 @@ ipcMain.handle('fs:readDir', async (_event, dir: string) => {
     dirents.map((d) => ({ name: d.name, isDirectory: d.isDirectory() }))
   )
 })
+
+ipcMain.handle('fs:listFiles', (_event, root: string) => listFiles(root))
 
 ipcMain.handle('fs:readFile', async (_event, path: string) => readFile(path, 'utf8'))
 
