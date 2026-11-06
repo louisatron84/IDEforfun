@@ -107,6 +107,21 @@ describe('Box settings', () => {
     expect(q('.box-result')!.textContent).toBe('✗ API_TOKEN is not set: add it to .env')
   })
 
+  it('typing in a field is kept when the panel redraws for another change', async () => {
+    const { ctrl } = setup()
+    const box = ctrl.add(null)
+    await flush()
+    const url = q<HTMLInputElement>('[data-key="req.url"]')!
+    url.focus()
+    url.value = 'https://half-typed'
+    await ctrl.update(box.id, (b) => (b.baseUrl = 'https://other.org'))
+    await flush()
+    const again = q<HTMLInputElement>('[data-key="req.url"]')!
+    expect(again.value).toBe('https://half-typed')
+    expect(document.activeElement).toBe(again)
+    expect(ctrl.get(box.id)!.requests[0].url).toBe('')
+  })
+
   it('the body only shows for POST, PUT and PATCH', async () => {
     const { ctrl } = setup()
     ctrl.add(null)

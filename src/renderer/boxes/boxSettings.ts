@@ -86,6 +86,10 @@ export class BoxSettings {
   render(): void {
     const active = document.activeElement as HTMLElement | null
     const focusKey = active && this.body.contains(active) ? active.dataset.key : undefined
+    // What's being typed there hasn't been committed yet: keep it across the redraw.
+    const typing = focusKey && (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) && active.type !== 'checkbox'
+      ? { value: active.value, start: active.selectionStart, end: active.selectionEnd }
+      : null
     const box = this.box()
     if (!box) {
       this.body.replaceChildren(el('div', 'box-empty', 'Select a box on the Graph, or add one from the Toolbox.'))
@@ -97,7 +101,14 @@ export class BoxSettings {
       this.requestId = req.id
     }
     this.body.replaceChildren(this.header(box), this.boxSection(box), this.requestTabs(box), this.requestSection(box, req), this.footer(box))
-    if (focusKey) (this.body.querySelector(`[data-key="${CSS.escape(focusKey)}"]`) as HTMLElement | null)?.focus()
+    const again = focusKey ? (this.body.querySelector(`[data-key="${CSS.escape(focusKey)}"]`) as HTMLElement | null) : null
+    if (again) {
+      if (typing && (again instanceof HTMLInputElement || again instanceof HTMLTextAreaElement)) {
+        again.value = typing.value
+        if (typing.start !== null && typing.end !== null) again.setSelectionRange(typing.start, typing.end)
+      }
+      again.focus()
+    }
   }
 
   // ---------- small builders ----------
