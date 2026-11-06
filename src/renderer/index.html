@@ -13,27 +13,22 @@
   <body>
     <header id="toolbar">
       <span class="wordmark">Forge</span>
-      <button id="open-folder">Open Folder</button>
-      <span id="folder-name" class="muted">No folder open</span>
+      <nav id="task-switcher" role="tablist" aria-label="Task">
+        <button role="tab" data-task="code" title="Code (Ctrl+Alt+1)">Code</button>
+        <button role="tab" data-task="connect" title="Connect: the project graph (Ctrl+Alt+2)">Connect</button>
+        <button role="tab" data-task="debug" title="Debug (Ctrl+Alt+3)">Debug</button>
+        <button role="tab" data-task="run" title="Run: output and tests (Ctrl+Alt+4)">Run</button>
+      </nav>
       <span class="spacer"></span>
-      <button id="run-file" class="secondary" title="Run current Python file (Ctrl+F5, or F5 when there are no breakpoints)">▶ Run</button>
-      <button id="debug-file" class="secondary" title="Debug current Python file (F5 when there are breakpoints)">🐞 Debug</button>
-      <button id="stop-run" class="secondary" title="Stop (Shift+F5)">■ Stop</button>
-      <button id="open-settings" class="secondary icon" title="Settings (Ctrl+,)" aria-label="Settings">⚙</button>
+      <span id="project-label"><span id="folder-name" class="muted">No folder open</span><span id="project-branch" class="muted"></span></span>
+      <button id="run-button" title="Run (F5 / Ctrl+F5)">▶ Run</button>
     </header>
-    <div id="workspace">
-      <aside id="sidebar">
-        <div id="sidebar-tabs" role="tablist" aria-label="Sidebar">
-          <button role="tab" data-view="files" aria-selected="true" title="Files">Files</button>
-          <button role="tab" data-view="search" aria-selected="false" title="Search in project (Ctrl+Shift+F)">Search</button>
-          <button role="tab" data-view="outline" aria-selected="false" title="Outline of the open file">Outline</button>
-          <button role="tab" data-view="git" aria-selected="false" title="Source control (Ctrl+Shift+G)">Git</button>
-        </div>
-        <div id="file-tree" class="sidebar-view"></div>
-        <div id="search-panel" class="sidebar-view" hidden></div>
-        <div id="outline-panel" class="sidebar-view" hidden></div>
-        <div id="git-panel" class="sidebar-view" hidden></div>
-      </aside>
+    <div id="dock"></div>
+    <div id="panel-store" hidden>
+      <div id="file-tree" class="sidebar-view"></div>
+      <div id="search-panel" class="sidebar-view"></div>
+      <div id="outline-panel" class="sidebar-view"></div>
+      <div id="git-panel" class="sidebar-view"></div>
       <main id="editor-pane">
         <div id="groups">
           <div class="group active" id="group-0">

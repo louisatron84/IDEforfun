@@ -51,6 +51,12 @@ export class TaskController {
     this.opts.taskChanged(task)
   }
 
+  /** Saved arrangements (they load after startup): use them, and redraw the current task. */
+  useSaved(saved: SavedLayouts): void {
+    for (const t of TASKS) if (saved[t]) this.arrangements[t] = saved[t]!
+    if (saved[this.task]) this.view.render(this.root)
+  }
+
   /** The dock changed it (tab click, divider drag). */
   changed(root: DockNode): void {
     this.arrangements[this.task] = root

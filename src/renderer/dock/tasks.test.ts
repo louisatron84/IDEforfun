@@ -115,4 +115,14 @@ describe('TaskController', () => {
     tasks.endDebug()
     expect(tasks.current).toBe('connect')
   })
+
+  it('saved arrangements arriving later replace the defaults and redraw the current task', () => {
+    const { tasks, view } = setup()
+    const code: DockNode = { kind: 'stack', id: 's1', panels: ['editor', 'files'], active: 'editor' }
+    tasks.useSaved({ code })
+    expect(placedPanels(view.root!)).toEqual(['editor', 'files'])
+    tasks.switchTo('run')
+    expect(view.root).toEqual(defaultArrangement('run'))
+  })
 })
+

@@ -15,7 +15,10 @@ import { ENCODINGS, encodingLabel } from '../shared/encoding'
 import { TabBar } from './tabBar'
 import { CommandRegistry, keyString } from './keymap'
 import { FindBar } from './findBar'
-import { Panel } from './panel'
+import { DockView } from './dock/dockView'
+import { TaskController } from './dock/tasks'
+import { createPanelFacade } from './dock/facade'
+import { TASKS, type TaskId } from '../shared/layouts'
 import { OutputView } from './outputView'
 import { TerminalView } from './terminalView'
 import { SettingsView } from './settingsView'
@@ -258,7 +261,31 @@ window.addEventListener('keydown', (e) => {
   closeWelcomePage()
 })
 const findBar = new FindBar($('editor-pane'), editor)
-const panel = new Panel($('editor-pane'))
+// ---------- the dock: panels arranged per task (Code, Connect, Debug, Run) ----------
+let tasks: TaskController
+const dock = new DockView($('dock'), {
+  changed: (root) => tasks.changed(root),
+  closePanel: (id) => tasks.closePanel(id),
+  drop: (p, s, z) => tasks.drop(p, s, z)
+})
+tasks = new TaskController(dock, {
+  saved: {},
+  save: (layouts) => void window.api.saveLayouts(layouts).catch(() => {}),
+  taskChanged: (t) => onTaskChanged(t)
+})
+/** The old bottom panel's API, now on the dock (show reveals a panel in the current task). */
+const panel = createPanelFacade(tasks, dock)
+dock.register({ id: 'editor', title: 'Editor', body: $('editor-pane'), closable: false, onShow: () => { for (const ed of editors) ed.refreshLayout(settings.tabSize) } })
+dock.register({ id: 'files', title: 'Files', body: $('file-tree') })
+dock.register({ id: 'search', title: 'Search', body: $('search-panel') })
+dock.register({ id: 'outline', title: 'Outline', body: $('outline-panel'), onShow: () => void refreshOutline() })
+dock.register({ id: 'git', title: 'Git', body: $('git-panel'), onShow: () => void refreshGit() })
+
+/** The task switcher in the top bar shows the current task; the project remembers it. */
+function onTaskChanged(task: TaskId): void {
+  for (const b of document.querySelectorAll<HTMLButtonElement>('#task-switcher button')) b.setAttribute('aria-selected', String(b.dataset.task === task))
+  saveStateSoon()
+}
 const output = new OutputView(
   (path, line) => void openFile(path, line - 1),
   (text) => void window.api.sendRunInput(text),
@@ -411,6 +438,7 @@ async function saveAllDirty(report: (message: string) => void): Promise<boolean>
 async function startDebugging(given?: LaunchSpec): Promise<void> {
   const resolved = given ?? launchSpec()
   if (rootSession?.active) await stopDebugging()
+  tasks.beginDebug(settings.switchToDebugTask)
   panel.show('debug')
   if ('error' in resolved) {
     debugView.begin('')
@@ -556,6 +584,7 @@ async function debugProcessEnded(s: DebugSession, code: number | null): Promise<
     return
   }
   // The program ended: stop its child processes too, then the adapter.
+  tasks.endDebug()
   const children = processes.filter((x) => x !== p)
   processes = []
   session = s
@@ -1298,9 +1327,8 @@ workspace.subscribe(() => {
   if (workspace.active !== lastActiveDoc) {
     if (workspace.active) welcomeForced = false // a file was opened or picked
     if (workspace.active) {
-      // A file was picked: close the diff or graph over it.
+      // A file was picked: close the diff over it.
       diffView.hide()
-      graphView.hide()
     }
     lastActiveDoc = workspace.active
   }
@@ -1427,7 +1455,6 @@ async function openFolderPath(folder: string): Promise<void> {
     debugView.setWatches([])
     await loadRunFile(folder)
     await tree.setRoot(folder)
-    graphView.hide()
     graphView.reset()
     workspace.notifyChanged()
     void refreshGit()
@@ -1455,7 +1482,7 @@ function captureState(): WorkspaceState {
     activeGroup: workspace.activeGroup,
     terminals: terminal.shellIds(),
     panel: panel.activeView,
-    task: 'code', // the task controller fills this in (Task 5)
+    task: tasks.current,
     runConfig: runConfigName,
     breakpoints: breakpoints.save(),
     watches,
@@ -1504,6 +1531,7 @@ async function restoreLayout(folder: string): Promise<void> {
   debugView.renderBreakpoints()
   scheduleStatus()
   terminal.setPending(state.terminals)
+  tasks.switchTo(state.task)
   if (state.panel) panel.show(state.panel)
 }
 
@@ -1802,6 +1830,7 @@ let lastExit: { runId: number; code: number | null } | null = null
 window.api.onRunEvent((e) => {
   if (e.runId < lastRunId) return // late event from a run we already replaced
   lastRunId = e.runId
+  if (e.type !== 'output') scheduleStatus() // the ▶ Run / ■ Stop button
   if (e.type === 'start') output.started(e.python)
   else if (e.type === 'output') output.append(e.stream, e.text)
   else if (e.type === 'error') output.error(e.message)
@@ -2068,16 +2097,16 @@ const graphView = new GraphView({
     if (!rootFolder) return
     const sep = rootFolder.includes('\\') ? '\\' : '/'
     const path = rootFolder.replace(/[\\/]+$/, '') + sep + rel.split('/').join(sep)
-    void openFile(path, line).then(() => graphView.hide())
+    tasks.switchTo('code')
+    void openFile(path, line)
   },
-  closed: () => editor.focus()
 })
-$('groups').append(graphView.el)
+dock.register({ id: 'graph', title: 'Graph', body: graphView.el, onShow: () => void graphView.refresh() })
 commands.register({
   id: 'view.projectGraph', title: 'Show Project Graph', keys: 'Ctrl+Alt+G', when: () => rootFolder !== null,
   run: () => {
     diffView.hide()
-    void graphView.show()
+    tasks.reveal('graph')
   }
 })
 
@@ -2350,22 +2379,11 @@ const searchView = new SearchView(
 $('search-panel').append(searchView.root)
 
 type SidebarView = 'files' | 'search' | 'outline' | 'git'
+/** Files, Search, Outline and Git are panels: show one in the current task. */
 function showSidebar(view: SidebarView): void {
-  $('file-tree').hidden = view !== 'files'
-  $('search-panel').hidden = view !== 'search'
-  $('outline-panel').hidden = view !== 'outline'
-  $('git-panel').hidden = view !== 'git'
+  tasks.reveal(view)
   if (view === 'git') void refreshGit()
-  for (const b of document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs button')) {
-    b.setAttribute('aria-selected', String(b.dataset.view === view))
-  }
   if (view === 'outline') void refreshOutline()
-}
-for (const b of document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs button')) {
-  b.addEventListener('click', () => {
-    showSidebar(b.dataset.view as SidebarView)
-    if (b.dataset.view === 'search') searchView.focus()
-  })
 }
 commands.register({
   id: 'search.project', title: 'Search in Project', keys: 'Ctrl+Shift+F', when: () => rootFolder !== null,
@@ -2595,6 +2613,15 @@ function updateStatus(): void {
   set('sb-blame', who.length > 70 ? who.slice(0, 69) + '…' : who)
   $('sb-blame').title = who ? `${who}\nClick for this file's history` : ''
   set('sb-debug', processes.some((p) => p.session.state === 'paused') ? '🐞 Paused' : rootSession?.active ? '🐞 Debugging' : '')
+  const busy = output.isRunning || debugging()
+  const runButton = $('run-button')
+  const runLabel = busy ? '■ Stop' : '▶ Run'
+  if (runButton.textContent !== runLabel) {
+    runButton.textContent = runLabel
+    runButton.classList.toggle('stop', busy)
+    runButton.title = busy ? 'Stop (Shift+F5)' : 'Run (F5 / Ctrl+F5)'
+  }
+  set('project-branch', gitView.status?.branch ? ` · ${gitView.status.branch}` : '')
   set('sb-run', rootFolder ? `▶ ${runConfigName ?? 'Current file'}` : '')
   set('sb-python', pyEnv.statusText)
   set('sb-deps', pyEnv.missingText)
@@ -2681,11 +2708,11 @@ commands.register({ id: 'palette.commands', title: 'Show All Commands', keys: 'C
 commands.register({ id: 'palette.files', title: 'Go to File…', keys: 'Ctrl+P', when: () => rootFolder !== null, run: () => void palette.open('') })
 commands.register({ id: 'palette.line', title: 'Go to Line…', keys: 'Ctrl+G', when: hasDoc, run: () => void palette.open(':') })
 
-$('open-settings').addEventListener('click', () => settingsView.open())
-$('run-file').addEventListener('click', () => void runCurrentFile())
-$('debug-file').addEventListener('click', () => void startDebugging())
-$('stop-run').addEventListener('click', () => commands.run('run.stop'))
-$('open-folder').addEventListener('click', () => void openFolder())
+for (const b of document.querySelectorAll<HTMLButtonElement>('#task-switcher button')) {
+  b.addEventListener('click', () => tasks.switchTo(b.dataset.task as TaskId))
+}
+// ▶ Run, or ■ Stop while something runs.
+$('run-button').addEventListener('click', () => commands.run(output.isRunning || debugging() ? 'run.stop' : 'run.smart'))
 
 // While typing in the terminal, keys belong to the shell (Ctrl+C, Ctrl+W, Ctrl+F...).
 // Only these IDE commands' shortcuts still work there (whatever keys they're set to).
@@ -2723,6 +2750,14 @@ window.addEventListener('beforeunload', (e) => {
 
 // Every command is registered by now, so the menu can show all their shortcuts.
 void shortcuts.load()
+
+const TASK_NAMES: Record<TaskId, string> = { code: 'Code', connect: 'Connect', debug: 'Debug', run: 'Run' }
+TASKS.forEach((t, i) => commands.register({ id: `task.${t}`, title: `Switch to ${TASK_NAMES[t]}`, keys: `Ctrl+Alt+${i + 1}`, run: () => tasks.switchTo(t) }))
+commands.register({ id: 'view.resetLayout', title: 'Reset Layout of This Task', run: () => tasks.resetCurrent() })
+// The dock starts with the defaults, then your saved arrangements.
+tasks.switchTo('code')
+void window.api.getLayouts().catch(() => ({})).then((saved) => tasks.useSaved(saved))
+window.addEventListener('beforeunload', () => tasks.flush())
 
 void window.api.getSettings().then(async (s) => {
   userSettings = s

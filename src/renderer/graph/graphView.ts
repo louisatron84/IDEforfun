@@ -1,5 +1,5 @@
 /**
- * The Project Graph: how the project fits together, drawn over the editor.
+ * The Project Graph: how the project fits together (the Graph panel of the Connect task).
  * Modules and their imports (or functions and their calls), laid out by
  * layout.ts and drawn as SVG by hand. Drag to pan, wheel to zoom, hover a node
  * to light up what it uses (blue) and what uses it (orange), click for details
@@ -16,7 +16,6 @@ export interface GraphHooks {
   scan(): Promise<{ graph?: ProjectGraph; error?: string }>
   /** Open a module's file (relative path) at a 0-based line. */
   openModule(path: string, line: number): void
-  closed(): void
 }
 
 const SVG = 'http://www.w3.org/2000/svg'
@@ -70,7 +69,6 @@ export class GraphView {
 
   constructor(private readonly hooks: GraphHooks) {
     this.el = el('div', 'graph-view')
-    this.el.hidden = true
     this.el.tabIndex = -1
     this.el.setAttribute('role', 'region')
     this.el.setAttribute('aria-label', 'Project graph')
@@ -122,7 +120,6 @@ export class GraphView {
       this.status,
       button('Fit', 'Fit the graph in view (F)', () => this.fit()),
       button('⟳', 'Analyse the project again', () => void this.refresh()),
-      button('✕', 'Close (Esc)', () => this.hide())
     )
 
     // ----- canvas + side -----
@@ -148,10 +145,6 @@ export class GraphView {
     this.updateToolbar()
   }
 
-  get isVisible(): boolean {
-    return !this.el.hidden
-  }
-
   /** Forget everything (another folder was opened). */
   reset(): void {
     this.graph = null
@@ -160,19 +153,6 @@ export class GraphView {
     this.search.value = ''
     this.world.replaceChildren()
     this.side.replaceChildren()
-  }
-
-  /** Show it, analysing the project again (the last result stays up meanwhile). */
-  async show(): Promise<void> {
-    this.el.hidden = false
-    this.el.focus({ preventScroll: true })
-    await this.refresh()
-  }
-
-  hide(): void {
-    if (this.el.hidden) return
-    this.el.hidden = true
-    this.hooks.closed()
   }
 
   /** Analyse the project and redraw. */
@@ -410,7 +390,6 @@ export class GraphView {
         this.search.value = ''
         this.setOptions({ query: '' })
       } else if (this.selected) this.select(null)
-      else this.hide()
       return
     }
     if (typing) return
