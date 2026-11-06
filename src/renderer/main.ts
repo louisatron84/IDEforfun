@@ -1919,8 +1919,8 @@ commands.register({
   run: () => updateUserSettings({ fontSize: Math.max(10, userSettings.fontSize - 1) })
 })
 commands.register({
-  id: 'view.toggleTheme', title: 'Toggle Light/Dark Theme',
-  run: () => updateUserSettings({ theme: userSettings.theme === 'dark' ? 'light' : 'dark' })
+  id: 'view.toggleTheme', title: 'Toggle Plain Theme',
+  run: () => updateUserSettings({ theme: userSettings.theme === 'molten' ? 'plain' : 'molten' })
 })
 commands.register({
   id: 'settings.project', title: 'Open Project Settings', when: () => rootFolder !== null,

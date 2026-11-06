@@ -120,8 +120,8 @@ export class SettingsView {
     fontRow.querySelector('label')!.htmlFor = slider.id
 
     // Theme
-    const themeRow = this.row('Theme', 'Colors for the whole IDE',
-      this.segmented('theme', [['dark', 'Dark'], ['light', 'Light']], s.theme, (v) => this.update({ theme: v as Settings['theme'] })))
+    const themeRow = this.row('Theme', "Molten: Forge's colours. Plain: black and white, high contrast",
+      this.segmented('theme', [['molten', 'Molten'], ['plain', 'Plain']], s.theme, (v) => this.update({ theme: v as Settings['theme'] })))
 
     // Tab width
     const tabRow = this.row('Tab width', 'Spaces per indent level (Python uses 4)',

@@ -8,7 +8,7 @@ describe('normalizeSettings', () => {
     expect(normalizeSettings({})).toEqual(DEFAULT_SETTINGS)
   })
   it('keeps valid values', () => {
-    const s = { fontSize: 18, theme: 'light', tabSize: 2, pythonPath: 'C:\\Py\\python.exe', shell: 'gitbash', reopenLastProject: false, showWelcome: false, formatter: 'black', formatOnSave: true, lintWithRuff: false, debugInTerminal: false }
+    const s = { fontSize: 18, theme: 'plain', tabSize: 2, pythonPath: 'C:\\Py\\python.exe', shell: 'gitbash', reopenLastProject: false, showWelcome: false, formatter: 'black', formatOnSave: true, lintWithRuff: false, debugInTerminal: false }
     expect(normalizeSettings(s)).toEqual(s)
   })
   it('only accepts plain shell ids', () => {
@@ -20,8 +20,15 @@ describe('normalizeSettings', () => {
     expect(normalizeSettings({ fontSize: 15.6 }).fontSize).toBe(16)
   })
   it('rejects unknown themes and tab sizes', () => {
-    expect(normalizeSettings({ theme: 'purple' }).theme).toBe('dark')
+    expect(normalizeSettings({ theme: 'purple' }).theme).toBe('molten')
     expect(normalizeSettings({ tabSize: 3 }).tabSize).toBe(4)
+  })
+  it('theme: molten by default; old dark/light settings map to molten/plain', () => {
+    expect(DEFAULT_SETTINGS.theme).toBe('molten')
+    expect(normalizeSettings({ theme: 'dark' }).theme).toBe('molten')
+    expect(normalizeSettings({ theme: 'light' }).theme).toBe('plain')
+    expect(normalizeSettings({ theme: 'plain' }).theme).toBe('plain')
+    expect(normalizeSettings({ theme: 'neon', fontSize: 16 })).toMatchObject({ theme: 'molten', fontSize: 16 })
   })
   it('trims the python path and treats blank as automatic', () => {
     expect(normalizeSettings({ pythonPath: '   ' }).pythonPath).toBe('')

@@ -144,7 +144,7 @@ export function buildMenu(state: MenuState = { keys: {}, recent: [] }): Menu {
         sep,
         cmd('Bigger Font', 'view.zoomIn', 'CmdOrCtrl+='),
         cmd('Smaller Font', 'view.zoomOut', 'CmdOrCtrl+-'),
-        cmd('Toggle Light/Dark Theme', 'view.toggleTheme'),
+        cmd('Toggle Plain Theme', 'view.toggleTheme'),
         sep,
         { label: 'Toggle Developer Tools', role: 'toggleDevTools' }
       ]

@@ -1,8 +1,11 @@
 /** User settings, saved as JSON in the app's data folder. */
 
+/** Molten: Forge's own colours. Plain: black and white, high contrast. */
+export type ThemeName = 'molten' | 'plain'
+
 export interface Settings {
   fontSize: number
-  theme: 'dark' | 'light'
+  theme: ThemeName
   tabSize: 2 | 4 | 8
   /** Python interpreter to use for Run; '' = automatic (project .venv, then PATH). */
   pythonPath: string
@@ -24,7 +27,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   fontSize: 14,
-  theme: 'dark',
+  theme: 'molten',
   tabSize: 4,
   pythonPath: '',
   shell: '',
@@ -46,7 +49,10 @@ export function normalizeSettings(raw: unknown): Settings {
   if (typeof r.fontSize === 'number' && Number.isFinite(r.fontSize)) {
     s.fontSize = Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, Math.round(r.fontSize)))
   }
-  if (r.theme === 'dark' || r.theme === 'light') s.theme = r.theme
+  if (r.theme === 'molten' || r.theme === 'plain') s.theme = r.theme
+  // Settings from before Forge: dark became Molten, light became Plain.
+  else if (r.theme === 'dark') s.theme = 'molten'
+  else if (r.theme === 'light') s.theme = 'plain'
   if (r.tabSize === 2 || r.tabSize === 4 || r.tabSize === 8) s.tabSize = r.tabSize
   if (typeof r.pythonPath === 'string') s.pythonPath = r.pythonPath.trim()
   if (typeof r.shell === 'string' && /^[\w.-]*$/.test(r.shell)) s.shell = r.shell
