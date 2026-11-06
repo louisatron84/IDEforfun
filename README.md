@@ -71,7 +71,9 @@ your terminal has `ELECTRON_RUN_AS_NODE` set. Clear it first: `$env:ELECTRON_RUN
 | Ctrl+Shift+F5 | Restart debugging |
 | Ctrl+Shift+B | Run a task (in its own terminal) |
 | Ctrl+` / Ctrl+Shift+` | Toggle terminal / new terminal (pick a shell with ▾ in the terminal panel) |
-| Ctrl+J | Toggle bottom panel |
+| Ctrl+J | Open or close the drawer (Terminal, Problems, Output…) |
+| Ctrl+Alt+1 … 4 | Switch task: Code, Connect, Debug, Run |
+| Ctrl+Alt+G | Project Graph (the Connect task) |
 | Ctrl+, | Settings |
 | Ctrl+= / Ctrl+- | Bigger / smaller code font |
 | Ctrl+Z / Ctrl+Y | Undo / redo |
@@ -99,7 +101,8 @@ the app's data folder, which you can also edit by hand ("Edit Keyboard Shortcuts
   open a folder, recent folders, project actions and the main shortcuts. New Folder with no
   folder open makes a new project folder and opens it. Turn it off with the tick box at the bottom.
 - The last project reopens at startup with its tabs, split, cursor positions, terminals
-  and bottom panel (turn this off in Settings). Each project remembers its own layout.
+  and task (turn this off in Settings). Each project remembers its own tabs; your panel
+  arrangement for each task is saved for you and applies to every project.
 - A project can override some settings in `.forge/settings.json` (projects from before the rename have `.ideforfun/`; Forge moves it on first open)
   (File → Preferences → Project Settings):
 
@@ -155,6 +158,22 @@ the app's data folder, which you can also edit by hand ("Edit Keyboard Shortcuts
   ]
 }
 ```
+
+## Workspace
+
+Forge is organised by **task**, picked in the top bar (or Ctrl+Alt+1…4):
+
+- **Code**: Files / Search / Outline / Git on the left, the editor, *Where you are* (a small map of
+  what the current file imports and what imports it) and *In this file* (each function with what it
+  reaches and who uses it) on the right, and the drawer (Terminal, Problems, Output, Tests…) below.
+- **Connect**: the project graph.
+- **Debug**: the editor with the Debug panel; starting a debug session switches here and back
+  afterwards (Settings → Debug task).
+- **Run**: the editor with Output and Tests.
+
+Every part of the window is a panel. **View → Edit Layout** lets you drag a panel's tab onto any
+side or into another panel, close panels and add them back; each task keeps its own arrangement
+(View → Reset Layout of This Task to start over). Dividers can be dragged at any time.
 
 ## Layout
 - `src/main/`: Electron main process: file system, running Python (`python.ts`), terminals (`terminals.ts`), settings

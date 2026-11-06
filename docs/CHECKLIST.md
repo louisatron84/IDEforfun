@@ -100,17 +100,18 @@ The IDE is now **Forge** (design: docs/superpowers/specs/2026-11-06-forge-design
 Goal: give the IDE a distinctive identity rather than reskinning a conventional editor layout.
 Best started once a first graph view exists (5.1), so the layout is designed around real visual tools.
 
-- [ ] Design a distinctive workspace layout
-- [ ] Rethink how files, terminals, graphs and debugging coexist
-- [ ] Customisable workspace panels
-- [ ] Dockable panels and floating windows
-- [ ] Multiple workspace layouts (coding, debugging and visualisation)
+- [x] Design a distinctive workspace layout (v0.43: Forge task workspace)
+- [x] Rethink how files, terminals, graphs and debugging coexist (v0.43: tasks Code / Connect / Debug / Run, each with its own arrangement)
+- [x] Customisable workspace panels (v0.43: Edit Layout mode: move, close, add back, reset)
+- [ ] Dockable panels and floating windows (v0.43: docking done, drag tabs to any side or into another panel; floating windows not yet)
+- [x] Multiple workspace layouts (coding, debugging and visualisation) (v0.43: Forge task workspace)
 - [ ] Context-aware interface that surfaces relevant tools for the current task
 - [ ] Customisable information density
 - [ ] Animated transitions between workspace states
 - [ ] Visual navigation through projects
 - [x] Consistent visual language for graphs, code, debugging and terminal (v0.42: Forge look: Molten / Plain themes, Smithy schematic shapes, bundled fonts)
-- [ ] Forge task workspace: Code / Connect / Debug / Run, movable panels, Edit Layout mode (Part 2 of docs/superpowers/specs/2026-11-06-forge-design.md)
+- [x] Forge task workspace: Code / Connect / Debug / Run, movable panels, Edit Layout mode (Part 2 of docs/superpowers/specs/2026-11-06-forge-design.md) (v0.43: Forge task workspace); Where you are and In this file panels
+- [ ] Live run feedback on the graph: while the program runs, sparks travel along the connections and the running boxes glow (Molten); a dot and a highlight in Plain. Needs runtime tracing of calls (see 5.2 / 5.5). Requested 2026-11-06
 - [ ] Connect task and the API box (Part 3 of the same spec; also covers parts of 5.3)
 
 ## Tier 5: Visual programming environment

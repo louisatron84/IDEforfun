@@ -184,6 +184,16 @@ Fields (per request unless marked "box"):
 
 ---
 
+## Later: live run feedback (requested after this design)
+
+While the program runs, the graph shows what is executing: in Molten, sparks travel along the
+connections between the functions being called and the running boxes glow; in Plain, a simple dot
+moves along the line and the box is highlighted. This needs runtime tracing (which functions run,
+streamed from the Python process to Forge), which is roadmap 5.2 / 5.5 work, so it gets its own
+design and plan after Parts 2 and 3.
+
+---
+
 ## Constraints
 
 - Hand-written UI, like the rest of the app (no UI framework, no docking or graph library). The Project Graph layout code from v0.41 is reused.
