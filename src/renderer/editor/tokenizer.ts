@@ -22,6 +22,8 @@ export type TokenType =
   | 'number'
   | 'comment'
   | 'property' // object keys (JSON)
+  // From the language server (semantic highlighting, see ./semantic.ts):
+  | 'sem-parameter' | 'sem-variable' | 'sem-constant' | 'sem-property' | 'sem-class' | 'sem-function' | 'sem-method' | 'sem-module'
 
 export interface Token {
   start: number

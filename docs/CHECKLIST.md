@@ -74,7 +74,7 @@ Language features (Pyright already does the analysis for most of these; they're 
 - [x] Code actions and quick fixes (v0.33: Ctrl+. / 💡: Ruff fixes, Pyright code actions, # noqa, fix all)
 - [x] Format document / selection (Black, Ruff) (v0.33: Shift+Alt+F, Format Selection, format on save)
 - [x] Linting integration (Ruff) (v0.33: as you type, in Problems and squiggles, uses the project's Ruff config)
-- [ ] Semantic syntax highlighting (Pyright doesn't provide semantic tokens; needs basedpyright or our own analysis)
+- [x] Semantic syntax highlighting (Pyright doesn't provide semantic tokens; needs basedpyright or our own analysis) (v0.46: the bundled server is now basedpyright (Pyright plus semantic tokens; checks set to Pyright's 'standard'); parameters, properties, classes, modules and constants coloured by what they are, over the tokenizer's colours)
 - [x] Language-support architecture: language integrations instead of Python-specific editor logic, so several language servers can run side by side (groundwork for Tier 6.2) (v0.39: each file has a language that sets its highlighting, comment marker and Enter-indent; language servers run by id side by side and each file goes to its language's server; new JSON/JSONC, TOML, YAML and INI highlighting)
 
 Git:

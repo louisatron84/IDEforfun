@@ -10,6 +10,7 @@ import type { LspClient } from './client'
 import { languageForPath } from '../../shared/languages'
 import type { Doc } from '../editor/document'
 import type { Position } from '../editor/textBuffer'
+import { decodeSemanticTokens, type SemToken } from '../editor/semantic'
 import { pathToUri, uriToPath } from '../../shared/uri'
 import type { CompletionItem } from './completionLogic'
 import {
@@ -160,6 +161,14 @@ export class LspServer {
             typeDefinition: { linkSupport: false },
             documentHighlight: {},
             callHierarchy: {},
+            semanticTokens: {
+              requests: { full: true },
+              tokenTypes: ['namespace', 'type', 'class', 'enum', 'interface', 'struct', 'typeParameter', 'parameter', 'variable', 'property', 'enumMember', 'function', 'method', 'decorator', 'module', 'selfParameter', 'clsParameter'],
+              tokenModifiers: ['declaration', 'definition', 'readonly', 'static', 'async', 'defaultLibrary', 'builtin'],
+              formats: ['relative'],
+              overlappingTokenSupport: false,
+              multilineTokenSupport: false
+            },
             codeAction: {
               codeActionLiteralSupport: { codeActionKind: { valueSet: ['quickfix', 'refactor', 'source', 'source.organizeImports'] } },
               isPreferredSupport: true
@@ -352,6 +361,16 @@ export class LspServer {
     this.flush()
     const res = await this.client.request<unknown>('textDocument/documentSymbol', { textDocument: { uri: pathToUri(doc.path) } })
     return parseSymbols(res)
+  }
+
+  /** What each name in the file is (semantic highlighting); null if the server can't say. */
+  async semanticTokens(doc: Doc): Promise<Map<number, SemToken[]> | null> {
+    const provider = this.serverCapabilities?.semanticTokensProvider
+    const legend = provider?.legend
+    if (!this.started || !this.open.has(doc) || !legend || !provider.full) return null
+    this.flush()
+    const res = await this.client.request<{ data?: number[] } | null>('textDocument/semanticTokens/full', { textDocument: { uri: pathToUri(doc.path) } })
+    return Array.isArray(res?.data) ? decodeSemanticTokens(res!.data!, legend) : null
   }
 
   /** Other uses of the name at `pos` in the same file (to highlight them). */

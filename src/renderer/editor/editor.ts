@@ -1207,6 +1207,11 @@ export class Editor {
   private matches: { start: Position; end: Position }[] = []
   private squiggles: Squiggle[] = []
 
+  /** Draw the visible lines again (their colours changed, e.g. semantic highlighting arrived). */
+  repaintText(): void {
+    this.renderLines()
+  }
+
   setMatches(matches: { start: Position; end: Position }[]): void {
     this.matches = matches
     this.renderSelection()

@@ -28,8 +28,8 @@
     "@fontsource/space-grotesk": "5.3.0",
     "@xterm/addon-fit": "0.10.0",
     "@xterm/xterm": "5.5.0",
+    "basedpyright": "1.40.2",
     "node-pty": "1.1.0",
-    "pyright": "1.1.414",
     "yaml": "2.6.1"
   },
   "author": "louisatron84",
@@ -47,7 +47,7 @@
       "package.json"
     ],
     "asarUnpack": [
-      "node_modules/pyright/**",
+      "node_modules/basedpyright/**",
       "node_modules/node-pty/**"
     ],
     "npmRebuild": false,

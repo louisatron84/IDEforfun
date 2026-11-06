@@ -17,7 +17,8 @@ export type ServerLaunch =
 
 /** Every language server the IDE knows how to start (ids match `server` in src/shared/languages.ts). */
 export const SERVERS: Readonly<Record<string, ServerLaunch>> = {
-  pyright: { kind: 'node', module: 'pyright/langserver.index.js', args: ['--stdio'] }
+  // basedpyright: Pyright plus semantic highlighting (the id stays 'pyright' for saved settings).
+  pyright: { kind: 'node', module: 'basedpyright/langserver.index.js', args: ['--stdio'] }
 }
 
 /**

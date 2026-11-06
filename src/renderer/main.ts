@@ -115,6 +115,7 @@ const editorOptions = (index: number): EditorOptions => ({
   onEdit: (doc) => {
     workspace.notifyChanged()
     languages.docChanged(doc)
+    semanticSoon(doc)
     completion.onEdit()
   },
   onKeyDown: (e) => completion.handleKey(e),
@@ -841,6 +842,8 @@ async function startLanguageServer(id: string): Promise<void> {
     problems.setStatus('')
     outlineDoc = null
     refreshOutlineSoon(0)
+    // Give the server a moment to analyse, then colour the open files.
+    for (const doc of workspace.docs) semanticSoon(doc, 1500)
   } catch (err) {
     problems.setStatus(`${name} failed to start: ${String(err)}`)
   }
@@ -1293,6 +1296,21 @@ let outlineGeneration = 0
 let outlineDoc: Doc | null = null
 let outlineVersion = -1
 
+/** Semantic highlighting: ask the language server what each name is, a moment after edits stop. */
+const semanticTimers = new Map<Doc, number>()
+function semanticSoon(doc: Doc | null, delay = 450): void {
+  if (!doc || doc.large) return
+  window.clearTimeout(semanticTimers.get(doc))
+  semanticTimers.set(doc, window.setTimeout(async () => {
+    semanticTimers.delete(doc)
+    const version = doc.version
+    const tokens = await languages.semanticTokens(doc).catch(() => null)
+    if (doc.version !== version) return semanticSoon(doc) // edited meanwhile: ask again
+    doc.highlighter.setSemantic(tokens)
+    for (const ed of editors) ed.repaintText()
+  }, delay))
+}
+
 /** The file the Pipeline view last read (switching files refreshes it sooner). */
 let lastPipelineDoc: unknown = null
 
@@ -1459,6 +1477,7 @@ workspace.subscribe(() => {
   }
   updateWelcome()
   refreshOutlineSoon(workspace.active === outlineDoc ? 600 : 50)
+  if (workspace.active !== lastPipelineDoc) semanticSoon(workspace.active, 60)
   refreshPipelineSoon(workspace.active === lastPipelineDoc ? 900 : 60)
   lastPipelineDoc = workspace.active
   if (gitView.status) refreshBlameSoon(blame?.doc === workspace.active ? 1500 : 150)

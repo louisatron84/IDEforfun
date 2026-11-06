@@ -224,6 +224,13 @@ body { display: flex; flex-direction: column; }
 .tok-number { color: var(--tok-number); }
 .tok-comment { color: var(--tok-comment); font-style: italic; }
 .tok-property { color: var(--tok-function); }
+/* Semantic highlighting (the language server knows what each name is): the same palette, so code looks as before, just more exact. */
+.tok-sem-parameter { color: var(--tok-self); }
+.tok-sem-constant { color: var(--tok-constant); }
+.tok-sem-property { color: var(--tok-function); }
+.tok-sem-class { color: var(--tok-class); }
+.tok-sem-function, .tok-sem-method { color: var(--tok-call); }
+.tok-sem-module { color: var(--tok-builtin); font-style: italic; }
 
 /* ---- tabs ---- */
 .tabs {
