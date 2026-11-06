@@ -13,6 +13,7 @@ import type { WebContents } from 'electron'
 import type { RunEventBody } from '../shared/api'
 import { OutputQueue, skippedNote } from '../shared/outputBuffer'
 import { processEnvSync } from './dotenvFile'
+import { openTraceServer, traceCommand, traceEnv } from './runTrace'
 
 /** Output is sent to the window in batches this often... */
 const BATCH_MS = 40
@@ -38,6 +39,8 @@ const isBareCommand = (p: string) => !/[\\/]/.test(p)
 export class PythonRunner {
   private child: ChildProcess | null = null
   private runId = 0
+  /** The socket the traced run's tracer talks to (closed when the run ends). */
+  private trace: { port: number; token: string; close(): void } | null = null
 
   /** Start a run; resolves with its id once it started (or failed to). */
   async run(sender: WebContents, spec: RunSpec): Promise<number> {
@@ -48,6 +51,15 @@ export class PythonRunner {
     const runId = ++this.runId
     const send = (e: RunEventBody) => {
       if (!sender.isDestroyed()) sender.send('run:event', { ...e, runId })
+    }
+
+    // Shown on the Graph: the program starts through the tracer, which reports where it's at.
+    this.closeTrace()
+    if (spec.trace) {
+      const id = runId
+      this.trace = await openTraceServer((message) => {
+        if (!sender.isDestroyed()) sender.send('run:trace', { runId: id, message })
+      }).catch(() => null)
     }
 
     // An interpreter chosen in Settings is used as-is: if it's wrong, say so rather
@@ -71,6 +83,7 @@ export class PythonRunner {
         ? `The Python interpreter set in Settings wasn't found:\n  ${configured}\nFix it in Settings (Ctrl+,), or clear it to pick one automatically.`
         : 'Python was not found. Install it from python.org, or create a .venv in your project.'
     })
+    this.closeTrace()
     send({ type: 'exit', code: null, ms: 0 })
     return runId
   }
@@ -81,9 +94,11 @@ export class PythonRunner {
     return new Promise((resolve) => {
       const startedAt = Date.now()
       const target = spec.module ? ['-m', spec.module] : [spec.program ?? '']
-      const child = spawn(python, ['-u', ...target, ...spec.args], {
+      const trace = this.trace
+      const extra = trace ? traceEnv(spec.root || spec.cwd, trace.port, trace.token) : {}
+      const child = spawn(python, trace ? traceCommand(target, spec.args) : ['-u', ...target, ...spec.args], {
         cwd: spec.cwd,
-        env: processEnvSync(spec.root || spec.cwd, { PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1', ...spec.env }),
+        env: processEnvSync(spec.root || spec.cwd, { PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1', ...spec.env, ...extra }),
         windowsHide: true
       })
       let started = false
@@ -124,9 +139,16 @@ export class PythonRunner {
         if (this.child === child) this.child = null
         if (timer) clearTimeout(timer)
         flush() // what's left, before saying it ended
+        if (this.trace === trace) setTimeout(() => this.closeTrace(trace), 200) // its last updates first
         send({ type: 'exit', code, signal: signal ?? undefined, ms: Date.now() - startedAt })
       })
     })
+  }
+
+  private closeTrace(which = this.trace): void {
+    if (!which) return
+    which.close()
+    if (this.trace === which) this.trace = null
   }
 
   sendInput(text: string): void {

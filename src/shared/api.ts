@@ -81,6 +81,14 @@ export interface RunSpec {
   cwd: string
   /** Interpreter from Settings; empty = automatic. */
   python?: string
+  /** Show the run on the Graph: start it through Forge's tracer. */
+  trace?: boolean
+}
+
+/** One message from a traced run's tracer (checked by the window before use). */
+export interface RunTraceEvent {
+  runId: number
+  message: unknown
 }
 
 export interface DirEntry {
@@ -189,6 +197,8 @@ export interface IdeApi {
   sendRunInput(text: string): Promise<void>
   /** Listen for output/exit events; returns a function that stops listening. */
   onRunEvent(listener: (event: RunEvent) => void): () => void
+  /** Where a traced run is at (see RunSpec.trace). */
+  onRunTrace(listener: (event: RunTraceEvent) => void): () => void
 
   /** Start a shell in a pseudo-terminal; returns its id. */
   terminalCreate(cwd: string | null, cols: number, rows: number, profileId?: string): Promise<number>

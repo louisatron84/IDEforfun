@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { IdeApi, RunEvent, TerminalEvent } from '../shared/api'
+import type { IdeApi, RunEvent, RunTraceEvent, TerminalEvent } from '../shared/api'
 
 const api: IdeApi = {
   openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
@@ -44,6 +44,11 @@ const api: IdeApi = {
     const handler = (_e: Electron.IpcRendererEvent, event: RunEvent) => listener(event)
     ipcRenderer.on('run:event', handler)
     return () => ipcRenderer.removeListener('run:event', handler)
+  },
+  onRunTrace: (listener) => {
+    const handler = (_e: Electron.IpcRendererEvent, event: RunTraceEvent) => listener(event)
+    ipcRenderer.on('run:trace', handler)
+    return () => ipcRenderer.removeListener('run:trace', handler)
   },
   terminalCreate: (cwd, cols, rows, profileId) => ipcRenderer.invoke('term:create', cwd, cols, rows, profileId),
   terminalRun: (args, cwd, env, cols, rows) => ipcRenderer.invoke('term:run', args, cwd, env, cols, rows),
