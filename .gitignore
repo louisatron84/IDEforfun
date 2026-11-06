@@ -5,3 +5,6 @@ dist/
 
 # brainstorming mockups
 .superpowers/
+
+# installers from npm run dist
+release/

@@ -21,6 +21,15 @@ export const SERVERS: Readonly<Record<string, ServerLaunch>> = {
 }
 
 /**
+ * In the installed app, modules live in resources/app.asar, which a separate
+ * Node process can't run from: they are unpacked next to it (see "asarUnpack"
+ * in package.json), so point at that copy.
+ */
+export function unpackedPath(path: string): string {
+  return path.replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2')
+}
+
+/**
  * The interpreter Pyright should use to find installed packages: the
  * configured one, else a project virtualenv, else undefined (Pyright then
  * uses python from PATH itself).
@@ -55,7 +64,7 @@ class ServerProcess {
     const proc =
       this.launch.kind === 'node'
         ? // fork() runs the script with Electron's own Node, so nothing extra is needed.
-          fork(require.resolve(this.launch.module), [...this.launch.args], { stdio, execArgv: [] })
+          fork(unpackedPath(require.resolve(this.launch.module)), [...this.launch.args], { stdio, execArgv: [] })
         : spawn(this.launch.command, [...this.launch.args], { stdio: ['pipe', 'pipe', 'pipe'], shell: process.platform === 'win32' })
     const reader = new MessageReader((message) => {
       if (gen === this.generation && !sender.isDestroyed()) sender.send('lsp:message', id, message)

@@ -1,6 +1,6 @@
 {
   "name": "ideforfun",
-  "version": "0.1.0",
+  "version": "0.45.0",
   "description": "A hobby IDE with a hand-written editor",
   "main": "./out/main/index.js",
   "private": true,
@@ -9,11 +9,14 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "test": "node scripts/test.mjs"
+    "test": "node scripts/test.mjs",
+    "dist": "electron-vite build && electron-builder --win --x64",
+    "dist:dir": "electron-vite build && electron-builder --win --x64 --dir"
   },
   "devDependencies": {
     "@types/node": "24.9.2",
     "electron": "44.7.2",
+    "electron-builder": "26.18.0",
     "electron-vite": "5.0.0",
     "happy-dom": "21.0.4",
     "typescript": "7.0.2",
@@ -27,5 +30,54 @@
     "@xterm/xterm": "5.5.0",
     "node-pty": "1.1.0",
     "pyright": "1.1.414"
+  },
+  "author": "louisatron84",
+  "homepage": "https://forgecode.uk",
+  "build": {
+    "appId": "uk.forgecode.forge",
+    "productName": "Forge",
+    "copyright": "louisatron84",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/pyright/**",
+      "node_modules/node-pty/**"
+    ],
+    "npmRebuild": false,
+    "publish": null,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Forge",
+      "artifactName": "Forge-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Forge-${version}-portable.${ext}"
+    }
   }
 }
