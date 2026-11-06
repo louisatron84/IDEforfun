@@ -11,6 +11,7 @@ import { existsSync } from 'node:fs'
 import { win32 } from 'node:path'
 import type { WebContents } from 'electron'
 import type { ShellProfile, TerminalEvent } from '../shared/api'
+import { processEnvSync } from './dotenvFile'
 
 export function defaultShell(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): { file: string; args: string[] } {
   if (platform === 'win32') return { file: 'powershell.exe', args: ['-NoLogo'] }
@@ -88,7 +89,7 @@ export class Terminals {
 
   private spawn(sender: WebContents, file: string, args: string[], cwd: string | null, cols: number, rows: number, extraEnv: Record<string, string | null>): { id: number; pid: number } {
     const id = this.nextId++
-    const env: Record<string, string> = { ...(process.env as Record<string, string>), TERM_PROGRAM: 'Forge' }
+    const env: Record<string, string> = processEnvSync(cwd && existsSync(cwd) ? cwd : null, { TERM_PROGRAM: 'Forge' })
     for (const [k, v] of Object.entries(extraEnv)) {
       if (v === null) delete env[k]
       else env[k] = String(v)

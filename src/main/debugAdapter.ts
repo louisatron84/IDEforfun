@@ -15,6 +15,7 @@ import { createConnection, type Socket } from 'node:net'
 import type { WebContents } from 'electron'
 import { encodeMessage, MessageReader } from './jsonrpc'
 import { pythonCandidates } from './python'
+import { processEnvSync } from './dotenvFile'
 
 const isBareCommand = (p: string) => !/[\\/]/.test(p)
 
@@ -76,7 +77,7 @@ export class DebugAdapter {
     this.sender = sender
     const proc = spawn(python, ['-m', 'debugpy.adapter'], {
       cwd,
-      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+      env: processEnvSync(cwd, { PYTHONIOENCODING: 'utf-8' }),
       windowsHide: true
     })
     const reader = new MessageReader((message) => {

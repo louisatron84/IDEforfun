@@ -12,6 +12,7 @@ import type { WebContents } from 'electron'
 import { listFiles } from './listFiles'
 import { findTests, isTestFile, type TestFile } from '../shared/tests'
 import type { TestRunRequest, TestRunResult } from '../shared/api'
+import { processEnvSync } from './dotenvFile'
 
 /** Test files in the project and the tests in each. */
 export async function discoverTests(root: string): Promise<TestFile[]> {
@@ -54,7 +55,7 @@ export class TestRunner {
       try {
         child = spawn(req.python, args, {
           cwd: req.root,
-          env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1', PYTHONDONTWRITEBYTECODE: '1' },
+          env: processEnvSync(req.root, { PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1', PYTHONDONTWRITEBYTECODE: '1' }),
           windowsHide: true
         })
       } catch (err) {

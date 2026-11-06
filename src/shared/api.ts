@@ -1,4 +1,5 @@
 import type { RawScan } from './projectGraph'
+import type { ApiBox } from './boxes'
 import type { ProjectSettings, Settings } from './settings'
 import type { KeyOverrides } from './keybindings'
 import type { SavedLayouts } from './layouts'
@@ -8,6 +9,21 @@ import type { Branch, RepoStatus } from './git'
 import type { BlameLine, Commit } from './history'
 import type { FindOptions } from './regex'
 import type { Encoding, TextFileResult } from './encoding'
+
+/** What the API box's test call got back. */
+export interface TestCallResult {
+  ok: boolean
+  status?: number
+  statusText?: string
+  ms: number
+  /** The response, when it was JSON. */
+  json?: unknown
+  /** Otherwise the start of its text. */
+  text?: string
+  /** Over the size limit (5 MB). */
+  tooBig?: boolean
+  error?: string
+}
 
 /** What a git command gave back: its output, or what went wrong. */
 export interface GitResult {
@@ -282,6 +298,18 @@ export interface IdeApi {
   /** Another file in <project>/.forge (e.g. run.json): its JSON, or why it can't be read. */
   readProjectFile(root: string, name: string): Promise<{ value: unknown; path: string; exists: boolean; error?: string }>
   ensureProjectFile(root: string, name: string, initial: unknown): Promise<string>
+  /** Replace a file in <project>/.forge (e.g. boxes.json); returns its path. */
+  writeProjectFile(root: string, name: string, value: unknown): Promise<string>
+
+  /** Test call: send one of the API box's requests (secrets come from .env, in the main process). */
+  apiTestCall(root: string, box: ApiBox, requestId: string): Promise<TestCallResult>
+  /** The project's .env variables that have a value (names only). */
+  envNames(root: string): Promise<string[]>
+  /** Set one variable in the project's .env. */
+  setEnvValue(root: string, name: string, value: string): Promise<void>
+  /** Whether .gitignore covers .env. */
+  envIgnored(root: string): Promise<boolean>
+  addEnvToGitignore(root: string): Promise<void>
   /** Set (or with undefined, remove) values in the project's .forge/settings.json, keeping the rest. */
   updateProjectSettings(root: string, patch: Record<string, unknown>): Promise<void>
 

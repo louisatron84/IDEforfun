@@ -139,7 +139,7 @@ export async function readProjectSettings(root: string): Promise<{ settings: Pro
 }
 
 /** Files the window may read or create in <project>/.forge (nothing else). */
-const PROJECT_FILES = new Set(['run.json'])
+const PROJECT_FILES = new Set(['run.json', 'boxes.json'])
 
 /** A project file's JSON (missing = exists false, unreadable = error). */
 export async function readProjectFile(root: string, name: string): Promise<{ value: unknown; path: string; exists: boolean; error?: string }> {
@@ -153,6 +153,14 @@ export async function ensureProjectFile(root: string, name: string, initial: unk
   if (!PROJECT_FILES.has(name)) throw new Error(`Not a project file: ${name}`)
   const path = join(root, PROJECT_DIR, name)
   if ((await readJson(path)).missing) await writeJson(path, initial)
+  return path
+}
+
+/** Replace a project file's JSON (only the allowed names). */
+export async function writeProjectFile(root: string, name: string, value: unknown): Promise<string> {
+  if (!PROJECT_FILES.has(name)) throw new Error(`Not a project file: ${name}`)
+  const path = join(root, PROJECT_DIR, name)
+  await writeJson(path, value)
   return path
 }
 

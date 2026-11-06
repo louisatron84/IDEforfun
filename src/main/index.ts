@@ -1,6 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
 import { buildMenu, type EditAction, type MenuState } from './menu'
-import { ensureProjectFile, ensureProjectSettings, readProjectFile, readProjectSettings, updateProjectSettings, UserState } from './userState'
+import { ensureProjectFile, ensureProjectSettings, readProjectFile, readProjectSettings, updateProjectSettings, UserState, writeProjectFile } from './userState'
+import { testCall } from './apiCall'
+import { addEnvToGitignore, envNames, gitignoreHasEnv, setDotEnvValue } from './dotenvFile'
+import { normalizeBoxes } from '../shared/boxes'
 import { checkDependencies, describePython, findInterpreters, freeze, listPackages } from './pyenv'
 import { discoverTests, hasPytest, TestRunner } from './tests'
 import { forgetTools, formatText, ruffCheck, ruffFix, toolsAvailable } from './pyTools'
@@ -337,6 +340,19 @@ ipcMain.handle('tests:run', (event, req: TestRunRequest) => testRunner.run(event
 ipcMain.handle('tests:stop', () => testRunner.stop())
 ipcMain.handle('project:readFile', (_event, root: string, name: string) => readProjectFile(root, name))
 ipcMain.handle('project:ensureFile', (_event, root: string, name: string, initial: unknown) => ensureProjectFile(root, name, initial))
+ipcMain.handle('project:writeFile', (_event, root: string, name: string, value: unknown) => writeProjectFile(String(root), String(name), value))
+
+// ---------- Connect: the API box ----------
+ipcMain.handle('box:testCall', (_event, root: string, box: unknown, requestId: string) => {
+  // Re-checked here: only what a box can hold is used.
+  const [checked] = normalizeBoxes({ boxes: [box] })
+  if (!checked) return { ok: false, ms: 0, error: 'Not an API box.' }
+  return testCall(String(root), checked, String(requestId))
+})
+ipcMain.handle('env:names', (_event, root: string) => envNames(String(root)))
+ipcMain.handle('env:set', (_event, root: string, name: string, value: string) => setDotEnvValue(String(root), String(name), String(value)))
+ipcMain.handle('env:ignored', (_event, root: string) => gitignoreHasEnv(String(root)))
+ipcMain.handle('env:ignore', (_event, root: string) => addEnvToGitignore(String(root)))
 
 // ---------- settings (userData/settings.json) ----------
 const settingsFile = () => join(app.getPath('userData'), 'settings.json')
