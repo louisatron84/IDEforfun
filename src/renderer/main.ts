@@ -33,8 +33,9 @@ import { TestView } from './testView'
 import { WelcomePage } from './welcome'
 import { CodeTools } from './codeTools'
 import { ReferencesView } from './referencesView'
+import { CallHierarchyView } from './callHierarchyView'
 import { OutlineView } from './outlineView'
-import { applyEdits, type DocSymbol, type FileEdits, type Location, type TextEdit, SYMBOL_KIND } from './lsp/navigation'
+import { applyEdits, methodInClass, subclassAt, symbolPathAt, type DocSymbol, type FileEdits, type Location, type TextEdit, SYMBOL_KIND } from './lsp/navigation'
 import { isTestFile } from '../shared/tests'
 import { normalizeRunFile, resolveConfiguration, resolveTask, RUN_FILE, starterRunFile, type LaunchSpec, type RunFile, type Task } from '../shared/runConfig'
 
@@ -653,17 +654,173 @@ async function findReferences(): Promise<void> {
     referencesView.message(`Couldn't find references: ${String(err)}`)
     return
   }
-  // Lines for the previews: open files from the editor, others read once from disk.
-  const cache = new Map<string, Promise<string[]>>()
-  const lineText = async (path: string, line: number) => {
+  await referencesView.show(name, locations, makeLineReader().line)
+}
+
+/** Reads lines of files: open ones from the editor, others once from disk. */
+function makeLineReader(): { line: (path: string, line: number) => Promise<string>; all: (path: string) => Promise<readonly string[]> } {
+  const cache = new Map<string, Promise<readonly string[]>>()
+  const all = (path: string) => {
     const open = workspace.find(path)
-    if (open) return open.buffer.getLine(line)
+    if (open) return Promise.resolve(open.buffer.getLines())
     if (!cache.has(path)) {
-      cache.set(path, window.api.readTextFile(path).then((r) => (r.kind === 'text' ? r.text.split(/\r\n|\r|\n/) : [])))
+      cache.set(path, window.api.readTextFile(path).then((r) => (r.kind === 'text' ? r.text.split(/\r\n|\r|\n/) : []), () => []))
     }
-    return (await cache.get(path)!)[line] ?? ''
+    return cache.get(path)!
   }
-  await referencesView.show(name, locations, lineText)
+  return { all, line: async (path, line) => (await all(path))[line] ?? '' }
+}
+
+/** Open a location with its range selected. */
+async function showLocation(loc: Location): Promise<void> {
+  const doc = await openFile(loc.path)
+  if (!doc) return
+  editor.select(loc.start, loc.end)
+  editor.focus()
+}
+
+/**
+ * Ctrl+F12, for Python: on a class, the classes that inherit from it; on a
+ * method, the subclasses' own versions of it (overrides). Found from the
+ * class's references (direct subclasses).
+ */
+async function findImplementations(followed = false): Promise<void> {
+  const doc = workspace.active
+  if (!doc) return
+  if (!python.knows(doc)) return statusNote('Go to Implementations works in Python files, once the language server has started.')
+  const pos = cursorOnWord()
+  const chain = symbolPathAt(await python.symbols(doc).catch(() => [] as DocSymbol[]), pos)
+  const inner = chain[chain.length - 1]
+  const parent = chain[chain.length - 2]
+  let cls: DocSymbol | null = null
+  let method: string | null = null
+  if (inner?.kind === 5 && inner.nameStart.line === pos.line) cls = inner
+  else if (inner && [6, 9, 12].includes(inner.kind) && parent?.kind === 5 && inner.nameStart.line === pos.line) {
+    cls = parent
+    method = inner.name
+  }
+  if (!cls) {
+    // A class or method used here: look from its definition.
+    if (!followed) {
+      const def = await python.definition(doc, pos).catch(() => null)
+      if (def && (!samePath(def.path, doc.path) || def.start.line !== pos.line)) {
+        const target = await openFile(def.path)
+        if (target) {
+          editor.goTo(def.start.line, def.start.col)
+          return findImplementations(true)
+        }
+      }
+    }
+    return statusNote('Put the cursor on a class or a method to find its implementations.')
+  }
+  const what = method ? 'override' : 'subclass'
+  const title = method ? `${cls.name}.${method}` : cls.name
+  panel.show('references')
+  referencesView.message(`Looking for ${method ? `overrides of ${title}` : `subclasses of ${title}`}…`)
+  const reader = makeLineReader()
+  const refs = await python.references(doc, cls.nameStart).catch(() => [] as Location[])
+  const found: Location[] = []
+  for (const ref of refs) {
+    const text = await reader.line(ref.path, ref.start.line)
+    const sub = subclassAt(text, ref.start.col)
+    if (!sub) continue
+    if (!method) {
+      found.push({ path: ref.path, start: { line: ref.start.line, col: sub.col }, end: { line: ref.start.line, col: sub.col + sub.name.length } })
+      continue
+    }
+    const m = methodInClass(await reader.all(ref.path), ref.start.line, method)
+    if (m) found.push({ path: ref.path, start: m, end: { line: m.line, col: m.col + method.length } })
+  }
+  await referencesView.show(title, found, reader.line, what)
+  if (found.length === 1) await showLocation(found[0])
+}
+
+async function goToTypeDefinition(): Promise<void> {
+  const doc = workspace.active
+  if (!doc || !python.knows(doc)) return
+  const locs = await python.typeDefinition(doc, cursorOnWord()).catch(() => [] as Location[])
+  if (!locs.length) return statusNote('No type definition found here.')
+  navigationStack.push({ path: doc.path, ...editor.getCursor() })
+  await showLocation(locs[0])
+}
+
+/** Ctrl+T: find a class / function anywhere in the project by name. */
+function goToProjectSymbol(): void {
+  if (!python.isStarted) {
+    palette.choose('The Python language server is not running (open a folder first).', [])
+    return
+  }
+  const rel = (p: string) => (rootFolder && isInside(p, rootFolder) ? p.slice(rootFolder.length).replace(/^[\\/]+/, '') : p)
+  palette.search('Go to a class, function or variable anywhere in the project', async (query) => {
+    const found = await python.workspaceSymbols(query).catch(() => [])
+    // Project files first (the standard library can match too).
+    const inProject = (p: string) => !!rootFolder && isInside(p, rootFolder) && !/[\\/](\.?venv|site-packages)[\\/]/.test(p)
+    found.sort((a, b) => Number(inProject(b.location.path)) - Number(inProject(a.location.path)))
+    return found.map((s) => ({
+      label: s.name,
+      detail: `${SYMBOL_KIND[s.kind]?.name ?? 'symbol'}${s.container ? ` in ${s.container}` : ''} · ${rel(s.location.path)}`,
+      hint: `line ${s.location.start.line + 1}`,
+      run: () => void showLocation(s.location)
+    }))
+  }, editor.getSelectedText().trim().split('\n')[0] ?? '')
+}
+
+const callsView = new CallHierarchyView({
+  calls: (item, direction) => python.calls(item, direction),
+  open: (path, pos) => void openFile(path).then((doc) => {
+    if (!doc) return
+    editor.goTo(pos.line, pos.col)
+    editor.focus()
+  }),
+  relative: (p) => (rootFolder && isInside(p, rootFolder) ? p.slice(rootFolder.length).replace(/^[\\/]+/, '') : p)
+})
+panel.addView('calls', 'Calls', callsView.body, callsView.actions)
+
+async function showCallHierarchy(): Promise<void> {
+  const doc = workspace.active
+  if (!doc) return
+  panel.show('calls')
+  if (!python.knows(doc)) return callsView.message('Call hierarchy works in Python files, once the language server has started.')
+  const items = await python.prepareCallHierarchy(doc, cursorOnWord()).catch(() => [])
+  if (!items.length) return callsView.message('Put the cursor on a function or method name (its definition or a call to it).')
+  callsView.show(items[0])
+}
+
+// ---------- other uses of the name under the cursor ----------
+
+let occurrenceTimer: number | undefined
+let occurrenceKey = ''
+let occurrenceGeneration = 0
+
+function clearOccurrences(): void {
+  occurrenceKey = ''
+  occurrenceGeneration++
+  window.clearTimeout(occurrenceTimer)
+  for (const ed of editors) ed.setOccurrences([])
+}
+
+/** Called on every cursor move: highlight the other uses of the name under the cursor. */
+function updateOccurrences(): void {
+  const doc = workspace.active
+  if (!doc || !python.knows(doc) || editor.getSelectedText()) return clearOccurrences()
+  const pos = editor.getCursor()
+  const line = doc.buffer.getLine(pos.line)
+  let start = pos.col
+  while (start > 0 && /[\p{L}\p{N}_]/u.test(line[start - 1])) start--
+  const name = nameAt(line, pos.col)
+  if (!name || /^\d/.test(name)) return clearOccurrences()
+  const key = `${doc.path}|${doc.version}|${pos.line}|${start}`
+  if (key === occurrenceKey) return
+  clearOccurrences()
+  occurrenceKey = key
+  const gen = occurrenceGeneration
+  occurrenceTimer = window.setTimeout(() => {
+    void python.highlights(doc, { line: pos.line, col: start }).then((list) => {
+      if (gen !== occurrenceGeneration || workspace.active !== doc) return
+      // Just the one under the cursor isn't worth highlighting.
+      editor.setOccurrences(list.length > 1 ? list : [])
+    }, () => {})
+  }, 250)
 }
 
 /** Apply edits to an open document as one undoable step. */
@@ -824,6 +981,11 @@ commands.register({ id: 'nav.references', title: 'Find All References', keys: 'S
 commands.register({ id: 'editor.renameSymbol', title: 'Rename Symbol…', keys: 'F2', when: () => hasDocNow() && editorFocused(), run: () => void renameSymbol() })
 commands.register({ id: 'nav.symbol', title: 'Go to Symbol in File…', keys: 'Ctrl+Shift+O', when: hasDocNow, run: () => void goToSymbol() })
 commands.register({ id: 'view.outline', title: 'Show Outline', run: () => showSidebar('outline') })
+commands.register({ id: 'nav.implementations', title: 'Go to Implementations (subclasses / overrides)', keys: 'Ctrl+F12', when: hasDocNow, run: () => void findImplementations() })
+commands.register({ id: 'nav.typeDefinition', title: 'Go to Type Definition', when: hasDocNow, run: () => void goToTypeDefinition() })
+commands.register({ id: 'nav.projectSymbol', title: 'Go to Symbol in Project…', keys: 'Ctrl+T', when: () => rootFolder !== null, run: goToProjectSymbol })
+commands.register({ id: 'nav.callHierarchy', title: 'Show Call Hierarchy', keys: 'Shift+Alt+H', when: hasDocNow, run: () => void showCallHierarchy() })
+commands.register({ id: 'panel.calls', title: 'Show Calls Panel', run: () => panel.show('calls') })
 commands.register({ id: 'panel.references', title: 'Show References', run: () => panel.show('references') })
 
 // ---------- settings ----------
@@ -1791,6 +1953,7 @@ function updateStatus(): void {
   }
   if (!$('outline-panel').hidden) outline.highlight(doc ? editor.getCursor() : null)
   codeTools.updateLightbulb(doc, doc ? editor.getCursor().line : null)
+  updateOccurrences()
   set('sb-debug', session?.state === 'paused' ? '🐞 Paused' : session?.active ? '🐞 Debugging' : '')
   set('sb-run', rootFolder ? `▶ ${runConfigName ?? 'Current file'}` : '')
   set('sb-python', pyEnv.statusText)

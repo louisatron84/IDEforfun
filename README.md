@@ -55,6 +55,9 @@ your terminal has `ELECTRON_RUN_AS_NODE` set. Clear it first: `$env:ELECTRON_RUN
 | Ctrl+Space | Autocomplete (also pops up as you type) |
 | F12 or Ctrl+click / Alt+← | Go to definition / go back |
 | Shift+F12 | Find all references (References tab in the bottom panel) |
+| Ctrl+F12 | Go to implementations: subclasses of a class, or overrides of a method |
+| Shift+Alt+H | Call hierarchy: who calls this function / what it calls (Calls tab) |
+| Ctrl+T | Go to a class / function anywhere in the project |
 | F2 (in the editor) | Rename a symbol everywhere it's used |
 | Ctrl+Shift+O | Go to a class / function in this file (also the Outline tab in the sidebar) |
 | Ctrl+. (or click 💡) | Quick fixes: Ruff's fixes, Pyright's actions, ignore a rule on this line |

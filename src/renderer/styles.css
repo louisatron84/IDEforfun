@@ -325,6 +325,16 @@ body { display: flex; flex-direction: column; }
   background: var(--match);
   border-radius: 2px;
 }
+/* Other uses of the name under the cursor (writes a bit stronger) */
+.editor .occurrence {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: var(--line-height);
+  background: rgba(127, 127, 127, 0.22);
+  border-radius: 2px;
+}
+.editor .occurrence.write { background: rgba(127, 127, 127, 0.22); box-shadow: inset 0 -2px 0 rgba(127, 127, 127, 0.5); }
 
 /* ---- find bar ---- */
 .find-bar {

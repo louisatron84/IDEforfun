@@ -69,3 +69,46 @@ describe('applyEdits', () => {
     expect(applyEdits('ab', [{ start: { line: 5, col: 0 }, end: { line: 5, col: 0 }, text: '\nc' }])).toBe('ab\nc')
   })
 })
+
+describe('call hierarchy, highlights, workspace symbols', async () => {
+  const { parseCalls, parseHighlights, parseWorkspaceSymbols } = await import('./navigation')
+  it('reads incoming calls', () => {
+    const calls = parseCalls([
+      { from: { name: 'main', kind: 12, uri: 'file:///p/app.py', range: r(10, 0, 20, 0), selectionRange: r(10, 4, 10, 8) }, fromRanges: [r(12, 4, 12, 9), r(15, 4, 15, 9)] },
+      { from: { nonsense: 1 }, fromRanges: [] }
+    ], 'from')
+    expect(calls).toHaveLength(1)
+    expect(calls[0].item).toMatchObject({ name: 'main', path: '/p/app.py', nameStart: { line: 10, col: 4 } })
+    expect(calls[0].at).toEqual([{ line: 12, col: 4 }, { line: 15, col: 4 }])
+  })
+  it('reads highlights and workspace symbols', () => {
+    expect(parseHighlights([{ range: r(1, 0, 1, 3), kind: 3 }, { range: r(4, 2, 4, 5), kind: 2 }]).map((h) => h.write)).toEqual([true, false])
+    expect(parseWorkspaceSymbols([{ name: 'Dog', kind: 5, containerName: 'animals', location: { uri: 'file:///p/a.py', range: r(0, 6, 0, 9) } }]))
+      .toMatchObject([{ name: 'Dog', kind: 5, container: 'animals', location: { path: '/p/a.py' } }])
+  })
+})
+
+describe('finding implementations', async () => {
+  const { subclassAt, methodInClass } = await import('./navigation')
+  it('spots a class that inherits from the name at a column', () => {
+    const line = 'class Dog(Animal, Generic[T], metaclass=Meta):'
+    expect(subclassAt(line, line.indexOf('Animal'))).toEqual({ name: 'Dog', col: 6 })
+    expect(subclassAt(line, line.indexOf('Meta'))).toBeNull()
+    expect(subclassAt('x = Animal()', 4)).toBeNull()
+    expect(subclassAt('class Animal:', 6)).toBeNull()
+    expect(subclassAt('    class Inner(Base): pass', 16)).toEqual({ name: 'Inner', col: 10 })
+  })
+  it('finds a method directly in a class', () => {
+    const lines = [
+      'class Dog(Animal):',      // 0
+      '    """Docs."""',         // 1
+      '    def helper(self):',   // 2
+      '        def speak(): pass', // 3 (nested, not the method)
+      '    async def speak(self):', // 4
+      '        pass',            // 5
+      'def speak(): pass'        // 6 (outside)
+    ]
+    expect(methodInClass(lines, 0, 'speak')).toEqual({ line: 4, col: 14 })
+    expect(methodInClass(lines, 0, 'missing')).toBeNull()
+  })
+})

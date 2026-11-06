@@ -1189,6 +1189,15 @@ export class Editor {
     this.renderSelection()
   }
 
+  /** Other uses of the name under the cursor (kind 3 = written to, else read). */
+  private occurrences: { start: Position; end: Position; write: boolean }[] = []
+
+  setOccurrences(list: { start: Position; end: Position; write: boolean }[]): void {
+    if (!list.length && !this.occurrences.length) return
+    this.occurrences = list
+    if (this.hasDoc) this.renderSelection()
+  }
+
   /** Underline ranges (errors/warnings). Replaces the previous set. */
   setSquiggles(squiggles: Squiggle[]): void {
     this.squiggles = squiggles.filter((s) => s.severity <= 3)
@@ -1239,6 +1248,10 @@ export class Editor {
       const box = el('div', 'exec-line')
       box.style.transform = `translateY(${this.yOf(this.execLine)}px)`
       boxes.push(box)
+    }
+    for (const o of this.occurrences) {
+      if (o.end.line < firstVisible || o.start.line > lastVisible) continue
+      this.addBoxes(boxes, o.start, o.end, o.write ? 'occurrence write' : 'occurrence', firstVisible, lastVisible)
     }
     for (const m of this.matches) {
       if (m.end.line < firstVisible) continue

@@ -151,3 +151,109 @@ export const SYMBOL_KIND: Record<number, { icon: string; name: string }> = {
   13: { icon: 'x', name: 'variable' },
   14: { icon: 'K', name: 'constant' }
 }
+
+/** A function/method in a call hierarchy (the server's item is kept for follow-up requests). */
+export interface CallItem {
+  name: string
+  kind: number
+  detail?: string
+  path: string
+  start: Position
+  end: Position
+  nameStart: Position
+  raw: unknown
+}
+
+export function parseCallItem(raw: any): CallItem | null {
+  if (typeof raw?.name !== 'string' || typeof raw.uri !== 'string' || !isRange(raw.range)) return null
+  const sel = isRange(raw.selectionRange) ? raw.selectionRange : raw.range
+  const item: CallItem = {
+    name: raw.name, kind: typeof raw.kind === 'number' ? raw.kind : 12, path: uriToPath(raw.uri),
+    start: pos(raw.range.start), end: pos(raw.range.end), nameStart: pos(sel.start), raw
+  }
+  if (typeof raw.detail === 'string' && raw.detail) item.detail = raw.detail
+  return item
+}
+
+/** Incoming ({from}) or outgoing ({to}) calls → the other end, with where the calls are. */
+export function parseCalls(res: unknown, side: 'from' | 'to'): { item: CallItem; at: Position[] }[] {
+  if (!Array.isArray(res)) return []
+  const out: { item: CallItem; at: Position[] }[] = []
+  for (const c of res) {
+    const item = parseCallItem(c?.[side])
+    if (!item) continue
+    const at = Array.isArray(c.fromRanges) ? c.fromRanges.filter(isRange).map((r: LspRange) => pos(r.start)) : []
+    out.push({ item, at })
+  }
+  return out.sort((a, b) => a.item.path.localeCompare(b.item.path) || a.item.nameStart.line - b.item.nameStart.line)
+}
+
+/** documentHighlight → ranges (kind 3 = write). */
+export function parseHighlights(res: unknown): { start: Position; end: Position; write: boolean }[] {
+  if (!Array.isArray(res)) return []
+  return res.filter((h) => isRange(h?.range)).map((h) => ({ start: pos(h.range.start), end: pos(h.range.end), write: h.kind === 3 }))
+}
+
+export interface WorkspaceSymbol {
+  name: string
+  kind: number
+  container?: string
+  location: Location
+}
+
+/** workspace/symbol → symbols with locations. */
+export function parseWorkspaceSymbols(res: unknown): WorkspaceSymbol[] {
+  if (!Array.isArray(res)) return []
+  const out: WorkspaceSymbol[] = []
+  for (const s of res) {
+    const loc = parseLocations(s?.location ? [s.location] : [])[0]
+    if (typeof s?.name !== 'string' || typeof s.kind !== 'number' || !loc) continue
+    const sym: WorkspaceSymbol = { name: s.name, kind: s.kind, location: loc }
+    if (typeof s.containerName === 'string' && s.containerName) sym.container = s.containerName
+    out.push(sym)
+  }
+  return out
+}
+
+/**
+ * If the name at `col` is one of the bases in a `class Name(Base, ...)` line,
+ * the new class's name and where it is; otherwise null. (For finding subclasses.)
+ */
+export function subclassAt(line: string, col: number): { name: string; col: number } | null {
+  const m = /^(\s*)class\s+([A-Za-z_]\w*)\s*\(/.exec(line)
+  if (!m) return null
+  const open = m[0].length - 1
+  // The bases end at the matching ")" (they can contain calls like Generic[T]).
+  let depth = 0
+  let close = -1
+  for (let i = open; i < line.length; i++) {
+    if ('([{'.includes(line[i])) depth++
+    else if (')]}'.includes(line[i]) && --depth === 0) {
+      close = i
+      break
+    }
+  }
+  if (col <= open || (close !== -1 && col >= close)) return null
+  // metaclass=Base is not inheritance.
+  if (/\bmetaclass\s*=\s*$/.test(line.slice(open + 1, col))) return null
+  return { name: m[2], col: line.indexOf(m[2], m[1].length + 5) }
+}
+
+/** The `def method` directly inside the class defined on `classLine`, or null. */
+export function methodInClass(lines: readonly string[], classLine: number, method: string): { line: number; col: number } | null {
+  const indentOf = (s: string) => s.length - s.trimStart().length
+  const classIndent = indentOf(lines[classLine] ?? '')
+  let bodyIndent: number | null = null
+  const def = new RegExp(`^(\\s*)(?:async\\s+)?def\\s+(${method.replace(/\W/g, '')})\\s*\\(`)
+  for (let i = classLine + 1; i < lines.length; i++) {
+    const l = lines[i]
+    if (!l.trim() || /^\s*#/.test(l)) continue
+    const ind = indentOf(l)
+    if (ind <= classIndent) break // end of the class
+    bodyIndent ??= ind
+    if (ind !== bodyIndent) continue // inside a method
+    const m = def.exec(l)
+    if (m) return { line: i, col: l.indexOf(m[2], m[1].length) }
+  }
+  return null
+}

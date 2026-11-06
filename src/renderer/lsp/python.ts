@@ -8,7 +8,10 @@ import type { Doc } from '../editor/document'
 import type { Position } from '../editor/textBuffer'
 import { pathToUri, uriToPath } from '../../shared/uri'
 import type { CompletionItem } from './completionLogic'
-import { parseLocations, parseSymbols, parseWorkspaceEdit, type DocSymbol, type FileEdits, type Location } from './navigation'
+import {
+  parseCallItem, parseCalls, parseHighlights, parseLocations, parseSymbols, parseWorkspaceEdit, parseWorkspaceSymbols,
+  type CallItem, type DocSymbol, type FileEdits, type Location, type WorkspaceSymbol
+} from './navigation'
 
 export interface Diagnostic {
   start: Position
@@ -136,6 +139,9 @@ export class PythonLanguage {
             references: {},
             rename: { prepareSupport: true },
             documentSymbol: { hierarchicalDocumentSymbolSupport: true },
+            typeDefinition: { linkSupport: false },
+            documentHighlight: {},
+            callHierarchy: {},
             codeAction: {
               codeActionLiteralSupport: { codeActionKind: { valueSet: ['quickfix', 'refactor', 'source', 'source.organizeImports'] } },
               isPreferredSupport: true
@@ -325,6 +331,53 @@ export class PythonLanguage {
     this.flush()
     const res = await this.client.request<unknown>('textDocument/documentSymbol', { textDocument: { uri: pathToUri(doc.path) } })
     return parseSymbols(res)
+  }
+
+  /** Other uses of the name at `pos` in the same file (to highlight them). */
+  async highlights(doc: Doc, pos: Position): Promise<{ start: Position; end: Position; write: boolean }[]> {
+    if (!this.started || !this.open.has(doc)) return []
+    this.flush()
+    const res = await this.client.request<unknown>('textDocument/documentHighlight', {
+      textDocument: { uri: pathToUri(doc.path) },
+      position: toLsp(pos)
+    })
+    return parseHighlights(res)
+  }
+
+  /** Where the type of the thing at `pos` is defined (e.g. the class of a variable). */
+  async typeDefinition(doc: Doc, pos: Position): Promise<Location[]> {
+    if (!this.started || !this.open.has(doc)) return []
+    this.flush()
+    const res = await this.client.request<unknown>('textDocument/typeDefinition', {
+      textDocument: { uri: pathToUri(doc.path) },
+      position: toLsp(pos)
+    })
+    return parseLocations(res)
+  }
+
+  /** Classes, functions and variables across the project whose name matches `query`. */
+  async workspaceSymbols(query: string): Promise<WorkspaceSymbol[]> {
+    if (!this.started) return []
+    this.flush()
+    return parseWorkspaceSymbols(await this.client.request<unknown>('workspace/symbol', { query }))
+  }
+
+  /** The function/method at `pos`, as the start of a call hierarchy. */
+  async prepareCallHierarchy(doc: Doc, pos: Position): Promise<CallItem[]> {
+    if (!this.started || !this.open.has(doc)) return []
+    this.flush()
+    const res = await this.client.request<unknown[]>('textDocument/prepareCallHierarchy', {
+      textDocument: { uri: pathToUri(doc.path) },
+      position: toLsp(pos)
+    })
+    return (Array.isArray(res) ? res : []).map(parseCallItem).filter((i): i is CallItem => !!i)
+  }
+
+  /** Who calls `item` (incoming) or what `item` calls (outgoing). */
+  async calls(item: CallItem, direction: 'incoming' | 'outgoing'): Promise<{ item: CallItem; at: Position[] }[]> {
+    if (!this.started) return []
+    const res = await this.client.request<unknown>(`callHierarchy/${direction}Calls`, { item: item.raw })
+    return parseCalls(res, direction === 'incoming' ? 'from' : 'to')
   }
 
   /** Quick fixes and other actions for a range (with the diagnostics there). */

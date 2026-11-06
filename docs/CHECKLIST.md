@@ -67,14 +67,14 @@ to real source code or runtime behaviour.
 Language features (Pyright already does the analysis for most of these; they're mostly UI work):
 - [x] Find references (v0.31: Shift+F12, References tab with line previews)
 - [x] Rename symbol across project (v0.31: F2; open files undoable, closed files changed on disk after confirming)
-- [ ] Go to implementation
-- [ ] Call hierarchy
+- [x] Go to implementation (v0.34: Ctrl+F12, Python-style: subclasses of a class, overrides of a method; also Go to Type Definition, Ctrl+T symbols in the project, other uses of a name highlighted)
+- [x] Call hierarchy (v0.34: Shift+Alt+H, Calls tab, incoming / outgoing, expands step by step)
 - [x] Document symbols / outline panel (v0.31: Outline sidebar tab follows the cursor, filter; Ctrl+Shift+O)
 - [x] Import organisation and automatic import suggestions (v0.33: Shift+Alt+O with Ruff, or Pyright's; auto-import suggestions in completion since v0.13)
 - [x] Code actions and quick fixes (v0.33: Ctrl+. / 💡: Ruff fixes, Pyright code actions, # noqa, fix all)
 - [x] Format document / selection (Black, Ruff) (v0.33: Shift+Alt+F, Format Selection, format on save)
 - [x] Linting integration (Ruff) (v0.33: as you type, in Problems and squiggles, uses the project's Ruff config)
-- [ ] Semantic syntax highlighting
+- [ ] Semantic syntax highlighting (Pyright doesn't provide semantic tokens; needs basedpyright or our own analysis)
 - [ ] Language-support architecture: language integrations instead of Python-specific editor logic, so several language servers can run side by side (groundwork for Tier 6.2)
 
 Git:
