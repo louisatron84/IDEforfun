@@ -1854,3 +1854,9 @@ button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 @media (prefers-reduced-motion: reduce) {
   .dock-anim-task, .dock-anim-layout .dock-stack { animation: none !important; }
 }
+
+/* Context-aware tools: suggestions in the top bar */
+#suggestions { display: inline-flex; gap: 4px; margin-left: 12px; min-width: 0; overflow: hidden; }
+.suggestion { background: none; color: var(--fg-muted); border: 1px dashed var(--line-strong); border-radius: var(--radius); padding: 1px 8px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.suggestion::before { content: '→ '; color: var(--heat-2); }
+.suggestion:hover { color: var(--fg); border-style: solid; background: var(--bg-hover); }

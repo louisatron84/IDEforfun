@@ -70,6 +70,7 @@ import { PipelineView } from './pipeline/pipelineView'
 import { DataLog, parseDataMessage, summaryText } from '../shared/dataSummary'
 import { builtinBlocks, projectBlocks } from '../shared/blocks'
 import { moduleOfPath } from '../shared/boxes'
+import { suggestTools } from '../shared/suggest'
 import { envKeys } from '../shared/openapi'
 import { addImport, generateClient, generatedState, importLine } from '../shared/openapiCode'
 import type { TraceTick } from './graph/liveRun'
@@ -337,6 +338,7 @@ window.addEventListener('keydown', (e) => {
 function onTaskChanged(task: TaskId): void {
   for (const b of document.querySelectorAll<HTMLButtonElement>('#task-switcher button')) b.setAttribute('aria-selected', String(b.dataset.task === task))
   if (dock.editing) editBar.fill()
+  suggestionsSoon()
   // Box settings only show while a box is picked (layouts saved before v0.44 placed it for good).
   if (task === 'connect' && !dock.editing) queueMicrotask(closeIdleBoxSettings)
   saveStateSoon()
@@ -3199,7 +3201,45 @@ function scheduleStatus(): void {
   })
 }
 
+/** Context-aware tools: a few suggestions in the top bar, worked out a moment after things change. */
+let suggestTimer = 0
+function suggestionsSoon(): void {
+  window.clearTimeout(suggestTimer)
+  suggestTimer = window.setTimeout(renderSuggestions, 400)
+}
+function renderSuggestions(): void {
+  const doc = workspace.active
+  const python = doc && /\.pyw?$/i.test(doc.path) && !doc.large ? doc : null
+  const repo = gitView.status
+  const list = suggestTools({
+    task: tasks.current,
+    file: python ? { path: python.path, text: python.getText() } : null,
+    debug: session?.state ?? 'idle',
+    lastRunFailed: !!lastExit && lastExit.runId === lastRunId && lastExit.code !== 0 && lastExit.code !== null,
+    problems: python ? languages.diagnosticsFor(python.path).filter((d) => d.severity <= 2).length : 0,
+    changes: repo ? new Set([...repo.staged, ...repo.unstaged, ...repo.conflicts].map((c) => c.path)).size : 0,
+    shown: (panel) => tasks.isShown(panel)
+  })
+  const box = $('suggestions')
+  const key = list.map((s) => s.id + s.label).join('|')
+  if (box.dataset.key === key) return
+  box.dataset.key = key
+  box.replaceChildren(...list.map((s) => {
+    const b = document.createElement('button')
+    b.className = 'suggestion'
+    b.textContent = s.label
+    b.title = s.why
+    b.addEventListener('click', () => {
+      if (s.panel) panel.show(s.panel)
+      else if (s.command) commands.run(s.command)
+      suggestionsSoon()
+    })
+    return b
+  }))
+}
+
 function updateStatus(): void {
+  suggestionsSoon()
   const doc = workspace.active
   const set = (id: string, text: string) => {
     const el = $(id)
