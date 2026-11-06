@@ -1453,3 +1453,47 @@ button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 
 /* Angled buttons clip their outline away: draw keyboard focus inside the shape instead. */
 #toolbar button:focus-visible, .git-primary:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--fg); }
+
+/* ---------- Forge dock: splits and tab stacks of panels ---------- */
+.dock { position: relative; display: flex; min-height: 0; min-width: 0; }
+.dock-root { flex: 1; display: flex; min-width: 0; min-height: 0; }
+.dock-split { flex: 1; display: flex; min-width: 0; min-height: 0; }
+.dock-row { flex-direction: row; }
+.dock-column { flex-direction: column; }
+.dock-cell { display: flex; min-width: 0; min-height: 0; overflow: hidden; }
+.dock-divider { flex: 0 0 4px; background: var(--border); position: relative; z-index: 3; }
+.dock-row > .dock-divider { cursor: col-resize; }
+.dock-column > .dock-divider { cursor: row-resize; }
+.dock-divider:hover { background: var(--heat-3); }
+.dock-stack { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; background: var(--bg-panel); }
+.dock-stack.collapsed { flex: 0 0 auto; }
+.dock-stack::before {
+  content: ''; position: absolute; left: 0; top: 0; width: 7px; height: 7px; z-index: 2; pointer-events: none;
+  border-left: 2px solid var(--heat-3); border-top: 2px solid var(--heat-3);
+}
+.dock-tabs { display: flex; align-items: center; gap: 6px; height: 30px; flex-shrink: 0; padding: 0 6px 0 10px; border-bottom: 1px solid var(--border); }
+.dock-tab-list { display: flex; gap: 2px; min-width: 0; overflow: hidden; }
+.dock-tab {
+  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border: 0; border-radius: var(--radius);
+  background: none; color: var(--fg-muted); font: inherit; font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
+  cursor: pointer; white-space: nowrap;
+}
+.dock-tab:hover { color: var(--fg); background: var(--bg-hover); }
+.dock-tab.active { color: var(--heat-2); box-shadow: inset 0 -2px 0 var(--heat-2); }
+.dock-tab-close { color: var(--fg-muted); padding: 0 2px; }
+.dock-tab-close:hover { color: var(--err); }
+.dock-actions { flex: 1; display: flex; justify-content: flex-end; min-width: 0; }
+.dock-actions > [hidden] { display: none; }
+.dock-body { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; position: relative; }
+.dock-body[hidden] { display: none; }
+.dock-panel-body { flex: 1; min-height: 0; min-width: 0; }
+.dock-panel-body[hidden] { display: none !important; }
+.dock-store { display: none; }
+.dock.editing-layout {
+  background:
+    linear-gradient(var(--grid) 1px, transparent 1px) 0 0 / 18px 18px,
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 18px 18px,
+    var(--bg);
+}
+.dock.editing-layout .dock-stack { outline: 1px dashed var(--line-strong); outline-offset: -3px; }
+.dock.editing-layout .dock-divider { flex-basis: 8px; background: var(--line-strong); }

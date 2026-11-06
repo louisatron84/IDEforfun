@@ -98,7 +98,8 @@ describe('Smithy schematic shapes', () => {
     const withGradient = rules.filter((r) => /gradient\(/.test(r.body)).map((r) => r.selector)
     expect(withGradient.length).toBeGreaterThan(0)
     // .editor .squiggle uses gradients only to draw the wavy error underline (one colour, not clickable).
-    for (const s of withGradient) expect(s).toMatch(/^(\.wordmark|\.graph-canvas|\.editor \.squiggle)$/)
+    // .dock.editing-layout: the blueprint grid shown across the window in Edit Layout mode (spec, Part 2).
+    for (const s of withGradient) expect(s).toMatch(/^(\.wordmark|\.graph-canvas|\.editor \.squiggle|\.dock\.editing-layout)$/)
   })
 
   it('reduced motion turns off transitions and animations', () => {
