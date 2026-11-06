@@ -21,6 +21,7 @@ export type TokenType =
   | 'string'
   | 'number'
   | 'comment'
+  | 'property' // object keys (JSON)
 
 export interface Token {
   start: number

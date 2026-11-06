@@ -14,6 +14,8 @@ export interface CompletionItem {
   textEdit?: { start: Position; end: Position; text: string }
   /** The raw item, for completionItem/resolve. */
   raw?: unknown
+  /** Id of the language server it came from (for completionItem/resolve). */
+  server?: string
   /** Accepting it also adds an import (Pyright's auto-import suggestions). */
   autoImport?: boolean
 }

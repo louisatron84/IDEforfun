@@ -1,5 +1,5 @@
 /**
- * Run configurations and tasks, from <project>/.ideforfun/run.json:
+ * Run configurations and tasks, from <project>/.forge/run.json:
  *
  *   {
  *     "configurations": [

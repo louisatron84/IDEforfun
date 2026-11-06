@@ -1,16 +1,18 @@
 /**
  * Small JSON files the app keeps between sessions (in the app's data folder):
  *   keybindings.json      your keyboard shortcut changes
+ *   layouts.json          your workspace arrangement for each task
  *   recent.json           recently opened folders
  *   workspaces/<id>.json  each project's tabs, layout and terminals
- * and the project's own <project>/.ideforfun/settings.json.
+ * and the project's own <project>/.forge/settings.json.
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { normalizeKeybindings, type KeyOverrides } from '../shared/keybindings'
+import { normalizeLayouts, type SavedLayouts } from '../shared/layouts'
 import { addRecent, normalizeRecent, normalizeWorkspaceState, removeRecent, type WorkspaceState } from '../shared/projectState'
-import { normalizeProjectSettings, PROJECT_SETTINGS_DIR, PROJECT_SETTINGS_FILE, type ProjectSettings } from '../shared/settings'
+import { normalizeProjectSettings, PROJECT_DIR, PROJECT_SETTINGS_FILE, type ProjectSettings } from '../shared/settings'
 import { backupName } from './backups'
 
 /** Parsed JSON, or why it couldn't be read. A missing file is `{ missing: true }`. */
@@ -57,6 +59,15 @@ export class UserState {
       out[id] = keys.length === 0 ? null : keys.length === 1 ? keys[0] : keys
     }
     await writeJson(this.keybindingsPath, out)
+  }
+
+  /** Workspace arrangements per task (layouts.json); a bad or missing file means the defaults. */
+  async layouts(): Promise<SavedLayouts> {
+    return normalizeLayouts((await readJson(join(this.dir(), 'layouts.json'))).value)
+  }
+
+  async saveLayouts(layouts: unknown): Promise<void> {
+    await writeJson(join(this.dir(), 'layouts.json'), normalizeLayouts(layouts))
   }
 
   /** Create keybindings.json if needed (for editing it by hand). */
@@ -117,7 +128,7 @@ export class UserState {
 }
 
 export function projectSettingsPath(root: string): string {
-  return join(root, PROJECT_SETTINGS_DIR, PROJECT_SETTINGS_FILE)
+  return join(root, PROJECT_DIR, PROJECT_SETTINGS_FILE)
 }
 
 /** The project's settings overrides; an unreadable file is reported, not fatal. */
@@ -127,21 +138,29 @@ export async function readProjectSettings(root: string): Promise<{ settings: Pro
   return { settings: normalizeProjectSettings(res.value), path, exists: !res.missing, error: res.error }
 }
 
-/** Files the window may read or create in <project>/.ideforfun (nothing else). */
-const PROJECT_FILES = new Set(['run.json'])
+/** Files the window may read or create in <project>/.forge (nothing else). */
+const PROJECT_FILES = new Set(['run.json', 'boxes.json'])
 
 /** A project file's JSON (missing = exists false, unreadable = error). */
 export async function readProjectFile(root: string, name: string): Promise<{ value: unknown; path: string; exists: boolean; error?: string }> {
   if (!PROJECT_FILES.has(name)) throw new Error(`Not a project file: ${name}`)
-  const path = join(root, PROJECT_SETTINGS_DIR, name)
+  const path = join(root, PROJECT_DIR, name)
   const res = await readJson(path)
   return { value: res.value, path, exists: !res.missing, error: res.error }
 }
 
 export async function ensureProjectFile(root: string, name: string, initial: unknown): Promise<string> {
   if (!PROJECT_FILES.has(name)) throw new Error(`Not a project file: ${name}`)
-  const path = join(root, PROJECT_SETTINGS_DIR, name)
+  const path = join(root, PROJECT_DIR, name)
   if ((await readJson(path)).missing) await writeJson(path, initial)
+  return path
+}
+
+/** Replace a project file's JSON (only the allowed names). */
+export async function writeProjectFile(root: string, name: string, value: unknown): Promise<string> {
+  if (!PROJECT_FILES.has(name)) throw new Error(`Not a project file: ${name}`)
+  const path = join(root, PROJECT_DIR, name)
+  await writeJson(path, value)
   return path
 }
 

@@ -1,14 +1,21 @@
 /**
- * Python language features via Pyright: keeps the server's view of open
- * files in sync with the editor and collects its diagnostics (errors and
- * warnings). Completion, hover and go-to-definition build on this.
+ * One language server (Pyright, or any other LSP server): keeps the server's
+ * view of open files in sync with the editor, collects its diagnostics and
+ * wraps the requests the IDE uses (completion, hover, definitions, rename...).
+ * Nothing here is specific to one language: what differs per server is in its
+ * ServerConfig (e.g. src/renderer/lsp/pyright.ts). LanguageServices
+ * (services.ts) runs several of these side by side.
  */
 import type { LspClient } from './client'
+import { languageForPath } from '../../shared/languages'
 import type { Doc } from '../editor/document'
 import type { Position } from '../editor/textBuffer'
 import { pathToUri, uriToPath } from '../../shared/uri'
 import type { CompletionItem } from './completionLogic'
-import { parseLocations, parseSymbols, parseWorkspaceEdit, type DocSymbol, type FileEdits, type Location } from './navigation'
+import {
+  parseCallItem, parseCalls, parseHighlights, parseLocations, parseSymbols, parseWorkspaceEdit, parseWorkspaceSymbols,
+  type CallItem, type DocSymbol, type FileEdits, type Location, type WorkspaceSymbol
+} from './navigation'
 
 export interface Diagnostic {
   start: Position
@@ -18,6 +25,37 @@ export interface Diagnostic {
   message: string
   source?: string
   code?: string | number
+  /** A fix that comes with it (Ruff). */
+  fix?: { title: string; edits: { start: Position; end: Position; text: string }[]; safe: boolean }
+  /** Link to the rule's documentation. */
+  url?: string
+  /** Id of the language server that reported it (unset for other tools). */
+  server?: string
+  /** The server's own diagnostic object (sent back when asking for code actions). */
+  raw?: unknown
+}
+
+/** A code action from the language server (quick fix, organise imports...). */
+export interface CodeAction {
+  title: string
+  kind: string
+  preferred: boolean
+  edit?: FileEdits
+  command?: { command: string; arguments?: unknown[] }
+  /** Id of the server it came from (to run its command there). */
+  server?: string
+}
+
+/** What differs between language servers. */
+export interface ServerConfig {
+  /** Id in the main process's server registry, and `server` in src/shared/languages.ts. */
+  id: string
+  /** Shown in messages ("Pyright"). */
+  name: string
+  /** Language ids it handles (default: the languages whose `server` is this id). */
+  languages?: readonly string[]
+  /** Answer the server's workspace/configuration request for one section. `settings` come from start(). */
+  configuration?(section: string | undefined, settings: Readonly<Record<string, unknown>>): unknown
 }
 
 interface LspRange {
@@ -34,9 +72,8 @@ const defaultSchedule: Schedule = (fn, ms) => {
   return () => clearTimeout(t)
 }
 
-const isPython = (path: string) => /\.pyi?$/i.test(path)
 /** Windows paths compare case-insensitively and ignore slash direction. */
-const key = (path: string) => (/^[a-zA-Z]:/.test(path) ? path.replace(/\//g, '\\').toLowerCase() : path)
+export const pathKey = (path: string): string => (/^[a-zA-Z]:/.test(path) ? path.replace(/\//g, '\\').toLowerCase() : path)
 
 export function toPosition(p: { line: number; character: number }): Position {
   return { line: p.line, col: p.character }
@@ -45,25 +82,32 @@ export function toLsp(p: Position): { line: number; character: number } {
   return { line: p.line, character: p.col }
 }
 
-export class PythonLanguage {
+export class LspServer {
   private readonly schedule: Schedule
   private ready: Promise<void> = Promise.resolve()
   private started = false
-  private pythonPath: string | undefined
+  private settings: Readonly<Record<string, unknown>> = {}
   /** Docs the server knows about, with the version last sent. */
   private readonly open = new Map<Doc, number>()
   private readonly pending = new Set<Doc>()
   private cancelTimer: (() => void) | null = null
   private readonly diagnostics = new Map<string, { path: string; list: Diagnostic[] }>()
   private readonly diagnosticListeners = new Set<() => void>()
+  /** Applies edits the server asks for (workspace/applyEdit); returns whether it worked. */
+  applyEditHandler: ((edits: FileEdits) => Promise<boolean> | boolean) | null = null
   serverCapabilities: Record<string, any> = {}
 
-  constructor(private readonly client: LspClient, opts: { schedule?: Schedule } = {}) {
+  constructor(private readonly client: LspClient, readonly config: ServerConfig, opts: { schedule?: Schedule } = {}) {
     this.schedule = opts.schedule ?? defaultSchedule
 
     client.onRequest('workspace/configuration', (params: { items: { section?: string }[] }) =>
       params.items.map((item) => this.configFor(item.section))
     )
+    client.onRequest('workspace/applyEdit', async (params: { edit: unknown }) => {
+      const edits = parseWorkspaceEdit(params?.edit)
+      const applied = this.applyEditHandler ? await this.applyEditHandler(edits) : false
+      return { applied }
+    })
     client.onNotification('textDocument/publishDiagnostics', (params: { uri: string; diagnostics: any[] }) => {
       const path = uriToPath(params.uri)
       const list: Diagnostic[] = params.diagnostics.map((d) => {
@@ -75,17 +119,19 @@ export class PythonLanguage {
         }
         if (d.source !== undefined) diag.source = d.source
         if (d.code !== undefined) diag.code = d.code
+        diag.server = this.config.id
+        diag.raw = d
         return diag
       })
-      if (list.length) this.diagnostics.set(key(path), { path, list })
-      else this.diagnostics.delete(key(path))
+      if (list.length) this.diagnostics.set(pathKey(path), { path, list })
+      else this.diagnostics.delete(pathKey(path))
       this.diagnosticListeners.forEach((l) => l())
     })
   }
 
   /** Start talking to a (freshly started) server for a project folder. */
-  async start(rootPath: string, pythonPath?: string): Promise<void> {
-    this.pythonPath = pythonPath
+  async start(rootPath: string, settings: Readonly<Record<string, unknown>> = {}): Promise<void> {
+    this.settings = settings
     this.cancelTimer?.()
     this.pending.clear()
     this.diagnostics.clear()
@@ -94,11 +140,11 @@ export class PythonLanguage {
     this.ready = (async () => {
       const result = await this.client.request<{ capabilities: Record<string, any> }>('initialize', {
         processId: null,
-        clientInfo: { name: 'IDEforfun' },
+        clientInfo: { name: 'Forge' },
         rootUri,
         workspaceFolders: [{ uri: rootUri, name: rootPath.split(/[\\/]/).pop() }],
         capabilities: {
-          workspace: { configuration: true, workspaceFolders: true, workspaceEdit: { documentChanges: true } },
+          workspace: { configuration: true, workspaceFolders: true, workspaceEdit: { documentChanges: true }, applyEdit: true, executeCommand: {} },
           textDocument: {
             synchronization: { didSave: true, dynamicRegistration: false },
             publishDiagnostics: { relatedInformation: false },
@@ -110,7 +156,14 @@ export class PythonLanguage {
             definition: { linkSupport: false },
             references: {},
             rename: { prepareSupport: true },
-            documentSymbol: { hierarchicalDocumentSymbolSupport: true }
+            documentSymbol: { hierarchicalDocumentSymbolSupport: true },
+            typeDefinition: { linkSupport: false },
+            documentHighlight: {},
+            callHierarchy: {},
+            codeAction: {
+              codeActionLiteralSupport: { codeActionKind: { valueSet: ['quickfix', 'refactor', 'source', 'source.organizeImports'] } },
+              isPreferredSupport: true
+            }
           }
         }
       })
@@ -124,18 +177,20 @@ export class PythonLanguage {
     for (const [doc] of this.open) this.sendOpen(doc)
   }
 
-  /** Settings Pyright asks for. */
+  /** Settings the server asks for. */
   private configFor(section: string | undefined): unknown {
-    if (section === 'python') return this.pythonPath ? { pythonPath: this.pythonPath } : {}
-    if (section === 'python.analysis') {
-      return { diagnosticMode: 'openFilesOnly', autoSearchPaths: true, useLibraryCodeForTypes: true, typeCheckingMode: 'standard' }
-    }
-    return {}
+    return this.config.configuration?.(section, this.settings) ?? {}
   }
 
-  /** Match the server's open documents to the editor's open tabs. */
+  /** Is this file in a language this server handles? */
+  handles(path: string): boolean {
+    const lang = languageForPath(path)
+    return this.config.languages ? this.config.languages.includes(lang.id) : lang.server === this.config.id
+  }
+
+  /** Match the server's open documents to the editor's open tabs (those in its languages). */
   syncDocs(docs: readonly Doc[]): void {
-    const wanted = new Set(docs.filter((d) => isPython(d.path)))
+    const wanted = new Set(docs.filter((d) => this.handles(d.path)))
     for (const doc of [...this.open.keys()]) {
       if (wanted.has(doc)) continue
       this.open.delete(doc)
@@ -151,8 +206,9 @@ export class PythonLanguage {
 
   private sendOpen(doc: Doc): void {
     this.open.set(doc, 1)
+    const lang = languageForPath(doc.path)
     this.client.notify('textDocument/didOpen', {
-      textDocument: { uri: pathToUri(doc.path), languageId: 'python', version: 1, text: doc.getText() }
+      textDocument: { uri: pathToUri(doc.path), languageId: lang.lspId ?? lang.id, version: 1, text: doc.getText() }
     })
   }
 
@@ -198,7 +254,7 @@ export class PythonLanguage {
       context: trigger ? { triggerKind: 2, triggerCharacter: trigger } : { triggerKind: 1 }
     })
     const list: any[] = Array.isArray(res) ? res : res?.items ?? []
-    return { items: list.map(toCompletionItem), incomplete: !Array.isArray(res) && !!res?.isIncomplete }
+    return { items: list.map((raw) => ({ ...toCompletionItem(raw), server: this.config.id })), incomplete: !Array.isArray(res) && !!res?.isIncomplete }
   }
 
   /** Fetch the details/docs for one suggestion (Pyright fills these in lazily). */
@@ -298,13 +354,91 @@ export class PythonLanguage {
     return parseSymbols(res)
   }
 
+  /** Other uses of the name at `pos` in the same file (to highlight them). */
+  async highlights(doc: Doc, pos: Position): Promise<{ start: Position; end: Position; write: boolean }[]> {
+    if (!this.started || !this.open.has(doc)) return []
+    this.flush()
+    const res = await this.client.request<unknown>('textDocument/documentHighlight', {
+      textDocument: { uri: pathToUri(doc.path) },
+      position: toLsp(pos)
+    })
+    return parseHighlights(res)
+  }
+
+  /** Where the type of the thing at `pos` is defined (e.g. the class of a variable). */
+  async typeDefinition(doc: Doc, pos: Position): Promise<Location[]> {
+    if (!this.started || !this.open.has(doc)) return []
+    this.flush()
+    const res = await this.client.request<unknown>('textDocument/typeDefinition', {
+      textDocument: { uri: pathToUri(doc.path) },
+      position: toLsp(pos)
+    })
+    return parseLocations(res)
+  }
+
+  /** Classes, functions and variables across the project whose name matches `query`. */
+  async workspaceSymbols(query: string): Promise<WorkspaceSymbol[]> {
+    if (!this.started) return []
+    this.flush()
+    return parseWorkspaceSymbols(await this.client.request<unknown>('workspace/symbol', { query }))
+  }
+
+  /** The function/method at `pos`, as the start of a call hierarchy. */
+  async prepareCallHierarchy(doc: Doc, pos: Position): Promise<CallItem[]> {
+    if (!this.started || !this.open.has(doc)) return []
+    this.flush()
+    const res = await this.client.request<unknown[]>('textDocument/prepareCallHierarchy', {
+      textDocument: { uri: pathToUri(doc.path) },
+      position: toLsp(pos)
+    })
+    return (Array.isArray(res) ? res : []).map(parseCallItem).filter((i): i is CallItem => !!i).map((i) => ({ ...i, server: this.config.id }))
+  }
+
+  /** Who calls `item` (incoming) or what `item` calls (outgoing). */
+  async calls(item: CallItem, direction: 'incoming' | 'outgoing'): Promise<{ item: CallItem; at: Position[] }[]> {
+    if (!this.started) return []
+    const res = await this.client.request<unknown>(`callHierarchy/${direction}Calls`, { item: item.raw })
+    return parseCalls(res, direction === 'incoming' ? 'from' : 'to').map((c) => ({ ...c, item: { ...c.item, server: this.config.id } }))
+  }
+
+  /** Quick fixes and other actions for a range (with the diagnostics there). */
+  async codeActions(doc: Doc, start: Position, end: Position, diagnostics: Diagnostic[], only?: string[]): Promise<CodeAction[]> {
+    if (!this.started || !this.open.has(doc)) return []
+    this.flush()
+    const res = await this.client.request<any[]>('textDocument/codeAction', {
+      textDocument: { uri: pathToUri(doc.path) },
+      range: { start: toLsp(start), end: toLsp(end) },
+      context: { diagnostics: diagnostics.map((d) => d.raw).filter(Boolean), ...(only ? { only } : {}) }
+    })
+    const out: CodeAction[] = []
+    for (const a of Array.isArray(res) ? res : []) {
+      if (!a || typeof a.title !== 'string') continue
+      // A bare Command (no kind/edit) is also allowed.
+      if (typeof a.command === 'string') {
+        out.push({ title: a.title, kind: '', preferred: false, command: { command: a.command, arguments: a.arguments }, server: this.config.id })
+        continue
+      }
+      const action: CodeAction = { title: a.title, kind: typeof a.kind === 'string' ? a.kind : '', preferred: !!a.isPreferred, server: this.config.id }
+      if (a.edit) action.edit = parseWorkspaceEdit(a.edit)
+      if (a.command?.command) action.command = { command: a.command.command, arguments: a.command.arguments }
+      if (action.edit || action.command) out.push(action)
+    }
+    return out
+  }
+
+  /** Run a server command (e.g. from a code action). Edits come back via workspace/applyEdit. */
+  async executeCommand(command: { command: string; arguments?: unknown[] }): Promise<void> {
+    if (!this.started) return
+    await this.client.request('workspace/executeCommand', { command: command.command, arguments: command.arguments ?? [] })
+  }
+
   /** Tell the server files changed on disk behind its back (e.g. a rename edited closed files). */
   filesChangedOnDisk(paths: string[]): void {
     if (!this.started || !paths.length) return
     this.client.notify('workspace/didChangeWatchedFiles', { changes: paths.map((p) => ({ uri: pathToUri(p), type: 2 })) })
   }
 
-  /** Is this doc known to the server (open and Python)? */
+  /** Is this doc known to the server (open, and in one of its languages)? */
   knows(doc: Doc): boolean {
     return this.started && this.open.has(doc)
   }
@@ -316,7 +450,7 @@ export class PythonLanguage {
   }
 
   diagnosticsFor(path: string): Diagnostic[] {
-    return this.diagnostics.get(key(path))?.list ?? []
+    return this.diagnostics.get(pathKey(path))?.list ?? []
   }
 
   /** [path, diagnostics] for every file that has some. */

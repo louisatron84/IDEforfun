@@ -27,7 +27,7 @@ describe('recent projects', () => {
 
 describe('normalizeWorkspaceState', () => {
   it('gives an empty layout for garbage', () => {
-    expect(normalizeWorkspaceState(null)).toEqual({ groups: [{ tabs: [], active: null }], activeGroup: 0, terminals: [], panel: null, runConfig: null })
+    expect(normalizeWorkspaceState(null)).toEqual({ groups: [{ tabs: [], active: null }], activeGroup: 0, terminals: [], panel: null, task: 'code', runConfig: null, breakpoints: [], watches: [], exceptionFilters: null })
   })
   it('keeps valid tabs and fixes the rest', () => {
     const s = normalizeWorkspaceState({
@@ -49,3 +49,12 @@ describe('normalizeWorkspaceState', () => {
     expect(s.panel).toBe('terminal')
   })
 })
+
+describe('active task per project', () => {
+  it("defaults to 'code' and keeps a valid task", () => {
+    expect(normalizeWorkspaceState({}).task).toBe('code')
+    expect(normalizeWorkspaceState({ task: 'debug' }).task).toBe('debug')
+    expect(normalizeWorkspaceState({ task: 'party' }).task).toBe('code')
+  })
+})
+

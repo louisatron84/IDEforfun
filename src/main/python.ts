@@ -12,6 +12,7 @@ import { win32, posix } from 'node:path'
 import type { WebContents } from 'electron'
 import type { RunEventBody } from '../shared/api'
 import { OutputQueue, skippedNote } from '../shared/outputBuffer'
+import { processEnvSync } from './dotenvFile'
 
 /** Output is sent to the window in batches this often... */
 const BATCH_MS = 40
@@ -82,7 +83,7 @@ export class PythonRunner {
       const target = spec.module ? ['-m', spec.module] : [spec.program ?? '']
       const child = spawn(python, ['-u', ...target, ...spec.args], {
         cwd: spec.cwd,
-        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1', ...spec.env },
+        env: processEnvSync(spec.root || spec.cwd, { PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1', ...spec.env }),
         windowsHide: true
       })
       let started = false

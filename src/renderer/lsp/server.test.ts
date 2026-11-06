@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { LspClient } from './client'
-import { PythonLanguage } from './python'
+import { LspServer } from './server'
+import { pyright } from './pyright'
 import { Doc } from '../editor/document'
 
 /** A fake server: records what the client sends and answers `initialize`. */
@@ -12,7 +13,7 @@ function setup() {
     if (m.method === 'initialize') queueMicrotask(() => client.handleMessage({ jsonrpc: '2.0', id: m.id, result: { capabilities: {} } }))
   })
   const timers: (() => void)[] = []
-  const lang = new PythonLanguage(client, { schedule: (fn) => { timers.push(fn); return () => {} } })
+  const lang = new LspServer(client, pyright, { schedule: (fn) => { timers.push(fn); return () => {} } })
   const runTimers = () => timers.splice(0).forEach((f) => f())
   const methods = () => sent.filter((m) => m.method).map((m) => m.method)
   return { client, lang, sent, runTimers, methods }
@@ -21,17 +22,17 @@ function setup() {
 const edit = (doc: Doc, text: string) =>
   doc.history.transact('typing', { line: 0, col: 0 }, () => doc.buffer.insert(doc.buffer.clamp({ line: 99, col: 99 }), text))
 
-describe('PythonLanguage', () => {
+describe('LspServer (with the Pyright config)', () => {
   it('initializes, then sends initialized and the configuration', async () => {
     const { lang, sent, methods } = setup()
-    await lang.start('C:\\proj', 'C:\\proj\\.venv\\Scripts\\python.exe')
+    await lang.start('C:\\proj', { pythonPath: 'C:\\proj\\.venv\\Scripts\\python.exe' })
     expect(methods()).toEqual(['initialize', 'initialized', 'workspace/didChangeConfiguration'])
     expect(sent[0].params.rootUri).toBe('file:///c%3A/proj')
   })
 
   it('answers workspace/configuration with the python path and analysis settings', async () => {
     const { client, lang, sent } = setup()
-    await lang.start('/proj', '/proj/.venv/bin/python')
+    await lang.start('/proj', { pythonPath: '/proj/.venv/bin/python' })
     client.handleMessage({ jsonrpc: '2.0', id: 'c1', method: 'workspace/configuration', params: { items: [{ section: 'python' }, { section: 'python.analysis' }, { section: 'other' }] } })
     await new Promise((r) => setTimeout(r, 0))
     const reply = sent.find((m) => m.id === 'c1')
@@ -89,9 +90,10 @@ describe('PythonLanguage', () => {
       ] }
     })
     expect(calls).toBe(1)
-    expect(lang.diagnosticsFor('c:\\PROJ\\a.py')).toEqual([
+    expect(lang.diagnosticsFor('c:\\PROJ\\a.py')).toMatchObject([
       { start: { line: 0, col: 4 }, end: { line: 0, col: 7 }, severity: 1, message: '"foo" is not defined', source: 'Pyright', code: 'reportUndefinedVariable' }
     ])
+    expect(lang.diagnosticsFor('c:\\proj\\a.py')[0].server).toBe('pyright')
     expect(lang.allDiagnostics().map(([path]) => path)).toEqual(['C:\\proj\\a.py'])
   })
 

@@ -102,6 +102,13 @@ export function buildMenu(state: MenuState = { keys: {}, recent: [] }): Menu {
         cmd('Search in Project', 'search.project', 'CmdOrCtrl+Shift+F'),
         sep,
         cmd('Toggle Comment', 'editor.toggleComment', 'CmdOrCtrl+/'),
+        sep,
+        cmd('Quick Fix…', 'editor.quickFix', 'CmdOrCtrl+.'),
+        cmd('Format Document', 'editor.format', 'Shift+Alt+F'),
+        cmd('Format Selection', 'editor.formatSelection'),
+        cmd('Organize Imports', 'editor.organizeImports', 'Shift+Alt+O'),
+        cmd('Fix All Auto-fixable Problems', 'editor.fixAll'),
+        sep,
         cmd('Fold All', 'editor.foldAll'),
         cmd('Unfold All', 'editor.unfoldAll')
       ]
@@ -115,11 +122,23 @@ export function buildMenu(state: MenuState = { keys: {}, recent: [] }): Menu {
         cmd('Go to Definition', 'nav.definition', 'F12'),
         cmd('Find All References', 'nav.references', 'Shift+F12'),
         cmd('Go to Symbol in File…', 'nav.symbol', 'CmdOrCtrl+Shift+O'),
+        cmd('Go to Symbol in Project…', 'nav.projectSymbol', 'CmdOrCtrl+T'),
+        cmd('Go to Type Definition', 'nav.typeDefinition'),
+        cmd('Go to Implementations', 'nav.implementations', 'CmdOrCtrl+F12'),
+        cmd('Show Call Hierarchy', 'nav.callHierarchy', 'Shift+Alt+H'),
         cmd('Rename Symbol…', 'editor.renameSymbol', 'F2'),
         cmd('Go Back', 'nav.back', 'Alt+Left'),
         sep,
         cmd('Files', 'view.files', 'CmdOrCtrl+Shift+E'),
         cmd('Outline', 'view.outline'),
+        cmd('Project Graph', 'view.projectGraph', 'CmdOrCtrl+Alt+G'),
+        { type: 'separator' },
+        cmd('Code', 'task.code', 'CmdOrCtrl+Alt+1'),
+        cmd('Connect', 'task.connect', 'CmdOrCtrl+Alt+2'),
+        cmd('Debug', 'task.debug', 'CmdOrCtrl+Alt+3'),
+        cmd('Run', 'task.run', 'CmdOrCtrl+Alt+4'),
+        cmd('Edit Layout', 'view.editLayout'),
+        cmd('Reset Layout of This Task', 'view.resetLayout'),
         cmd('References', 'panel.references'),
         cmd('Problems', 'panel.problems', 'CmdOrCtrl+Shift+M'),
         cmd('Output', 'panel.output'),
@@ -132,7 +151,7 @@ export function buildMenu(state: MenuState = { keys: {}, recent: [] }): Menu {
         sep,
         cmd('Bigger Font', 'view.zoomIn', 'CmdOrCtrl+='),
         cmd('Smaller Font', 'view.zoomOut', 'CmdOrCtrl+-'),
-        cmd('Toggle Light/Dark Theme', 'view.toggleTheme'),
+        cmd('Toggle Plain Theme', 'view.toggleTheme'),
         sep,
         { label: 'Toggle Developer Tools', role: 'toggleDevTools' }
       ]
@@ -174,7 +193,29 @@ export function buildMenu(state: MenuState = { keys: {}, recent: [] }): Menu {
         cmd('Step Out', 'debug.stepOut', 'Shift+F11'),
         sep,
         cmd('Toggle Breakpoint', 'debug.toggleBreakpoint', 'F9'),
+        cmd('Edit Breakpoint…', 'debug.editBreakpoint'),
+        cmd('Pause on Raised Exceptions', 'debug.toggleRaised'),
         cmd('Remove All Breakpoints', 'debug.clearBreakpoints')
+      ]
+    },
+    {
+      label: '&Git',
+      submenu: [
+        cmd('Source Control', 'git.show', 'CmdOrCtrl+Shift+G'),
+        cmd('Show Changes in This File', 'git.diffFile'),
+        cmd('History', 'git.history'),
+        cmd('File History', 'git.fileHistory'),
+        cmd('Toggle Blame', 'git.toggleBlame'),
+        sep,
+        cmd('Commit', 'git.commit'),
+        cmd('Stage All Changes', 'git.stageAll'),
+        sep,
+        cmd('Switch Branch…', 'git.branch'),
+        cmd('Fetch', 'git.fetch'),
+        cmd('Pull', 'git.pull'),
+        cmd('Push', 'git.push'),
+        sep,
+        cmd('Initialize Repository', 'git.init')
       ]
     },
     {
@@ -192,13 +233,13 @@ export function buildMenu(state: MenuState = { keys: {}, recent: [] }): Menu {
         cmd('Welcome', 'help.welcome'),
         cmd('All Commands and Shortcuts', 'palette.commands', 'CmdOrCtrl+Shift+P'),
         {
-          label: 'About IDEforfun',
+          label: 'About Forge',
           click: () => {
             const win = BrowserWindow.getFocusedWindow()
             const opts = {
               type: 'info' as const,
-              title: 'About IDEforfun',
-              message: `IDEforfun ${app.getVersion()}`,
+              title: 'About Forge',
+              message: `Forge ${app.getVersion()}`,
               detail: `A hobby IDE for Python, with a hand-written editor.\n\nElectron ${process.versions.electron} · Node ${process.versions.node} · Chromium ${process.versions.chrome}`
             }
             void (win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts))

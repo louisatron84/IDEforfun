@@ -28,6 +28,8 @@ const PAD_TOP = 4 // space above the first line
 const PAD_LEFT = 12 // must match .editor .lines padding-left in styles.css
 const PAD_RIGHT = 24
 const GUTTER_PAD = 52 // gutter's left (breakpoint dots) + right (fold arrows) padding around the numbers
+/** Room for blame notes in the gutter, in characters. */
+const GUTTER_NOTE_CHARS = 26
 /** Extra lines drawn above/below the visible area so fast scrolling doesn't flash. */
 const OVERSCAN = 5
 
@@ -45,6 +47,10 @@ export interface EditorOptions {
   onCtrlClick?: (pos: Position) => void
   /** Click in the line-number gutter (0-based line), e.g. to toggle a breakpoint. */
   onGutterClick?: (line: number) => void
+  /** Right-click in the line-number gutter (e.g. breakpoint options). */
+  onGutterContextMenu?: (line: number, e: MouseEvent) => void
+  /** The 💡 next to a line with quick fixes was clicked. */
+  onLightbulb?: (line: number) => void
   /** The editor got keyboard focus (with a split view: this side became active). */
   onFocus?: () => void
   /** The cursor or selection moved, or the text changed (e.g. to update the status bar). */
@@ -182,12 +188,19 @@ export class Editor {
       if (this.hasDoc) this.opts.onMouseMove?.(this.hitTest(e.clientX, e.clientY), e)
     })
     this.textArea.addEventListener('mouseleave', () => this.opts.onMouseLeave?.())
+    this.gutter.addEventListener('contextmenu', (e) => {
+      if (!this.hasDoc) return
+      e.preventDefault()
+      const line = this.lineAtY(e.clientY - this.content.getBoundingClientRect().top)
+      if (line >= 0 && line < this.buffer.lineCount) this.opts.onGutterContextMenu?.(line, e)
+    })
     this.gutter.addEventListener('mousedown', (e) => {
       if (!this.hasDoc || e.button !== 0) return
       e.preventDefault() // keep focus in the editor
       const line = this.lineAtY(e.clientY - this.content.getBoundingClientRect().top)
       if (line < 0 || line >= this.buffer.lineCount) return
       if ((e.target as HTMLElement).closest('.fold-toggle')) this.toggleFold(line)
+      else if ((e.target as HTMLElement).closest('.lightbulb')) this.opts.onLightbulb?.(line)
       else this.opts.onGutterClick?.(line)
     })
     this.root.addEventListener('scroll', () => {
@@ -378,6 +391,8 @@ export class Editor {
   toggleComment(): void {
     if (!this.hasDoc) return
     const b = this.buffer
+    const marker = this.doc.mode.lineComment
+    if (!marker) return
     // Several cursors on one line must toggle it once, not once per cursor.
     const done = new Set<number>()
     this.editMulti('other', (s) => {
@@ -386,7 +401,7 @@ export class Editor {
       for (let l = first; l <= last; l++) if (!done.has(l)) fresh = true
       if (!fresh) return s
       for (let l = first; l <= last; l++) done.add(l)
-      return pairs.toggleComment(b, s)
+      return marker ? pairs.toggleComment(b, s, marker) : s
     })
   }
 
@@ -575,7 +590,7 @@ export class Editor {
         })
         return true
       case 'Enter':
-        this.editMulti('newline', (s) => at((sel.isEmpty(s) && pairs.newlineBetweenBrackets(b, s.head, tab)) || cmd.newline(b, replace(s), tab)))
+        this.editMulti('newline', (s) => at((sel.isEmpty(s) && pairs.newlineBetweenBrackets(b, s.head, tab)) || cmd.newline(b, replace(s), tab, this.doc.mode.indentAfter)))
         return true
       case 'Tab': {
         if (ctrl) return false
@@ -730,7 +745,7 @@ export class Editor {
         break
       case 'Enter':
         kind = 'newline'
-        edit = () => (!hadSelection && pairs.newlineBetweenBrackets(b, pos, this._tabSize)) || cmd.newline(b, replaceSelection(), this._tabSize)
+        edit = () => (!hadSelection && pairs.newlineBetweenBrackets(b, pos, this._tabSize)) || cmd.newline(b, replaceSelection(), this._tabSize, this.doc.mode.indentAfter)
         break
       case 'Tab': {
         if (ctrl) return // leave Ctrl+Tab for future tab switching
@@ -767,7 +782,7 @@ export class Editor {
       const lines = text.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n')
       const perCursor = kind === 'paste' && lines.length === this.cursorCount
       this.editMulti(kind, (s, i) => {
-        const paired = kind === 'typing' && text.length === 1 && this.autoClose ? pairs.typeChar(this.buffer, s, text) : null
+        const paired = kind === 'typing' && text.length === 1 && this.autoClose ? pairs.typeChar(this.buffer, s, text, this.doc.mode.stringPrefixes) : null
         if (paired) return paired
         const at = sel.isEmpty(s) ? s.head : sel.deleteSelection(this.buffer, s)
         const p = this.buffer.insert(at, perCursor ? lines[i] : text)
@@ -782,7 +797,7 @@ export class Editor {
     let anchor: Position | null = null
     const next = this.history.transact(kind, this.cursor, () => {
       // Brackets and quotes: auto-close, type over closers, wrap a selection.
-      const paired = kind === 'typing' && text.length === 1 && this.autoClose ? pairs.typeChar(this.buffer, s, text) : null
+      const paired = kind === 'typing' && text.length === 1 && this.autoClose ? pairs.typeChar(this.buffer, s, text, this.doc.mode.stringPrefixes) : null
       if (paired) {
         anchor = paired.anchor
         return paired.head
@@ -1090,7 +1105,7 @@ export class Editor {
     this.content.style.height = height
     this.content.style.width = `${PAD_LEFT + widest * this.charWidth + PAD_RIGHT + this.minimapRoom}px`
     this.gutter.style.height = height
-    this.gutter.style.width = `${String(lines.length).length * this.charWidth + GUTTER_PAD}px`
+    this.gutter.style.width = `${String(lines.length).length * this.charWidth + GUTTER_PAD + (this.gutterNotes ? GUTTER_NOTE_CHARS * this.charWidth : 0)}px`
   }
 
   /** Which screen rows are visible, plus a few extra above and below. */
@@ -1109,7 +1124,9 @@ export class Editor {
     for (let row = first; row <= last; row++) {
       const i = this.foldMap.bufferLine(row)
       lineEls.push(this.renderLine(i))
-      const num = el('div', this.breakpoints.has(i) ? (i === this.execLine ? 'bp exec' : 'bp') : i === this.execLine ? 'exec' : '')
+      const bpStyle = this.breakpointStyles.get(i)
+      const bp = this.breakpoints.has(i) ? `bp${bpStyle && bpStyle !== 'plain' ? ` bp-${bpStyle}` : ''}` : ''
+      const num = el('div', [bp, i === this.execLine ? 'exec' : ''].filter(Boolean).join(' '))
       num.textContent = String(i + 1)
       if (isFoldable(this.getLine, n, i)) {
         const folded = this.foldMap.isFolded(i)
@@ -1117,6 +1134,17 @@ export class Editor {
         toggle.textContent = folded ? '▸' : '▾'
         toggle.title = folded ? 'Unfold (Ctrl+Shift+])' : 'Fold (Ctrl+Shift+[)'
         num.append(toggle)
+      }
+      if (this.gutterNotes) {
+        const note = el('span', 'gutter-note')
+        note.textContent = this.gutterNotes[i] ?? ''
+        num.append(note)
+      }
+      if (i === this.lightbulbLine) {
+        const bulb = el('span', 'lightbulb')
+        bulb.textContent = '💡'
+        bulb.title = 'Quick fixes (Ctrl+.)'
+        num.append(bulb)
       }
       numberEls.push(num)
     }
@@ -1154,8 +1182,21 @@ export class Editor {
   private breakpoints: ReadonlySet<number> = new Set()
   private execLine: number | null = null
 
-  setLineMarkers(breakpoints: Iterable<number>, execLine: number | null): void {
+  /** Line showing a 💡 (it has quick fixes), or null. */
+  private lightbulbLine: number | null = null
+
+  setLightbulb(line: number | null): void {
+    if (line === this.lightbulbLine) return
+    this.lightbulbLine = line
+    if (this.hasDoc) this.renderLines()
+  }
+
+  /** Kind of each breakpoint (conditional, log, disabled) for its dot's look. */
+  private breakpointStyles = new Map<number, string>()
+
+  setLineMarkers(breakpoints: Iterable<number>, execLine: number | null, styles?: Map<number, string>): void {
     this.breakpoints = new Set(breakpoints)
+    this.breakpointStyles = styles ?? new Map()
     this.execLine = execLine
     if (!this.hasDoc) return
     this.renderLines()
@@ -1169,6 +1210,36 @@ export class Editor {
   setMatches(matches: { start: Position; end: Position }[]): void {
     this.matches = matches
     this.renderSelection()
+  }
+
+  /** Whole lines shaded with a class (e.g. the two sides of a merge conflict). */
+  private lineShades: { from: number; to: number; cls: string }[] = []
+
+  setLineShades(list: { from: number; to: number; cls: string }[]): void {
+    if (!list.length && !this.lineShades.length) return
+    this.lineShades = list
+    if (this.hasDoc) this.renderSelection()
+  }
+
+  /** Text shown in the gutter before each line number (blame), or null for none. */
+  private gutterNotes: readonly string[] | null = null
+
+  setGutterNotes(notes: readonly string[] | null): void {
+    this.gutterNotes = notes
+    this.root.classList.toggle('with-notes', !!notes)
+    if (!this.hasDoc) return
+    this.updateSize()
+    this.renderLines()
+    this.renderSelection()
+  }
+
+  /** Other uses of the name under the cursor (kind 3 = written to, else read). */
+  private occurrences: { start: Position; end: Position; write: boolean }[] = []
+
+  setOccurrences(list: { start: Position; end: Position; write: boolean }[]): void {
+    if (!list.length && !this.occurrences.length) return
+    this.occurrences = list
+    if (this.hasDoc) this.renderSelection()
   }
 
   /** Underline ranges (errors/warnings). Replaces the previous set. */
@@ -1221,6 +1292,18 @@ export class Editor {
       const box = el('div', 'exec-line')
       box.style.transform = `translateY(${this.yOf(this.execLine)}px)`
       boxes.push(box)
+    }
+    for (const s of this.lineShades) {
+      for (let line = Math.max(s.from, firstVisible); line <= Math.min(s.to, lastVisible); line++) {
+        if (this.foldMap.isHidden(line)) continue
+        const box = el('div', `line-shade ${s.cls}`)
+        box.style.transform = `translateY(${this.yOf(line)}px)`
+        boxes.push(box)
+      }
+    }
+    for (const o of this.occurrences) {
+      if (o.end.line < firstVisible || o.start.line > lastVisible) continue
+      this.addBoxes(boxes, o.start, o.end, o.write ? 'occurrence write' : 'occurrence', firstVisible, lastVisible)
     }
     for (const m of this.matches) {
       if (m.end.line < firstVisible) continue

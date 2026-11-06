@@ -7,6 +7,7 @@ import { TextBuffer } from './textBuffer'
 import { History } from './history'
 import { Highlighter } from './highlighter'
 import { shiftLines } from './lines'
+import { modeFor, type LanguageMode } from './modes'
 import type { Encoding } from '../../shared/encoding'
 
 export class Doc {
@@ -27,7 +28,7 @@ export class Doc {
   constructor(public path: string, text: string, opts: { encoding?: Encoding; large?: boolean } = {}) {
     this.buffer = new TextBuffer(text)
     this.history = new History(this.buffer)
-    this.highlighter = new Highlighter(this.buffer)
+    this.highlighter = new Highlighter(this.buffer, () => this.mode)
     this.encoding = this.savedEncoding = opts.encoding ?? 'utf8'
     this.large = opts.large ?? false
     this.savedEol = this.buffer.eol
@@ -35,6 +36,14 @@ export class Doc {
       this.version++
       if (this.folds.length && change.text.includes('\n')) this.folds = shiftLines(this.folds, change)
     })
+  }
+
+  private modeCache: { path: string; mode: LanguageMode } | null = null
+
+  /** Highlighting, comments and indentation for this file's language (follows renames). */
+  get mode(): LanguageMode {
+    if (this.modeCache?.path !== this.path) this.modeCache = { path: this.path, mode: modeFor(this.path) }
+    return this.modeCache.mode
   }
 
   get name(): string {

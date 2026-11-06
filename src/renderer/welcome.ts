@@ -77,7 +77,7 @@ export class WelcomePage {
     const head = document.createElement('div')
     head.className = 'welcome-head'
     const title = document.createElement('h1')
-    title.textContent = 'IDEforfun'
+    title.textContent = 'Forge'
     const sub = document.createElement('p')
     sub.textContent = folder ? `Working in ${folderName(folder)}` : 'A hand-written IDE for Python'
     head.append(title, sub)
@@ -106,6 +106,7 @@ export class WelcomePage {
     if (folder) {
       right.append(this.section('This project', [
         { label: 'Go to File…', command: 'palette.files' },
+        { label: 'Project Graph', command: 'view.projectGraph', detail: 'how the modules fit together' },
         { label: 'Search in Project', command: 'search.project' },
         { label: 'Run Task…', command: 'tasks.run' },
         { label: 'Run Configurations…', command: 'run.selectConfig' },

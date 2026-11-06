@@ -29,14 +29,19 @@ export class ReferencesView {
   }
 
   /** Show results; `lineText` gives the text of a line (for the preview). */
-  async show(name: string, locations: Location[], lineText: (path: string, line: number) => Promise<string>): Promise<void> {
+  async show(
+    name: string, locations: Location[], lineText: (path: string, line: number) => Promise<string>,
+    /** What the results are: e.g. "implementation" (default "reference"). */
+    what = 'reference'
+  ): Promise<void> {
     const gen = ++this.generation
-    if (!locations.length) return this.message(`No references to "${name}" found.`)
+    const plural = what.endsWith('s') ? `${what}es` : `${what}s`
+    if (!locations.length) return this.message(`No ${plural} ${what === 'reference' ? 'to' : 'of'} "${name}" found.`)
     const byFile = new Map<string, Location[]>()
     for (const l of locations) byFile.set(l.path, [...(byFile.get(l.path) ?? []), l])
     const head = document.createElement('div')
     head.className = 'references-summary'
-    head.textContent = `${locations.length} reference${locations.length === 1 ? '' : 's'} to "${name}" in ${byFile.size} file${byFile.size === 1 ? '' : 's'}`
+    head.textContent = `${locations.length} ${locations.length === 1 ? what : plural} ${what === 'reference' ? 'to' : 'of'} "${name}" in ${byFile.size} file${byFile.size === 1 ? '' : 's'}`
     const groups: HTMLElement[] = []
     for (const [path, list] of byFile) {
       const group = document.createElement('div')

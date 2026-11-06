@@ -22,8 +22,9 @@ const cursor = (p: Position): Selection => ({ anchor: p, head: p })
 /**
  * Typing one character, with bracket/quote help. Returns the new selection,
  * or null when nothing special applies (the caller then inserts normally).
+ * `pythonStrings`: string prefixes (f"...") and docstrings ("""|""").
  */
-export function typeChar(b: TextBuffer, s: Selection, ch: string): Selection | null {
+export function typeChar(b: TextBuffer, s: Selection, ch: string, pythonStrings = true): Selection | null {
   const isOpen = ch in OPEN_TO_CLOSE
   const isClose = ch in CLOSE_TO_OPEN
   const isQuote = QUOTES.has(ch)
@@ -48,7 +49,7 @@ export function typeChar(b: TextBuffer, s: Selection, ch: string): Selection | n
   // Typing the closer that's already there: just step over it.
   if ((isClose || isQuote) && next === ch) {
     // ...except a third quote: "" + " makes a docstring """|"""
-    if (!(isQuote && prev === ch && line[pos.col - 2] === ch)) return cursor({ line: pos.line, col: pos.col + 1 })
+    if (!(pythonStrings && isQuote && prev === ch && line[pos.col - 2] === ch)) return cursor({ line: pos.line, col: pos.col + 1 })
   }
   if (isOpen) {
     if (!closesBefore(next)) return null
@@ -57,13 +58,13 @@ export function typeChar(b: TextBuffer, s: Selection, ch: string): Selection | n
   }
   if (isQuote) {
     // Third quote of a docstring: """|"""
-    if (prev === ch && line[pos.col - 2] === ch && line[pos.col - 3] !== ch) {
+    if (pythonStrings && prev === ch && line[pos.col - 2] === ch && line[pos.col - 3] !== ch) {
       b.insert(pos, ch + ch + ch + ch)
       return cursor({ line: pos.line, col: pos.col + 1 })
     }
     // Don't pair after a word (it's an apostrophe: don't, it's), unless it's a string prefix like f"
     const before = line.slice(0, pos.col)
-    if (isWordChar(prev) && !STRING_PREFIX.test(before)) return null
+    if (isWordChar(prev) && !(pythonStrings && STRING_PREFIX.test(before))) return null
     if (prev === ch) return null
     if (!closesBefore(next)) return null
     b.insert(pos, ch + ch)
@@ -157,21 +158,21 @@ export function findMatchingBracket(
 }
 
 /**
- * Ctrl+/: comment the selected lines with "# ", or uncomment them if they
- * all are already. Returns the selection adjusted to the edit.
+ * Ctrl+/: comment the selected lines with "# " (or the language's marker),
+ * or uncomment them if they all are already. Returns the selection adjusted to the edit.
  */
-export function toggleComment(b: TextBuffer, s: Selection): Selection {
+export function toggleComment(b: TextBuffer, s: Selection, marker = '#'): Selection {
   const [first, last] = selectedLines(s)
   const lines: number[] = []
   for (let l = first; l <= last; l++) if (b.getLine(l).trim()) lines.push(l)
   if (!lines.length) return s
-  const allCommented = lines.every((l) => /^\s*#/.test(b.getLine(l)))
+  const allCommented = lines.every((l) => b.getLine(l).trimStart().startsWith(marker))
   const delta = new Map<number, { col: number; by: number }>()
   if (allCommented) {
     for (const l of lines) {
       const text = b.getLine(l)
-      const col = text.indexOf('#')
-      const len = text[col + 1] === ' ' ? 2 : 1
+      const col = text.indexOf(marker)
+      const len = marker.length + (text[col + marker.length] === ' ' ? 1 : 0)
       b.delete({ line: l, col }, { line: l, col: col + len })
       delta.set(l, { col, by: -len })
     }
@@ -179,8 +180,8 @@ export function toggleComment(b: TextBuffer, s: Selection): Selection {
     // Line the #s up at the smallest indentation of the selected lines.
     const indent = Math.min(...lines.map((l) => /^[ \t]*/.exec(b.getLine(l))![0].length))
     for (const l of lines) {
-      b.insert({ line: l, col: indent }, '# ')
-      delta.set(l, { col: indent, by: 2 })
+      b.insert({ line: l, col: indent }, marker + ' ')
+      delta.set(l, { col: indent, by: marker.length + 1 })
     }
   }
   const adjust = (p: Position): Position => {

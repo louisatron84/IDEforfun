@@ -1,7 +1,7 @@
-# IDEforfun
+# Forge
 a ide cus why not
 
-A hobby IDE built with Electron + TypeScript. The text editor (buffer, cursor, selection, undo, syntax highlighting, rendering) is written from scratch. The main target language is Python.
+Forge (the repository is still called IDEforfun) is a hobby IDE built with Electron + TypeScript: the place where you forge code. The text editor (buffer, cursor, selection, undo, syntax highlighting, rendering) is written from scratch. The main target language is Python.
 
 See [docs/CHECKLIST.md](docs/CHECKLIST.md) for the roadmap.
 
@@ -52,20 +52,28 @@ your terminal has `ELECTRON_RUN_AS_NODE` set. Clear it first: `$env:ELECTRON_RUN
 | Ctrl+\ / Ctrl+1 / Ctrl+2 | Split the editor (same file on both sides, own cursors) / focus left / focus right |
 | Ctrl+F / Ctrl+H | Find / find and replace (Alt+C case, Alt+W word, Alt+R regex) |
 | Ctrl+Shift+F / Ctrl+Shift+E | Search the whole project / back to the file tree |
+| Ctrl+Shift+G | Source control (Git tab): changes, diffs, stage, commit (Ctrl+Enter), branches, pull / push |
 | Ctrl+Space | Autocomplete (also pops up as you type) |
 | F12 or Ctrl+click / Alt+← | Go to definition / go back |
 | Shift+F12 | Find all references (References tab in the bottom panel) |
+| Ctrl+F12 | Go to implementations: subclasses of a class, or overrides of a method |
+| Shift+Alt+H | Call hierarchy: who calls this function / what it calls (Calls tab) |
+| Ctrl+T | Go to a class / function anywhere in the project |
 | F2 (in the editor) | Rename a symbol everywhere it's used |
 | Ctrl+Shift+O | Go to a class / function in this file (also the Outline tab in the sidebar) |
+| Ctrl+. (or click 💡) | Quick fixes: Ruff's fixes, Pyright's actions, ignore a rule on this line |
+| Shift+Alt+F / Shift+Alt+O | Format the file (Ruff or Black) / organize imports (sort, remove unused) |
 | Ctrl+Shift+M | Problems (errors and warnings from Pyright) |
 | F5 | Run the current Python file (auto-saves). With breakpoints set it debugs instead; while paused it continues |
 | Ctrl+F5 / Shift+F5 | Run without debugging / stop (running or debugging) |
-| F9 or click a line number | Toggle a breakpoint |
+| F9 or click a line number | Toggle a breakpoint (right-click the line number for a condition, hit count or log message) |
 | F10 / F11 / Shift+F11 | Debugger: step over / step into / step out |
 | Ctrl+Shift+F5 | Restart debugging |
 | Ctrl+Shift+B | Run a task (in its own terminal) |
 | Ctrl+` / Ctrl+Shift+` | Toggle terminal / new terminal (pick a shell with ▾ in the terminal panel) |
-| Ctrl+J | Toggle bottom panel |
+| Ctrl+J | Open or close the drawer (Terminal, Problems, Output…) |
+| Ctrl+Alt+1 … 4 | Switch task: Code, Connect, Debug, Run |
+| Ctrl+Alt+G | Project Graph (the Connect task) |
 | Ctrl+, | Settings |
 | Ctrl+= / Ctrl+- | Bigger / smaller code font |
 | Ctrl+Z / Ctrl+Y | Undo / redo |
@@ -93,8 +101,9 @@ the app's data folder, which you can also edit by hand ("Edit Keyboard Shortcuts
   open a folder, recent folders, project actions and the main shortcuts. New Folder with no
   folder open makes a new project folder and opens it. Turn it off with the tick box at the bottom.
 - The last project reopens at startup with its tabs, split, cursor positions, terminals
-  and bottom panel (turn this off in Settings). Each project remembers its own layout.
-- A project can override some settings in `.ideforfun/settings.json`
+  and task (turn this off in Settings). Each project remembers its own tabs; your panel
+  arrangement for each task is saved for you and applies to every project.
+- A project can override some settings in `.forge/settings.json` (projects from before the rename have `.ideforfun/`; Forge moves it on first open)
   (File → Preferences → Project Settings):
 
 ```json
@@ -109,12 +118,29 @@ the app's data folder, which you can also edit by hand ("Edit Keyboard Shortcuts
   from `requirements.txt` or the project's `pyproject.toml`, or save what's installed to
   `requirements.txt`. If the project needs packages that aren't installed, the status
   bar says so (⚠ n missing packages); click it to install them. pip runs in the Output panel.
+- **Debugging**: the program runs in a terminal so `input()` works (Settings → Debug in terminal).
+  The Debug panel has Watch expressions, every Breakpoint (switch on/off, edit, remove) and
+  "Pause on raised / uncaught exceptions"; programs with several threads list them in the
+  call stack. Breakpoints, watches and exception settings are saved with the project.
+- **Git** (Git tab, Git menu, ⎇ in the status bar): changed files grouped as conflicts / staged /
+  changes; click one for a colored diff where each hunk can be staged, unstaged or discarded
+  on its own. Commit (or amend), switch / create branches, fetch, pull and push. Open files
+  without unsaved changes reload when a switch or pull changes them.
+  Merge conflicts are shaded (yours green, incoming blue) with a bar to accept current /
+  incoming / both and then save and mark the file resolved. **History** (bottom panel)
+  draws the commit graph; click a commit for its files and diffs; Git → File History for one
+  file. Who last changed the cursor's line shows in the status bar; Git → Toggle Blame shows
+  it for every line.
+- **Ruff and Black**: if Ruff is installed in the project's Python (Quick Fix offers to
+  install it), its warnings show as you type next to Pyright's, with 💡 on lines it can fix.
+  Format with Ruff or Black (Settings → Formatter, optional format on save); the project's
+  own Ruff/Black configuration is used.
 - **Tests** (Run → Tests, or the Tests tab in the bottom panel): every test in
   `test_*.py` / `*_test.py`, grouped by file. Run all of them, only the failed ones, a
   file, or one test (▶ on its row, or "Run Test at Cursor"). Failures show their message;
   click to jump to the failing line, ▸ for the full traceback. Uses pytest when it's
   installed (offers to install it), otherwise unittest.
-- Run configurations and tasks live in `.ideforfun/run.json` (Run → Edit Run Configurations).
+- Run configurations and tasks live in `.forge/run.json` (Run → Edit Run Configurations).
   Click **▶** in the status bar (or Run → Select Run Configuration) to choose what F5 /
   Ctrl+F5 run; "Current file" is the default. Configurations work for debugging too.
   Tasks are shell commands, each run in its own terminal (Ctrl+Shift+B).
@@ -133,6 +159,47 @@ the app's data folder, which you can also edit by hand ("Edit Keyboard Shortcuts
 }
 ```
 
+## Workspace
+
+Forge is organised by **task**, picked in the top bar (or Ctrl+Alt+1…4):
+
+- **Code**: Files / Search / Outline / Git on the left, the editor, *Where you are* (a small map of
+  what the current file imports and what imports it) and *In this file* (each function with what it
+  reaches and who uses it) on the right, and the drawer (Terminal, Problems, Output, Tests…) below.
+- **Connect**: the project graph, the Toolbox and Box settings (see below).
+- **Debug**: the editor with the Debug panel; starting a debug session switches here and back
+  afterwards (Settings → Debug task).
+- **Run**: the editor with Output and Tests.
+
+Every part of the window is a panel. **View → Edit Layout** lets you drag a panel's tab onto any
+side or into another panel, close panels and add them back; each task keeps its own arrangement
+(View → Reset Layout of This Task to start over). Dividers can be dragged at any time.
+
+## Connect and the API box
+
+Connect an API to your project without writing the plumbing (and without AI):
+
+1. In the **Connect** task, drag **API** from the Toolbox onto a module on the Graph (its code goes
+   at the end of that file), or click it to put the code in a new file (`api/<name>.py`).
+2. In **Box settings**, fill in the URL (or a base URL and a path), query parameters, headers, a
+   JSON body for POST/PUT/PATCH, and auth. Secrets are saved to the project's `.env` (Forge offers to
+   add `.env` to `.gitignore`); `boxes.json` and the generated code only hold the variable's name.
+3. Press **⚡ Test call**. Forge sends the request once and lists the fields it got back: tick the
+   ones you want (nested fields fold out; pick which list holds the records if there are several).
+   The preview shows the first rows of the CSV.
+4. **Write code** shows the Python, then writes it: one function per request (e.g.
+   `github_users(output_path="github_users.csv")`) that calls the API with `urllib`, keeps the ticked
+   fields, writes a CSV with `csv.DictWriter` and returns the rows. `{placeholders}` in the URL and
+   query rows marked *argument* become parameters.
+
+After that, every change in the box rewrites its block (between `# forge:box …` and
+`# forge:end …`) straight away. If you edit the block by hand, the box stops and offers
+**Overwrite with box** (with a diff) or **Keep my edits**. A box can hold several requests, each
+writing its own CSV. Boxes are saved in `.forge/boxes.json`.
+
+Forge loads the project's `.env` into Run, Tests, Debug and new terminals, so the generated code
+finds its secrets (variables already set in your environment win).
+
 ## Layout
 - `src/main/`: Electron main process: file system, running Python (`python.ts`), terminals (`terminals.ts`), settings
 - `src/preload/`: the safe bridge that exposes `window.api` to the UI
@@ -142,7 +209,7 @@ the app's data folder, which you can also edit by hand ("Edit Keyboard Shortcuts
   - `workspace.ts` + `tabBar.ts`: open files and tabs
   - `keymap.ts`: every command and shortcut, registered once (the palette lists them)
   - `findBar.ts`, `panel.ts`, `outputView.ts`, `terminalView.ts`, `settingsView.ts`, `palette.ts`, `fuzzy.ts`
-- `styles.css`: all colors are CSS variables (dark + light themes), ready for a redesign
+- `theme.css`: every colour, as tokens for the Molten (default) and Plain themes; `styles.css` only uses `var(--…)` (guard tests in `src/main/theme.test.ts`)
 
 ## Third-party code
 Everything above is hand-written except three pieces: the integrated terminal uses

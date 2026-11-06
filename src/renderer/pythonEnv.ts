@@ -3,7 +3,7 @@
  *  - which interpreter it uses (status bar 🐍; pick another, or create a .venv)
  *  - its packages (install, upgrade, uninstall, freeze to requirements.txt)
  *  - packages that requirements.txt / pyproject.toml ask for but aren't installed
- * The chosen interpreter is saved in the project's .ideforfun/settings.json.
+ * The chosen interpreter is saved in the project's .forge/settings.json.
  * pip and venv run in the Output panel, so you can see what they do.
  */
 import type { InterpreterInfo } from '../shared/api'
@@ -32,6 +32,8 @@ export interface PythonEnvHooks {
   openFile(path: string): void
   /** Something shown in the status bar changed. */
   changed(): void
+  /** The interpreter was (re)checked: installed tools may have changed. */
+  envChanged?(): void
   report(message: string): void
 }
 
@@ -72,6 +74,7 @@ export class PythonEnv {
     this.current = current
     this.checked = !!current
     this.hooks.changed()
+    this.hooks.envChanged?.()
     if (!current) {
       this.missing = []
       return

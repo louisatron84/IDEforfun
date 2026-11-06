@@ -4,7 +4,8 @@
  * while paused.
  */
 import { findFileLinks, stripAnsi } from '../../shared/traceback'
-import type { DebugState, PauseInfo, StackFrame, Variable } from './session'
+import type { DebugState, ExceptionFilter, PauseInfo, StackFrame, Variable } from './session'
+import type { SavedBreakpoint } from './breakpoints'
 
 export interface DebugViewHooks {
   continue(): void
@@ -19,6 +20,25 @@ export interface DebugViewHooks {
   variables(ref: number): Promise<Variable[]>
   evaluate(expression: string): Promise<{ result: string; ref: number }>
   openLink(path: string, line: number): void
+  /** Show another thread's call stack. */
+  selectThread(threadId: number): Promise<StackFrame[]>
+  /** Show another process (the program or one of its child processes). */
+  selectProcess(id: number): void
+  /** Evaluate a watch expression in the selected frame. */
+  watch(expression: string, frameId: number | undefined): Promise<{ result: string; ref: number }>
+  watchesChanged(watches: string[]): void
+  // Breakpoints panel
+  breakpoints(): SavedBreakpoint[]
+  goToBreakpoint(b: SavedBreakpoint): void
+  setBreakpointEnabled(b: SavedBreakpoint, enabled: boolean): void
+  editBreakpoint(b: SavedBreakpoint): void
+  removeBreakpoint(b: SavedBreakpoint): void
+  setAllBreakpoints(enabled: boolean): void
+  removeAllBreakpoints(): void
+  /** Exception settings: which are offered, which are on. */
+  exceptionFilters(): { offered: ExceptionFilter[]; on: string[] }
+  setExceptionFilter(filter: string, on: boolean): void
+  relative(path: string): string
 }
 
 const MAX_LOG = 3000
@@ -39,11 +59,20 @@ export class DebugView {
   private varsGeneration = 0
   private readonly history: string[] = []
   private historyIndex = 0
+  private readonly watchList: HTMLDivElement
+  private readonly bpList: HTMLDivElement
+  private watches: string[] = []
+  private threads: { id: number; name: string }[] = []
+  private threadId: number | null = null
+  private readonly procList: HTMLDivElement
 
   constructor(private readonly hooks: DebugViewHooks) {
     this.body = div('debug-view')
     const side = div('debug-side')
     this.status = div('debug-status')
+    // The program and its child processes (shown when there is more than one).
+    this.procList = div('debug-procs')
+    this.procList.hidden = true
     const stackHead = div('debug-heading')
     stackHead.textContent = 'Call Stack'
     this.stackList = div('debug-stack')
@@ -52,7 +81,35 @@ export class DebugView {
     varHead.textContent = 'Variables'
     this.varTree = div('debug-vars')
     this.varTree.setAttribute('role', 'tree')
-    side.append(this.status, stackHead, this.stackList, varHead, this.varTree)
+    // Watch: expressions re-evaluated every time the program pauses.
+    const watchHead = div('debug-heading debug-heading-row')
+    const watchTitle = document.createElement('span')
+    watchTitle.textContent = 'Watch'
+    const addWatch = document.createElement('button')
+    addWatch.className = 'git-mini'
+    addWatch.textContent = '+'
+    addWatch.title = 'Add an expression to watch'
+    addWatch.addEventListener('click', () => this.startAddWatch())
+    watchHead.append(watchTitle, addWatch)
+    this.watchList = div('debug-watch')
+    // Breakpoints (all files) and exception settings.
+    const bpHead = div('debug-heading debug-heading-row')
+    const bpTitle = document.createElement('span')
+    bpTitle.textContent = 'Breakpoints'
+    const mini = (text: string, title: string, fn: () => void) => {
+      const b = document.createElement('button')
+      b.className = 'git-mini'
+      b.textContent = text
+      b.title = title
+      b.addEventListener('click', fn)
+      return b
+    }
+    bpHead.append(bpTitle,
+      mini('☐', 'Switch all breakpoints off', () => hooks.setAllBreakpoints(false)),
+      mini('☑', 'Switch all breakpoints on', () => hooks.setAllBreakpoints(true)),
+      mini('✕', 'Remove all breakpoints', () => hooks.removeAllBreakpoints()))
+    this.bpList = div('debug-bps')
+    side.append(this.status, this.procList, stackHead, this.stackList, varHead, this.varTree, watchHead, this.watchList, bpHead, this.bpList)
 
     const consoleEl = div('debug-console')
     this.log = div('output-log debug-log')
@@ -124,6 +181,7 @@ export class DebugView {
     } else if (state === 'idle') {
       this.status.textContent = 'Not debugging'
     }
+    if (state !== 'paused') void this.renderWatches()
   }
 
   ended(code: number | null): void {
@@ -136,9 +194,35 @@ export class DebugView {
     this.append(message.endsWith('\n') ? message : message + '\n', 'stderr')
   }
 
+  /**
+   * The program and its child processes. The shown one is what the call
+   * stack, variables, stepping and the console apply to.
+   */
+  setProcesses(list: { id: number; name: string; state: DebugState }[], shown: number | null): void {
+    this.procList.hidden = list.length < 2
+    if (this.procList.hidden) return this.procList.replaceChildren()
+    const label: Record<DebugState, string> = { idle: 'ended', starting: 'starting', running: 'running', paused: 'paused' }
+    this.procList.replaceChildren(...list.map((p) => {
+      const row = div('debug-proc' + (p.id === shown ? ' selected' : '') + (p.state === 'paused' ? ' paused' : ''))
+      const name = document.createElement('span')
+      name.textContent = `${p.id === shown ? '▾' : '▸'} ${p.name}`
+      const state = document.createElement('span')
+      state.className = 'debug-proc-state'
+      state.textContent = label[p.state]
+      row.append(name, state)
+      row.title = p.id === shown ? 'Shown below (stepping and the console apply to it)' : 'Show this process'
+      row.addEventListener('click', () => {
+        if (p.id !== shown) this.hooks.selectProcess(p.id)
+      })
+      return row
+    }))
+  }
+
   // ---------- paused: call stack + variables ----------
 
   showPaused(info: PauseInfo): void {
+    this.threads = info.threads
+    this.threadId = info.threadId
     this.frames = info.frames
     this.selectedFrame = Math.max(0, info.frames.findIndex((f) => f.path !== null))
     const where = info.frames[this.selectedFrame]
@@ -150,9 +234,12 @@ export class DebugView {
     }
     this.renderStack()
     void this.loadVariables()
+    void this.renderWatches()
   }
 
   clearPaused(): void {
+    this.threads = []
+    this.threadId = null
     this.frames = []
     this.varsGeneration++
     this.stackList.replaceChildren()
@@ -167,7 +254,27 @@ export class DebugView {
 
   private renderStack(): void {
     this.stackList.classList.remove('stale')
-    this.stackList.replaceChildren(...this.frames.map((f, i) => {
+    // More than one thread: a row per thread above the frames (click to see its stack).
+    const threadRows = this.threads.length > 1 ? this.threads.map((t) => {
+      const row = div('debug-thread' + (t.id === this.threadId ? ' selected' : ''))
+      row.textContent = `${t.id === this.threadId ? '▾' : '▸'} ${t.name}`
+      row.title = t.id === this.threadId ? 'This thread (stepping applies to it)' : 'Show this thread'
+      row.addEventListener('click', () => {
+        if (t.id === this.threadId) return
+        void this.hooks.selectThread(t.id).then((frames) => {
+          this.threadId = t.id
+          this.frames = frames
+          this.selectedFrame = Math.max(0, frames.findIndex((f) => f.path !== null))
+          this.renderStack()
+          void this.loadVariables()
+          void this.renderWatches()
+          const f = this.currentFrame
+          if (f) this.hooks.selectFrame(f)
+        }, () => {})
+      })
+      return row
+    }) : []
+    this.stackList.replaceChildren(...threadRows, ...this.frames.map((f, i) => {
       const row = div('debug-frame' + (i === this.selectedFrame ? ' selected' : '') + (f.path ? '' : ' no-source'))
       row.setAttribute('role', 'option')
       const name = document.createElement('span')
@@ -182,10 +289,172 @@ export class DebugView {
         this.selectedFrame = i
         this.renderStack()
         void this.loadVariables()
+        void this.renderWatches()
         this.hooks.selectFrame(f)
       })
       return row
     }))
+  }
+
+  // ---------- watch expressions ----------
+
+  setWatches(list: string[]): void {
+    this.watches = [...list]
+    void this.renderWatches()
+  }
+
+  private startAddWatch(edit?: number): void {
+    const input = document.createElement('input')
+    input.className = 'debug-watch-input'
+    input.placeholder = 'Expression, e.g. len(items) or user.name'
+    input.spellcheck = false
+    if (edit !== undefined) input.value = this.watches[edit]
+    const done = (save: boolean) => {
+      const text = input.value.trim()
+      if (save && text) {
+        if (edit !== undefined) this.watches[edit] = text
+        else this.watches.push(text)
+        this.hooks.watchesChanged([...this.watches])
+      }
+      void this.renderWatches()
+    }
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation()
+      if (e.key === 'Enter') done(true)
+      else if (e.key === 'Escape') done(false)
+    })
+    input.addEventListener('blur', () => done(true))
+    if (edit !== undefined) this.watchList.children[edit]?.replaceWith(input)
+    else this.watchList.append(input)
+    input.focus()
+  }
+
+  private watchGeneration = 0
+
+  private async renderWatches(): Promise<void> {
+    const gen = ++this.watchGeneration
+    const paused = this.state === 'paused'
+    const frame = this.currentFrame
+    const rows = await Promise.all(this.watches.map(async (expr, i) => {
+      let value = paused ? '' : 'not paused'
+      let error = false
+      let ref = 0
+      if (paused) {
+        try {
+          const r = await this.hooks.watch(expr, frame?.id)
+          value = r.result
+          ref = r.ref
+        } catch (err) {
+          value = err instanceof Error ? err.message : String(err)
+          error = true
+        }
+      }
+      return { expr, value, error, ref, i }
+    }))
+    if (gen !== this.watchGeneration) return
+    if (!this.watches.length) {
+      this.watchList.replaceChildren(message('Click + to watch an expression.'))
+      return
+    }
+    const varGen = this.varsGeneration
+    this.watchList.replaceChildren(...rows.map((r) => {
+      const wrap = r.ref && !r.error
+        ? this.varNode({ name: r.expr, value: r.value, ref: r.ref }, 0, varGen, false)
+        : (() => {
+            const row = div('debug-var')
+            const name = document.createElement('span')
+            name.className = 'debug-var-name'
+            name.textContent = r.expr
+            const val = document.createElement('span')
+            val.className = 'debug-var-value' + (r.error || !paused ? ' muted' : '')
+            val.textContent = r.value
+            row.append(name, document.createTextNode(' = '), val)
+            return row
+          })()
+      wrap.classList.add('debug-watch-row')
+      const x = document.createElement('button')
+      x.className = 'git-mini debug-watch-remove'
+      x.textContent = '×'
+      x.title = 'Stop watching'
+      x.addEventListener('click', (e) => {
+        e.stopPropagation()
+        this.watches.splice(r.i, 1)
+        this.hooks.watchesChanged([...this.watches])
+        void this.renderWatches()
+      })
+      wrap.addEventListener('dblclick', () => this.startAddWatch(r.i))
+      wrap.title = 'Double-click to edit'
+      wrap.prepend(x)
+      return wrap
+    }))
+  }
+
+  // ---------- breakpoints panel ----------
+
+  /** Redraw the list of breakpoints and exception settings. */
+  renderBreakpoints(): void {
+    const rows: HTMLElement[] = []
+    const { offered, on } = this.hooks.exceptionFilters()
+    // Before the first run the adapter hasn't said what it offers: show debugpy's usual two.
+    const filters = offered.length ? offered : [
+      { filter: 'raised', label: 'Raised Exceptions', default: false },
+      { filter: 'uncaught', label: 'Uncaught Exceptions', default: true }
+    ]
+    for (const f of filters) {
+      const label = document.createElement('label')
+      label.className = 'debug-bp debug-exc'
+      const box = document.createElement('input')
+      box.type = 'checkbox'
+      box.checked = on.includes(f.filter)
+      box.addEventListener('change', () => this.hooks.setExceptionFilter(f.filter, box.checked))
+      const text = document.createElement('span')
+      text.textContent = `Pause on ${f.label.replace(/^./, (c) => c.toLowerCase())}`
+      label.append(box, text)
+      label.title = f.filter === 'raised' ? 'Stop wherever an exception is raised, even if it is caught later' : 'Stop where an exception would crash the program'
+      rows.push(label)
+    }
+    const bps = this.hooks.breakpoints()
+    if (!bps.length) rows.push(message('No breakpoints. Click a line number (or F9) to add one; right-click it for a condition.'))
+    for (const b of bps) {
+      const row = div('debug-bp' + (b.enabled ? '' : ' off'))
+      const box = document.createElement('input')
+      box.type = 'checkbox'
+      box.checked = b.enabled
+      box.title = b.enabled ? 'Switch off' : 'Switch on'
+      box.addEventListener('click', (e) => e.stopPropagation())
+      box.addEventListener('change', () => this.hooks.setBreakpointEnabled(b, box.checked))
+      const where = document.createElement('span')
+      where.className = 'debug-bp-where'
+      where.textContent = `${baseName(b.path)}:${b.line + 1}`
+      const extra = document.createElement('span')
+      extra.className = 'debug-bp-extra'
+      extra.textContent = [
+        b.condition ? `if ${b.condition}` : '',
+        b.hitCondition ? `hit ${b.hitCondition}` : '',
+        b.logMessage ? `log "${b.logMessage}"` : ''
+      ].filter(Boolean).join(' · ')
+      const edit = document.createElement('button')
+      edit.className = 'git-mini'
+      edit.textContent = '✎'
+      edit.title = 'Condition, hit count or log message'
+      edit.addEventListener('click', (e) => {
+        e.stopPropagation()
+        this.hooks.editBreakpoint(b)
+      })
+      const x = document.createElement('button')
+      x.className = 'git-mini'
+      x.textContent = '×'
+      x.title = 'Remove'
+      x.addEventListener('click', (e) => {
+        e.stopPropagation()
+        this.hooks.removeBreakpoint(b)
+      })
+      row.append(box, where, extra, edit, x)
+      row.title = `${this.hooks.relative(b.path)}:${b.line + 1}\nClick to go there`
+      row.addEventListener('click', () => this.hooks.goToBreakpoint(b))
+      rows.push(row)
+    }
+    this.bpList.replaceChildren(...rows)
   }
 
   private async loadVariables(): Promise<void> {

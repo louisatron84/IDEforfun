@@ -1,8 +1,11 @@
 /** User settings, saved as JSON in the app's data folder. */
 
+/** Molten: Forge's own colours. Plain: black and white, high contrast. */
+export type ThemeName = 'molten' | 'plain'
+
 export interface Settings {
   fontSize: number
-  theme: 'dark' | 'light'
+  theme: ThemeName
   tabSize: 2 | 4 | 8
   /** Python interpreter to use for Run; '' = automatic (project .venv, then PATH). */
   pythonPath: string
@@ -12,16 +15,31 @@ export interface Settings {
   reopenLastProject: boolean
   /** Show the Welcome page when no files are open. */
   showWelcome: boolean
+  /** Formatter for Format Document: 'auto' = Ruff if installed, else Black. */
+  formatter: 'auto' | 'ruff' | 'black'
+  /** Format Python files when saving them. */
+  formatOnSave: boolean
+  /** Show Ruff's lint warnings (when Ruff is installed). */
+  lintWithRuff: boolean
+  /** Run the program being debugged in a terminal (so input() works) instead of the Debug console. */
+  debugInTerminal: boolean
+  /** Switch to the Debug task while debugging (and back afterwards). */
+  switchToDebugTask: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   fontSize: 14,
-  theme: 'dark',
+  theme: 'molten',
   tabSize: 4,
   pythonPath: '',
   shell: '',
   reopenLastProject: true,
-  showWelcome: true
+  showWelcome: true,
+  formatter: 'auto',
+  formatOnSave: false,
+  lintWithRuff: true,
+  debugInTerminal: true,
+  switchToDebugTask: true
 }
 
 export const FONT_SIZE_MIN = 10
@@ -34,20 +52,31 @@ export function normalizeSettings(raw: unknown): Settings {
   if (typeof r.fontSize === 'number' && Number.isFinite(r.fontSize)) {
     s.fontSize = Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, Math.round(r.fontSize)))
   }
-  if (r.theme === 'dark' || r.theme === 'light') s.theme = r.theme
+  if (r.theme === 'molten' || r.theme === 'plain') s.theme = r.theme
+  // Settings from before Forge: dark became Molten, light became Plain.
+  else if (r.theme === 'dark') s.theme = 'molten'
+  else if (r.theme === 'light') s.theme = 'plain'
   if (r.tabSize === 2 || r.tabSize === 4 || r.tabSize === 8) s.tabSize = r.tabSize
   if (typeof r.pythonPath === 'string') s.pythonPath = r.pythonPath.trim()
   if (typeof r.shell === 'string' && /^[\w.-]*$/.test(r.shell)) s.shell = r.shell
   if (typeof r.reopenLastProject === 'boolean') s.reopenLastProject = r.reopenLastProject
   if (typeof r.showWelcome === 'boolean') s.showWelcome = r.showWelcome
+  if (r.formatter === 'auto' || r.formatter === 'ruff' || r.formatter === 'black') s.formatter = r.formatter
+  if (typeof r.formatOnSave === 'boolean') s.formatOnSave = r.formatOnSave
+  if (typeof r.lintWithRuff === 'boolean') s.lintWithRuff = r.lintWithRuff
+  if (typeof r.debugInTerminal === 'boolean') s.debugInTerminal = r.debugInTerminal
+  if (typeof r.switchToDebugTask === 'boolean') s.switchToDebugTask = r.switchToDebugTask
   return s
 }
 
-/** Settings a project can override in <project>/.ideforfun/settings.json. */
-export const PROJECT_SETTING_KEYS = ['tabSize', 'pythonPath', 'shell'] as const
+/** Settings a project can override in <project>/.forge/settings.json. */
+export const PROJECT_SETTING_KEYS = ['tabSize', 'pythonPath', 'shell', 'formatter', 'formatOnSave', 'lintWithRuff'] as const
 export type ProjectSettings = Partial<Pick<Settings, (typeof PROJECT_SETTING_KEYS)[number]>>
 
-export const PROJECT_SETTINGS_DIR = '.ideforfun'
+/** The project's own Forge files (settings.json, run.json…). */
+export const PROJECT_DIR = '.forge'
+/** Where they lived before the rename to Forge (moved on first open, see src/main/projectDir.ts). */
+export const LEGACY_PROJECT_DIR = '.ideforfun'
 export const PROJECT_SETTINGS_FILE = 'settings.json'
 
 /** Only the valid project-level values from a project settings file; anything else is ignored. */
@@ -58,6 +87,9 @@ export function normalizeProjectSettings(raw: unknown): ProjectSettings {
   if (r.tabSize === 2 || r.tabSize === 4 || r.tabSize === 8) out.tabSize = r.tabSize
   if (typeof r.pythonPath === 'string') out.pythonPath = r.pythonPath.trim()
   if (typeof r.shell === 'string' && /^[\w.-]*$/.test(r.shell)) out.shell = r.shell
+  if (r.formatter === 'auto' || r.formatter === 'ruff' || r.formatter === 'black') out.formatter = r.formatter
+  if (typeof r.formatOnSave === 'boolean') out.formatOnSave = r.formatOnSave
+  if (typeof r.lintWithRuff === 'boolean') out.lintWithRuff = r.lintWithRuff
   return out
 }
 

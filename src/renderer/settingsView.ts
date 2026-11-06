@@ -31,13 +31,13 @@ export class SettingsView {
     this.overlay.addEventListener('mousedown', (e) => {
       if (e.target === this.overlay) this.close() // click outside the dialog
     })
-    this.dialog.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        e.stopPropagation()
-        this.close()
-      }
-    })
+    // Escape closes it wherever focus is (it can end up outside the dialog, e.g. after a click).
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !this.isOpen || e.defaultPrevented) return
+      e.preventDefault()
+      e.stopPropagation()
+      this.close()
+    }, { capture: true })
     this.render()
   }
 
@@ -51,8 +51,10 @@ export class SettingsView {
     this.render()
   }
 
-  /** Say which settings the project's .ideforfun/settings.json overrides (null = none). */
+  /** Say which settings the project's .forge/settings.json overrides (null = none). */
   setProjectNote(note: string | null): void {
+    // Re-rendering would move focus out of the dialog, so only when the note really changes.
+    if (note === this.projectNote) return
     this.projectNote = note
     if (this.isOpen) this.render()
   }
@@ -118,8 +120,8 @@ export class SettingsView {
     fontRow.querySelector('label')!.htmlFor = slider.id
 
     // Theme
-    const themeRow = this.row('Theme', 'Colors for the whole IDE',
-      this.segmented('theme', [['dark', 'Dark'], ['light', 'Light']], s.theme, (v) => this.update({ theme: v as Settings['theme'] })))
+    const themeRow = this.row('Theme', "Molten: Forge's colours. Plain: black and white, high contrast",
+      this.segmented('theme', [['molten', 'Molten'], ['plain', 'Plain']], s.theme, (v) => this.update({ theme: v as Settings['theme'] })))
 
     // Tab width
     const tabRow = this.row('Tab width', 'Spaces per indent level (Python uses 4)',
@@ -166,6 +168,40 @@ export class SettingsView {
     const reopenRow = this.row('Reopen last project', 'At startup, open the last folder with its tabs and layout', reopen)
     reopenRow.querySelector('label')!.htmlFor = reopen.id
 
+    // Formatting and linting
+    const fmtRow = this.row('Formatter', 'For Format Document (Shift+Alt+F). Auto: Ruff if installed, else Black',
+      this.segmented('formatter', [['auto', 'Auto'], ['ruff', 'Ruff'], ['black', 'Black']], s.formatter, (v) => this.update({ formatter: v as Settings['formatter'] })))
+    const fos = document.createElement('input')
+    fos.type = 'checkbox'
+    fos.id = 'setting-format-on-save'
+    fos.checked = s.formatOnSave
+    fos.addEventListener('change', () => this.update({ formatOnSave: fos.checked }))
+    const fosRow = this.row('Format on save', 'Format Python files every time they are saved', fos)
+    fosRow.querySelector('label')!.htmlFor = fos.id
+    const lint = document.createElement('input')
+    lint.type = 'checkbox'
+    lint.id = 'setting-ruff'
+    lint.checked = s.lintWithRuff
+    lint.addEventListener('change', () => this.update({ lintWithRuff: lint.checked }))
+    const lintRow = this.row('Ruff warnings', "Show Ruff's lint warnings and quick fixes (when Ruff is installed)", lint)
+    lintRow.querySelector('label')!.htmlFor = lint.id
+
+    const dbg = document.createElement('input')
+    dbg.type = 'checkbox'
+    dbg.id = 'setting-debug-terminal'
+    dbg.checked = s.debugInTerminal
+    dbg.addEventListener('change', () => this.update({ debugInTerminal: dbg.checked }))
+    const dbgRow = this.row('Debug in terminal', 'Run the program being debugged in a terminal, so input() works', dbg)
+    dbgRow.querySelector('label')!.htmlFor = dbg.id
+
+    const dbgTask = document.createElement('input')
+    dbgTask.type = 'checkbox'
+    dbgTask.id = 'setting-debug-task'
+    dbgTask.checked = s.switchToDebugTask
+    dbgTask.addEventListener('change', () => this.update({ switchToDebugTask: dbgTask.checked }))
+    const dbgTaskRow = this.row('Debug task', 'Switch to the Debug task while debugging (and back afterwards)', dbgTask)
+    dbgTaskRow.querySelector('label')!.htmlFor = dbgTask.id
+
     const rows: HTMLElement[] = [header]
     if (this.projectNote) {
       const note = document.createElement('p')
@@ -173,7 +209,7 @@ export class SettingsView {
       note.textContent = this.projectNote
       rows.push(note)
     }
-    rows.push(fontRow, themeRow, tabRow, pyRow, shellRow, reopenRow)
+    rows.push(fontRow, themeRow, tabRow, pyRow, shellRow, fmtRow, fosRow, lintRow, dbgRow, dbgTaskRow, reopenRow)
 
     if (this.links.length) {
       const linkRow = document.createElement('div')

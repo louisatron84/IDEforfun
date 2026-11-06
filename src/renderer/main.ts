@@ -1,3 +1,10 @@
+// Forge's fonts, bundled so they work offline (Space Grotesk for the interface, JetBrains Mono for code).
+import '@fontsource/space-grotesk/400.css'
+import '@fontsource/space-grotesk/500.css'
+import '@fontsource/space-grotesk/600.css'
+import '@fontsource/space-grotesk/700.css'
+import '@fontsource/jetbrains-mono/400.css'
+import '@fontsource/jetbrains-mono/700.css'
 import { FileTree } from './fileTree'
 import { Editor, type EditorOptions } from './editor/editor'
 import type { Doc } from './editor/document'
@@ -8,18 +15,24 @@ import { ENCODINGS, encodingLabel } from '../shared/encoding'
 import { TabBar } from './tabBar'
 import { CommandRegistry, keyString } from './keymap'
 import { FindBar } from './findBar'
-import { Panel } from './panel'
+import { DockView } from './dock/dockView'
+import { TaskController } from './dock/tasks'
+import { createPanelFacade } from './dock/facade'
+import { EditBar } from './dock/editBar'
+import { TASKS, type TaskId } from '../shared/layouts'
 import { OutputView } from './outputView'
 import { TerminalView } from './terminalView'
 import { SettingsView } from './settingsView'
 import { Palette } from './palette'
 import { SearchView } from './searchView'
 import { LspClient } from './lsp/client'
-import { PythonLanguage, type Diagnostic } from './lsp/python'
+import { LspServer, type Diagnostic, type ServerConfig } from './lsp/server'
+import { LanguageServices } from './lsp/services'
+import { pyright } from './lsp/pyright'
 import { ProblemsView } from './problemsView'
 import { Tooltip } from './tooltip'
-import { BreakpointStore } from './debug/breakpoints'
-import { DebugSession, type PauseInfo, type StackFrame } from './debug/session'
+import { BreakpointStore, breakpointStyle } from './debug/breakpoints'
+import { DebugSession, type ChildConfig, type ExceptionFilter, type PauseInfo, type StackFrame } from './debug/session'
 import { DebugView } from './debug/debugView'
 import { Completion } from './completion'
 import { hoverSections } from './lsp/markdown'
@@ -31,9 +44,27 @@ import { Shortcuts } from './shortcuts'
 import { PythonEnv, type PythonTool } from './pythonEnv'
 import { TestView } from './testView'
 import { WelcomePage } from './welcome'
+import { CodeTools } from './codeTools'
+import { GitView } from './gitView'
+import { DiffView } from './diffView'
+import { GraphView } from './graph/graphView'
+import { buildGraph, type ProjectGraph } from '../shared/projectGraph'
+import { WhereView } from './panels/whereView'
+import { InFileView } from './panels/inFileView'
+import { moduleForPath } from './panels/whereModel'
+import { BoxController, type BoxFiles } from './boxes/controller'
+import { BoxSettings } from './boxes/boxSettings'
+import { Toolbox } from './boxes/toolbox'
+import { lineDiff as codeLineDiff, showCodeDialog } from './boxes/codeDialog'
+import { serializeBoxes } from '../shared/boxes'
+import { HistoryView } from './historyView'
+import { conflictNear, findConflicts, resolveConflict, type Conflict, type Resolution } from '../shared/conflicts'
+import { timeAgo, type BlameLine } from '../shared/history'
+import { lineDiff } from '../shared/lint'
 import { ReferencesView } from './referencesView'
+import { CallHierarchyView } from './callHierarchyView'
 import { OutlineView } from './outlineView'
-import { applyEdits, type DocSymbol, type Location, type TextEdit, SYMBOL_KIND } from './lsp/navigation'
+import { applyEdits, methodInClass, subclassAt, symbolPathAt, type DocSymbol, type FileEdits, type Location, type TextEdit, SYMBOL_KIND } from './lsp/navigation'
 import { isTestFile } from '../shared/tests'
 import { normalizeRunFile, resolveConfiguration, resolveTask, RUN_FILE, starterRunFile, type LaunchSpec, type RunFile, type Task } from '../shared/runConfig'
 
@@ -66,7 +97,7 @@ const workspace: Workspace = new Workspace(window.api, (doc: Doc) => {
 const editorOptions = (index: number): EditorOptions => ({
   onEdit: (doc) => {
     workspace.notifyChanged()
-    python.docChanged(doc)
+    languages.docChanged(doc)
     completion.onEdit()
   },
   onKeyDown: (e) => completion.handleKey(e),
@@ -75,6 +106,15 @@ const editorOptions = (index: number): EditorOptions => ({
   onGutterClick: (line) => {
     workspace.focusGroup(index)
     toggleBreakpoint(line)
+  },
+  onGutterContextMenu: (line) => {
+    workspace.focusGroup(index)
+    const doc = editors[index].currentDoc
+    if (doc) editBreakpoint(doc.path, line)
+  },
+  onLightbulb: () => {
+    workspace.focusGroup(index)
+    void codeTools.quickFix()
   },
   // Hover info is for the side you're working in.
   onMouseMove: (pos, e) => {
@@ -146,7 +186,7 @@ const tree = new FileTree($('file-tree'), {
   renamed: (oldPath, newPath) => {
     // The language server knows files by path: close the old ones, reopen under the new name.
     const moved = workspace.docsUnder(oldPath)
-    python.syncDocs(workspace.docs.filter((d) => !moved.includes(d)))
+    languages.syncDocs(workspace.docs.filter((d) => !moved.includes(d)))
     workspace.pathRenamed(oldPath, newPath)
     breakpoints.pathRenamed(oldPath, newPath)
     void refreshGit()
@@ -230,7 +270,57 @@ window.addEventListener('keydown', (e) => {
   closeWelcomePage()
 })
 const findBar = new FindBar($('editor-pane'), editor)
-const panel = new Panel($('editor-pane'))
+// ---------- the dock: panels arranged per task (Code, Connect, Debug, Run) ----------
+let tasks: TaskController
+const dock = new DockView($('dock'), {
+  changed: (root) => tasks.changed(root),
+  closePanel: (id) => { tasks.closePanel(id); editBar.fill() },
+  drop: (p, s, z) => tasks.drop(p, s, z)
+})
+tasks = new TaskController(dock, {
+  saved: {},
+  save: (layouts) => void window.api.saveLayouts(layouts).catch(() => {}),
+  taskChanged: (t) => onTaskChanged(t)
+})
+/** The old bottom panel's API, now on the dock (show reveals a panel in the current task). */
+const panel = createPanelFacade(tasks, dock)
+dock.register({ id: 'editor', title: 'Editor', body: $('editor-pane'), closable: false, onShow: () => { for (const ed of editors) ed.refreshLayout(settings.tabSize) } })
+dock.register({ id: 'files', title: 'Files', body: $('file-tree') })
+dock.register({ id: 'search', title: 'Search', body: $('search-panel') })
+dock.register({ id: 'outline', title: 'Outline', body: $('outline-panel'), onShow: () => void refreshOutline() })
+dock.register({ id: 'git', title: 'Git', body: $('git-panel'), onShow: () => void refreshGit() })
+
+/** Edit Layout mode (View → Edit Layout): move, close and add panels; Done or Esc to finish. */
+const editBar = new EditBar(document.body, {
+  done: () => setEditingLayout(false),
+  reset: () => { tasks.resetCurrent(); editBar.fill() },
+  add: (id) => tasks.addPanel(id),
+  hidden: () => tasks.hiddenPanels(),
+  title: (id) => dock.titleOf(id)
+})
+function setEditingLayout(on: boolean): void {
+  if (dock.editing === on) return
+  dock.editing = on
+  if (on) editBar.show()
+  else {
+    editBar.hide()
+    tasks.flush()
+  }
+}
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && dock.editing) {
+    e.preventDefault()
+    e.stopPropagation()
+    setEditingLayout(false)
+  }
+}, true)
+
+/** The task switcher in the top bar shows the current task; the project remembers it. */
+function onTaskChanged(task: TaskId): void {
+  for (const b of document.querySelectorAll<HTMLButtonElement>('#task-switcher button')) b.setAttribute('aria-selected', String(b.dataset.task === task))
+  if (dock.editing) editBar.fill()
+  saveStateSoon()
+}
 const output = new OutputView(
   (path, line) => void openFile(path, line - 1),
   (text) => void window.api.sendRunInput(text),
@@ -249,14 +339,28 @@ panel.addView('terminal', 'Terminal', terminal.body, terminal.actions, () => ter
 const breakpoints = new BreakpointStore()
 /** Docs whose edits we watch so their breakpoints move with the code. */
 const watchedDocs = new WeakSet<Doc>()
+/** One debugged process: the program (connection 0) or a child process it started. */
+interface DebugProcess {
+  /** The adapter connection it talks over. */
+  id: number
+  name: string
+  session: DebugSession
+  /** Where it's paused (to show again when switching back to it). */
+  lastPause: PauseInfo | null
+}
+let processes: DebugProcess[] = []
+/** The program's session: when it ends, debugging ends (with every child process). */
+let rootSession: DebugSession | null = null
+/** The process shown in the Debug panel: stepping, variables, hover values and the console apply to it. */
 let session: DebugSession | null = null
+const processOf = (s: DebugSession) => processes.find((p) => p.session === s)
 /** Where the paused program is (shown with a ▶ in the gutter and a highlighted line). */
 let pausedAt: { path: string; line: number } | null = null
 /** What the last debug session ran (for Restart). */
 let lastDebugSpec: LaunchSpec | null = null
 
 const debugView = new DebugView({
-  continue: () => void session?.continue(),
+  continue: () => continueDebugging(),
   stepOver: () => void session?.stepOver(),
   stepInto: () => void session?.stepInto(),
   stepOut: () => void session?.stepOut(),
@@ -269,8 +373,38 @@ const debugView = new DebugView({
     if (!session) return Promise.reject(new Error('Not debugging'))
     return session.evaluate(expr, debugView.currentFrame?.id)
   },
-  openLink: (path, line) => void openFile(path, line - 1)
+  openLink: (path, line) => void openFile(path, line - 1),
+  selectThread: (id) => session ? session.stackTrace(id) : Promise.reject(new Error('Not debugging')),
+  selectProcess: (id) => {
+    const p = processes.find((x) => x.id === id)
+    if (p) showProcess(p)
+  },
+  watch: (expr, frameId) => session ? session.evaluate(expr, frameId, 'watch') : Promise.reject(new Error('Not debugging')),
+  watchesChanged: (list) => {
+    watches = list
+    saveStateSoon()
+  },
+  breakpoints: () => breakpoints.save(),
+  goToBreakpoint: (b) => void openFile(b.path, b.line),
+  setBreakpointEnabled: (b, on) => breakpoints.update(b.path, b.line, { enabled: on }),
+  editBreakpoint: (b) => editBreakpoint(b.path, b.line),
+  removeBreakpoint: (b) => breakpoints.remove(b.path, b.line),
+  setAllBreakpoints: (on) => breakpoints.setAllEnabled(on),
+  removeAllBreakpoints: () => breakpoints.clear(),
+  exceptionFilters: () => ({ offered: offeredExceptionFilters, on: exceptionFilters }),
+  setExceptionFilter: (filter, on) => {
+    exceptionFilters = on ? [...new Set([...exceptionFilters, filter])] : exceptionFilters.filter((f) => f !== filter)
+    for (const p of processes) void p.session.setExceptionFilters(exceptionFilters).catch(() => {})
+    saveStateSoon()
+    debugView.renderBreakpoints()
+  },
+  relative: (p) => (rootFolder && isInside(p, rootFolder) ? p.slice(rootFolder.length).replace(/^[\\/]+/, '') : p)
 })
+/** Watch expressions and which exceptions pause the program (saved with the project). */
+let watches: string[] = []
+let exceptionFilters: string[] = ['uncaught']
+let offeredExceptionFilters: ExceptionFilter[] = []
+debugView.renderBreakpoints()
 panel.addView('debug', 'Debug', debugView.body, debugView.actions, () => debugView.focusInput())
 
 function watchDoc(doc: Doc): void {
@@ -285,22 +419,41 @@ function updateLineMarkers(): void {
     const doc = ed.currentDoc
     if (!doc) continue
     const exec = pausedAt && samePath(pausedAt.path, doc.path) ? pausedAt.line : null
-    ed.setLineMarkers(breakpoints.linesFor(doc.path), exec)
+    const styles = new Map(breakpoints.breakpointsFor(doc.path).map((b) => [b.line, breakpointStyle(b)]))
+    ed.setLineMarkers(breakpoints.linesFor(doc.path), exec, styles)
   }
 }
 
 breakpoints.subscribe((path) => {
   updateLineMarkers()
-  // Breakpoints changed while debugging: tell debugpy right away.
-  void session?.setBreakpoints(path, breakpoints.linesFor(path)).catch(() => {})
+  debugView.renderBreakpoints()
+  saveStateSoon()
+  // Breakpoints changed while debugging: tell debugpy right away (in every process).
+  for (const p of processes) void p.session.setBreakpoints(path, breakpoints.breakpointsFor(path)).catch(() => {})
 })
+
+/** Condition, hit count, log message, on/off for the breakpoint on a line (creating one if needed). */
+function editBreakpoint(path: string, line: number): void {
+  const b = breakpoints.get(path, line)
+  const ask = (what: string, field: 'condition' | 'hitCondition' | 'logMessage', placeholder: string) => () => setTimeout(() =>
+    palette.prompt(placeholder, (text) => breakpoints.update(path, line, { [field]: text }), b?.[field] ?? '', `Set ${what}`), 0)
+  palette.choose(`Breakpoint on line ${line + 1}${b ? '' : ' (adds one)'}`, [
+    { label: 'Condition…', detail: b?.condition ? `now: ${b.condition}` : 'stop only when a Python expression is true, e.g. x > 10', run: ask('condition', 'condition', 'Condition, e.g. x > 10 or name == "Ada" (empty to remove)') },
+    { label: 'Hit count…', detail: b?.hitCondition ? `now: ${b.hitCondition}` : 'stop only on some hits, e.g. 3, >= 5, % 2', run: ask('hit count', 'hitCondition', 'Hit count: 3 (the 3rd time), >= 5, % 2 (every 2nd) (empty to remove)') },
+    { label: 'Log message instead of stopping…', detail: b?.logMessage ? `now: ${b.logMessage}` : 'print a message, e.g. x is {x}', run: ask('log message', 'logMessage', 'Message to print, {expressions} are filled in, e.g. total = {total} (empty to stop instead)') },
+    ...(b ? [
+      { label: b.enabled ? 'Switch off' : 'Switch on', run: () => breakpoints.update(path, line, { enabled: !b.enabled }) },
+      { label: 'Remove', run: () => breakpoints.remove(path, line) }
+    ] : [])
+  ])
+}
 
 function toggleBreakpoint(line = editor.getCursor().line): void {
   const doc = workspace.active
   if (doc) breakpoints.toggle(doc.path, line)
 }
 
-const debugging = () => session?.active === true
+const debugging = () => rootSession?.active === true
 const debugPaused = () => session?.state === 'paused'
 
 /** Save every changed file (programs read them from disk). Returns false if one couldn't be saved. */
@@ -308,7 +461,9 @@ async function saveAllDirty(report: (message: string) => void): Promise<boolean>
   for (const doc of workspace.docs.filter((d) => d.dirty)) {
     try {
       await workspace.save(doc)
-      python.didSave(doc)
+      languages.didSave(doc)
+      if (/\.pyi?$/i.test(doc.path)) projectChangedSoon()
+    if (/\.pyi?$/i.test(doc.path)) projectChangedSoon()
     } catch (err) {
       report(`couldn't save ${doc.name} (${String(err)})`)
       return false
@@ -319,7 +474,8 @@ async function saveAllDirty(report: (message: string) => void): Promise<boolean>
 
 async function startDebugging(given?: LaunchSpec): Promise<void> {
   const resolved = given ?? launchSpec()
-  if (session?.active) await stopDebugging()
+  if (rootSession?.active) await stopDebugging()
+  tasks.beginDebug(settings.switchToDebugTask)
   panel.show('debug')
   if ('error' in resolved) {
     debugView.begin('')
@@ -366,9 +522,45 @@ async function startDebugging(given?: LaunchSpec): Promise<void> {
   debugView.started(prep.python)
   lastDebugSpec = spec
 
+  processes = []
+  const s = addDebugProcess(0, (spec.program ?? spec.module ?? 'program').split(/[\\/]/).pop() ?? 'program')
+  rootSession = s
+  session = s
+  await window.api.debugStart(prep.python, cwd)
+  try {
+    if (settings.debugInTerminal) debugView.output('console', 'The program runs in the Terminal tab, so input() works there (Settings → Debug in terminal).\n')
+    await s.start({
+      program: spec.program, module: spec.module, args: spec.args, env: spec.env, cwd,
+      breakpoints: breakpoints.all(),
+      exceptionFilters,
+      runInTerminal: settings.debugInTerminal
+        ? async (a) => {
+            const name = (spec.program ?? spec.module ?? 'program').split(/[\\/]/).pop()
+            // Start it first: showing an empty terminal panel would open a plain shell too.
+            const pid = await terminal.runProgram(`Debug: ${name}`, a.args, a.cwd || cwd, a.env ?? {})
+            panel.show('terminal')
+            return pid
+          }
+        : undefined
+    })
+    offeredExceptionFilters = s.exceptionFilters
+    debugView.renderBreakpoints()
+  } catch (err) {
+    if (rootSession !== s || !s.active) return
+    debugView.error(`Couldn't start debugging: ${err instanceof Error ? err.message : String(err)}`)
+    await s.stop()
+  }
+}
+
+/** A session for the program (connection 0) or one of its child processes. */
+function addDebugProcess(id: number, name: string): DebugSession {
   const s: DebugSession = new DebugSession({
-    send: (m) => window.api.debugSend(m),
+    send: (m) => window.api.debugSend(id, m),
     onState: (state) => {
+      const p = processOf(s)
+      if (!p) return
+      if (state !== 'paused') p.lastPause = null
+      renderProcesses()
       if (session !== s) return
       debugView.setState(state)
       if (state === 'running' && pausedAt) {
@@ -377,29 +569,92 @@ async function startDebugging(given?: LaunchSpec): Promise<void> {
       }
     },
     onOutput: (category, text) => {
-      if (session === s) debugView.output(category, text)
+      if (processOf(s)) debugView.output(category, text)
     },
     onPaused: (info) => {
-      if (session === s) void onPaused(info)
+      const p = processOf(s)
+      if (!p) return
+      p.lastPause = info
+      // Whichever process stops comes to the front.
+      showProcess(p)
     },
-    onEnded: (code) => {
-      if (session !== s) return
-      pausedAt = null
-      updateLineMarkers()
-      debugView.setState('idle')
-      debugView.ended(code)
-      void window.api.debugStop()
-    }
+    onEnded: (code) => void debugProcessEnded(s, code),
+    onChildProcess: (config) => void attachChildProcess(config)
   })
-  session = s
-  await window.api.debugStart(prep.python, cwd)
+  processes.push({ id, name, session: s, lastPause: null })
+  renderProcesses()
+  return s
+}
+
+/** The program started a child process (multiprocessing, subprocess): debug it too. */
+async function attachChildProcess(config: ChildConfig): Promise<void> {
+  if (!rootSession?.active) return
+  const name = config.subProcessId ? `Process ${config.subProcessId}` : String(config.name ?? 'Child process')
+  let id: number
   try {
-    await s.start({ program: spec.program, module: spec.module, args: spec.args, env: spec.env, cwd, breakpoints: breakpoints.all() })
+    id = await window.api.debugConnect(config.connect.host, config.connect.port)
   } catch (err) {
-    if (session !== s || !s.active) return
-    debugView.error(`Couldn't start debugging: ${err instanceof Error ? err.message : String(err)}`)
+    debugView.error(`Couldn't attach to ${name}: ${err instanceof Error ? err.message : String(err)}`)
+    return
+  }
+  if (!rootSession?.active) return
+  const s = addDebugProcess(id, name)
+  debugView.output('console', `${name} started: debugging it too\n`)
+  try {
+    await s.attach(config, { breakpoints: breakpoints.all(), exceptionFilters })
+  } catch (err) {
+    if (!processOf(s) || !s.active) return
+    debugView.error(`Couldn't attach to ${name}: ${err instanceof Error ? err.message : String(err)}`)
     await s.stop()
   }
+}
+
+async function debugProcessEnded(s: DebugSession, code: number | null): Promise<void> {
+  const p = processOf(s)
+  if (!p) return
+  if (s !== rootSession) {
+    processes = processes.filter((x) => x !== p)
+    debugView.output('console', `${p.name} ended${code === null ? '' : ` (exit code ${code})`}\n`)
+    const root = processes.find((x) => x.session === rootSession)
+    if (session === s && root) showProcess(root)
+    else renderProcesses()
+    return
+  }
+  // The program ended: stop its child processes too, then the adapter.
+  tasks.endDebug()
+  const children = processes.filter((x) => x !== p)
+  processes = []
+  session = s
+  renderProcesses()
+  pausedAt = null
+  updateLineMarkers()
+  debugView.setState('idle')
+  debugView.ended(code)
+  await Promise.all(children.map((c) => c.session.stop().catch(() => {})))
+  if (rootSession === s) void window.api.debugStop()
+}
+
+/** Show a process in the Debug panel (its pause, call stack and variables). */
+function showProcess(p: DebugProcess): void {
+  session = p.session
+  debugView.setState(p.session.state)
+  renderProcesses()
+  if (p.lastPause && p.session.state === 'paused') {
+    void onPaused(p.lastPause)
+  } else {
+    debugView.clearPaused()
+    if (pausedAt) {
+      pausedAt = null
+      updateLineMarkers()
+    }
+  }
+}
+
+function renderProcesses(): void {
+  debugView.setProcesses(
+    processes.map((p) => ({ id: p.id, name: p.id === 0 ? `${p.name} (program)` : p.name, state: p.session.state })),
+    processes.find((p) => p.session === session)?.id ?? null
+  )
 }
 
 async function onPaused(info: PauseInfo): Promise<void> {
@@ -418,7 +673,14 @@ async function showFrame(frame: StackFrame): Promise<void> {
 }
 
 async function stopDebugging(): Promise<void> {
-  await session?.stop()
+  await rootSession?.stop()
+}
+
+/** F5 while paused. In terminal mode the program may be waiting for input there next, so show it. */
+function continueDebugging(): void {
+  if (!session) return
+  void session.continue()
+  if (settings.debugInTerminal) panel.show('terminal')
 }
 
 async function restartDebugging(): Promise<void> {
@@ -427,18 +689,31 @@ async function restartDebugging(): Promise<void> {
   if (spec) await startDebugging(spec)
 }
 
-window.api.onDebugMessage((m) => session?.handleMessage(m))
-window.api.onDebugExit((info) => {
-  if (!session?.active) return
+window.api.onDebugMessage((id, m) => processes.find((p) => p.id === id)?.session.handleMessage(m))
+window.api.onDebugExit((id, info) => {
+  const p = processes.find((x) => x.id === id)
+  if (!p?.session.active) return
   if (info.error) debugView.error(info.error)
-  session.adapterExited()
+  p.session.adapterExited()
 })
 
-// ---------- Python language server (Pyright) ----------
+// ---------- Language servers (Pyright for Python; more can run side by side) ----------
 
-const lsp = new LspClient((m) => window.api.lspSend(m))
-window.api.onLspMessage((m) => lsp.handleMessage(m))
-const python = new PythonLanguage(lsp)
+/** Every language server the IDE runs, with the settings it's started with for a project. */
+const serverSetups: { config: ServerConfig; settings: (root: string) => Promise<Record<string, unknown>> }[] = [
+  {
+    config: pyright,
+    // The interpreter whose packages it should see: the configured one, or the project's venv.
+    settings: async (root) => ({ pythonPath: await window.api.resolvePythonForAnalysis(root, settings.pythonPath || undefined) })
+  }
+]
+const lspClients = new Map<string, LspClient>()
+const languages = new LanguageServices(serverSetups.map(({ config }) => {
+  const client = new LspClient((m) => window.api.lspSend(config.id, m))
+  lspClients.set(config.id, client)
+  return new LspServer(client, config)
+}))
+window.api.onLspMessage((id, m) => lspClients.get(id)?.handleMessage(m))
 const problems = new ProblemsView(
   (path, d) => void openFile(path).then((doc) => {
     if (doc) editor.select(d.start, d.end)
@@ -455,41 +730,53 @@ panel.addView('problems', 'Problems', problems.body, problems.actions)
 function showDiagnostics(): void {
   for (const ed of editors) {
     const doc = ed.currentDoc
-    ed.setSquiggles(doc ? python.diagnosticsFor(doc.path) : [])
+    ed.setSquiggles(doc ? languages.diagnosticsFor(doc.path) : [])
   }
-  const count = problems.render(python.allDiagnostics())
+  const count = problems.render(languages.allDiagnostics())
   panel.setTitle('problems', count ? `Problems (${count})` : 'Problems')
 }
-python.onDiagnostics(showDiagnostics)
-const completion = new Completion(editor, python, () => workspace.active)
+languages.onDiagnostics(showDiagnostics)
+const completion = new Completion(editor, languages, () => workspace.active)
 
-let lspRestarts = 0
-async function startLanguageServer(): Promise<void> {
-  if (!rootFolder) return
-  lsp.dispose('Python language server restarting')
-  python.stopped()
-  problems.setStatus('Starting Python language server (Pyright)…')
+/** Crash restarts per server since the folder was opened (to not loop forever). */
+const lspRestarts = new Map<string, number>()
+async function startLanguageServer(id: string): Promise<void> {
+  const setup = serverSetups.find((s) => s.config.id === id)
+  const server = languages.server(id)
+  if (!rootFolder || !setup || !server) return
+  const name = setup.config.name
+  lspClients.get(id)?.dispose(`${name} restarting`)
+  server.stopped()
+  problems.setStatus(`Starting ${name}…`)
   showDiagnostics()
   try {
-    await window.api.lspStart()
-    const py = await window.api.resolvePythonForAnalysis(rootFolder, settings.pythonPath || undefined)
-    await python.start(rootFolder, py)
-    python.syncDocs(workspace.docs.filter((d) => !d.large))
+    await window.api.lspStart(id)
+    await server.start(rootFolder, await setup.settings(rootFolder))
+    server.syncDocs(workspace.docs.filter((d) => !d.large))
     problems.setStatus('')
     outlineDoc = null
     refreshOutlineSoon(0)
   } catch (err) {
-    problems.setStatus(`Python language server failed to start: ${String(err)}`)
+    problems.setStatus(`${name} failed to start: ${String(err)}`)
   }
   showDiagnostics()
 }
-window.api.onLspExit((code) => {
-  lsp.dispose('Python language server stopped')
-  python.stopped()
+/** (Re)start every language server, e.g. for a newly opened folder. */
+function startLanguageServers(): void {
+  lspRestarts.clear()
+  for (const { config } of serverSetups) void startLanguageServer(config.id)
+}
+window.api.onLspExit((id, code) => {
+  const setup = serverSetups.find((s) => s.config.id === id)
+  if (!setup) return
+  lspClients.get(id)?.dispose(`${setup.config.name} stopped`)
+  languages.server(id)?.stopped()
   // Restart after an unexpected crash, but don't loop forever.
-  if (lspRestarts++ < 3) void startLanguageServer()
+  const n = lspRestarts.get(id) ?? 0
+  lspRestarts.set(id, n + 1)
+  if (n < 3) void startLanguageServer(id)
   else {
-    problems.setStatus(`Python language server stopped (exit code ${code}). Reopen the folder to retry.`)
+    problems.setStatus(`${setup.config.name} stopped (exit code ${code}). Reopen the folder to retry.`)
     showDiagnostics()
   }
 })
@@ -522,7 +809,7 @@ function onEditorHover(pos: { line: number; col: number } | null, e: MouseEvent)
     hideHover()
     return
   }
-  const hits = python.diagnosticsFor(doc.path).filter((d) => d.severity <= 3 && covers(d, pos))
+  const hits = languages.diagnosticsFor(doc.path).filter((d) => d.severity <= 3 && covers(d, pos))
   // Hovering anywhere on the same word (or same set of errors) keeps the same tooltip.
   const lineText = doc.buffer.getLine(pos.line)
   const onWord = isWordChar(lineText[pos.col])
@@ -549,7 +836,7 @@ function onEditorHover(pos: { line: number; col: number } | null, e: MouseEvent)
     }
     if (onWord) {
       try {
-        const md = await python.hover(doc, pos)
+        const md = await languages.hover(doc, pos)
         if (md) sections.push(...hoverSections(md))
       } catch {
         // server busy: show what we have
@@ -590,7 +877,7 @@ async function goToDefinition(pos = editor.getCursor()): Promise<void> {
   hideHover()
   let target
   try {
-    target = await python.definition(doc, pos)
+    target = await languages.definition(doc, pos)
   } catch {
     return
   }
@@ -634,8 +921,8 @@ async function findReferences(): Promise<void> {
   const doc = workspace.active
   if (!doc) return
   panel.show('references')
-  if (!python.knows(doc)) {
-    referencesView.message(doc.large ? 'This file is too large for the Python language server.' : 'Find references works in Python files, once the language server has started.')
+  if (!languages.knows(doc)) {
+    referencesView.message(noLanguageServer(doc, 'Find references'))
     return
   }
   const pos = cursorOnWord()
@@ -643,22 +930,187 @@ async function findReferences(): Promise<void> {
   referencesView.message(`Looking for references to "${name}"…`)
   let locations: Location[] = []
   try {
-    locations = await python.references(doc, pos)
+    locations = await languages.references(doc, pos)
   } catch (err) {
     referencesView.message(`Couldn't find references: ${String(err)}`)
     return
   }
-  // Lines for the previews: open files from the editor, others read once from disk.
-  const cache = new Map<string, Promise<string[]>>()
-  const lineText = async (path: string, line: number) => {
+  await referencesView.show(name, locations, makeLineReader().line)
+}
+
+/** Reads lines of files: open ones from the editor, others once from disk. */
+function makeLineReader(): { line: (path: string, line: number) => Promise<string>; all: (path: string) => Promise<readonly string[]> } {
+  const cache = new Map<string, Promise<readonly string[]>>()
+  const all = (path: string) => {
     const open = workspace.find(path)
-    if (open) return open.buffer.getLine(line)
+    if (open) return Promise.resolve(open.buffer.getLines())
     if (!cache.has(path)) {
-      cache.set(path, window.api.readTextFile(path).then((r) => (r.kind === 'text' ? r.text.split(/\r\n|\r|\n/) : [])))
+      cache.set(path, window.api.readTextFile(path).then((r) => (r.kind === 'text' ? r.text.split(/\r\n|\r|\n/) : []), () => []))
     }
-    return (await cache.get(path)!)[line] ?? ''
+    return cache.get(path)!
   }
-  await referencesView.show(name, locations, lineText)
+  return { all, line: async (path, line) => (await all(path))[line] ?? '' }
+}
+
+/** Open a location with its range selected. */
+async function showLocation(loc: Location): Promise<void> {
+  const doc = await openFile(loc.path)
+  if (!doc) return
+  editor.select(loc.start, loc.end)
+  editor.focus()
+}
+
+/**
+ * Ctrl+F12, for Python: on a class, the classes that inherit from it; on a
+ * method, the subclasses' own versions of it (overrides). Found from the
+ * class's references (direct subclasses).
+ */
+async function findImplementations(followed = false): Promise<void> {
+  const doc = workspace.active
+  if (!doc) return
+  if (!languages.knows(doc)) return statusNote(noLanguageServer(doc, 'Go to Implementations'))
+  const pos = cursorOnWord()
+  const chain = symbolPathAt(await languages.symbols(doc).catch(() => [] as DocSymbol[]), pos)
+  const inner = chain[chain.length - 1]
+  const parent = chain[chain.length - 2]
+  let cls: DocSymbol | null = null
+  let method: string | null = null
+  if (inner?.kind === 5 && inner.nameStart.line === pos.line) cls = inner
+  else if (inner && [6, 9, 12].includes(inner.kind) && parent?.kind === 5 && inner.nameStart.line === pos.line) {
+    cls = parent
+    method = inner.name
+  }
+  if (!cls) {
+    // A class or method used here: look from its definition.
+    if (!followed) {
+      const def = await languages.definition(doc, pos).catch(() => null)
+      if (def && (!samePath(def.path, doc.path) || def.start.line !== pos.line)) {
+        const target = await openFile(def.path)
+        if (target) {
+          editor.goTo(def.start.line, def.start.col)
+          return findImplementations(true)
+        }
+      }
+    }
+    return statusNote('Put the cursor on a class or a method to find its implementations.')
+  }
+  const what = method ? 'override' : 'subclass'
+  const title = method ? `${cls.name}.${method}` : cls.name
+  panel.show('references')
+  referencesView.message(`Looking for ${method ? `overrides of ${title}` : `subclasses of ${title}`}…`)
+  const reader = makeLineReader()
+  const refs = await languages.references(doc, cls.nameStart).catch(() => [] as Location[])
+  const found: Location[] = []
+  for (const ref of refs) {
+    const text = await reader.line(ref.path, ref.start.line)
+    const sub = subclassAt(text, ref.start.col)
+    if (!sub) continue
+    if (!method) {
+      found.push({ path: ref.path, start: { line: ref.start.line, col: sub.col }, end: { line: ref.start.line, col: sub.col + sub.name.length } })
+      continue
+    }
+    const m = methodInClass(await reader.all(ref.path), ref.start.line, method)
+    if (m) found.push({ path: ref.path, start: m, end: { line: m.line, col: m.col + method.length } })
+  }
+  await referencesView.show(title, found, reader.line, what)
+  if (found.length === 1) await showLocation(found[0])
+}
+
+async function goToTypeDefinition(): Promise<void> {
+  const doc = workspace.active
+  if (!doc || !languages.knows(doc)) return
+  const locs = await languages.typeDefinition(doc, cursorOnWord()).catch(() => [] as Location[])
+  if (!locs.length) return statusNote('No type definition found here.')
+  navigationStack.push({ path: doc.path, ...editor.getCursor() })
+  await showLocation(locs[0])
+}
+
+/** Why `feature` isn't available for this doc: too large, no server for its language, or not started yet. */
+function noLanguageServer(doc: Doc, feature: string): string {
+  const lang = doc.mode.language
+  if (!lang.server) return `${feature} needs a language server, and there isn't one for ${lang.name} files yet.`
+  if (doc.large) return 'This file is too large for the language server (it is skipped to stay responsive).'
+  const name = serverSetups.find((s) => s.config.id === lang.server)?.config.name ?? 'The language server'
+  return `${feature} will work once ${name} has started (it starts when a folder is opened).`
+}
+
+/** Ctrl+T: find a class / function anywhere in the project by name. */
+function goToProjectSymbol(): void {
+  if (!languages.isStarted) {
+    palette.choose('No language server is running (open a folder first).', [])
+    return
+  }
+  const rel = (p: string) => (rootFolder && isInside(p, rootFolder) ? p.slice(rootFolder.length).replace(/^[\\/]+/, '') : p)
+  palette.search('Go to a class, function or variable anywhere in the project', async (query) => {
+    const found = await languages.workspaceSymbols(query).catch(() => [])
+    // Project files first (the standard library can match too).
+    const inProject = (p: string) => !!rootFolder && isInside(p, rootFolder) && !/[\\/](\.?venv|site-packages)[\\/]/.test(p)
+    found.sort((a, b) => Number(inProject(b.location.path)) - Number(inProject(a.location.path)))
+    return found.map((s) => ({
+      label: s.name,
+      detail: `${SYMBOL_KIND[s.kind]?.name ?? 'symbol'}${s.container ? ` in ${s.container}` : ''} · ${rel(s.location.path)}`,
+      hint: `line ${s.location.start.line + 1}`,
+      run: () => void showLocation(s.location)
+    }))
+  }, editor.getSelectedText().trim().split('\n')[0] ?? '')
+}
+
+const callsView = new CallHierarchyView({
+  calls: (item, direction) => languages.calls(item, direction),
+  open: (path, pos) => void openFile(path).then((doc) => {
+    if (!doc) return
+    editor.goTo(pos.line, pos.col)
+    editor.focus()
+  }),
+  relative: (p) => (rootFolder && isInside(p, rootFolder) ? p.slice(rootFolder.length).replace(/^[\\/]+/, '') : p)
+})
+panel.addView('calls', 'Calls', callsView.body, callsView.actions)
+
+async function showCallHierarchy(): Promise<void> {
+  const doc = workspace.active
+  if (!doc) return
+  panel.show('calls')
+  if (!languages.knows(doc)) return callsView.message(noLanguageServer(doc, 'Call hierarchy'))
+  const items = await languages.prepareCallHierarchy(doc, cursorOnWord()).catch(() => [])
+  if (!items.length) return callsView.message('Put the cursor on a function or method name (its definition or a call to it).')
+  callsView.show(items[0])
+}
+
+// ---------- other uses of the name under the cursor ----------
+
+let occurrenceTimer: number | undefined
+let occurrenceKey = ''
+let occurrenceGeneration = 0
+
+function clearOccurrences(): void {
+  occurrenceKey = ''
+  occurrenceGeneration++
+  window.clearTimeout(occurrenceTimer)
+  for (const ed of editors) ed.setOccurrences([])
+}
+
+/** Called on every cursor move: highlight the other uses of the name under the cursor. */
+function updateOccurrences(): void {
+  const doc = workspace.active
+  if (!doc || !languages.knows(doc) || editor.getSelectedText()) return clearOccurrences()
+  const pos = editor.getCursor()
+  const line = doc.buffer.getLine(pos.line)
+  let start = pos.col
+  while (start > 0 && /[\p{L}\p{N}_]/u.test(line[start - 1])) start--
+  const name = nameAt(line, pos.col)
+  if (!name || /^\d/.test(name)) return clearOccurrences()
+  const key = `${doc.path}|${doc.version}|${pos.line}|${start}`
+  if (key === occurrenceKey) return
+  clearOccurrences()
+  occurrenceKey = key
+  const gen = occurrenceGeneration
+  occurrenceTimer = window.setTimeout(() => {
+    void languages.highlights(doc, { line: pos.line, col: start }).then((list) => {
+      if (gen !== occurrenceGeneration || workspace.active !== doc) return
+      // Just the one under the cursor isn't worth highlighting.
+      editor.setOccurrences(list.length > 1 ? list : [])
+    }, () => {})
+  }, 250)
 }
 
 /** Apply edits to an open document as one undoable step. */
@@ -673,20 +1125,20 @@ function applyEditsToDoc(doc: Doc, edits: TextEdit[]): void {
     }
     return at
   })
-  python.docChanged(doc)
+  languages.docChanged(doc)
 }
 
 async function renameSymbol(): Promise<void> {
   const doc = workspace.active
   if (!doc) return
-  if (!python.knows(doc)) {
-    alert('Rename works in Python files, once the language server has started.')
+  if (!languages.knows(doc)) {
+    alert(noLanguageServer(doc, 'Rename'))
     return
   }
   const pos = cursorOnWord()
-  let prep: Awaited<ReturnType<typeof python.prepareRename>> = null
+  let prep: Awaited<ReturnType<typeof languages.prepareRename>> = null
   try {
-    prep = await python.prepareRename(doc, pos)
+    prep = await languages.prepareRename(doc, pos)
   } catch { /* treated as "can't rename" */ }
   if (!prep) {
     alert("That can't be renamed. Put the cursor on a name defined in your code (a variable, function, class, parameter...).")
@@ -704,7 +1156,7 @@ async function doRename(doc: Doc, pos: Position, oldName: string, newName: strin
   }
   let edits
   try {
-    edits = await python.rename(doc, pos, newName)
+    edits = await languages.rename(doc, pos, newName)
   } catch (err) {
     alert(`Rename failed: ${err instanceof Error ? err.message : String(err)}`)
     return
@@ -740,7 +1192,7 @@ async function doRename(doc: Doc, pos: Position, oldName: string, newName: strin
       failed.push(`${rel(path)} (${err instanceof Error ? err.message : String(err)})`)
     }
   }
-  python.filesChangedOnDisk(closed)
+  languages.filesChangedOnDisk(closed)
   workspace.notifyChanged()
   if (closed.length) void refreshGit()
   if (failed.length) alert(`These files couldn't be changed, so the rename is incomplete there:\n${failed.join('\n')}`)
@@ -766,15 +1218,12 @@ async function refreshOutline(): Promise<void> {
   if ($('outline-panel').hidden) return
   const doc = workspace.active
   if (!doc) return outline.set([], 'Open a Python file to see its outline.')
-  if (!/\.pyi?$/i.test(doc.path)) return outline.set([], 'The outline is for Python files.')
-  if (!python.knows(doc)) {
-    return outline.set([], doc.large ? 'This file is too large for the Python language server.' : 'Waiting for the Python language server…')
-  }
+  if (!languages.knows(doc)) return outline.set([], noLanguageServer(doc, 'The outline'))
   if (doc === outlineDoc && doc.version === outlineVersion) return
   const gen = ++outlineGeneration
   let symbols: DocSymbol[] = []
   try {
-    symbols = await python.symbols(doc)
+    symbols = await languages.symbols(doc)
   } catch {
     return
   }
@@ -789,11 +1238,11 @@ async function refreshOutline(): Promise<void> {
 async function goToSymbol(): Promise<void> {
   const doc = workspace.active
   if (!doc) return
-  if (!python.knows(doc)) {
-    palette.choose('Go to symbol works in Python files, once the language server has started.', [])
+  if (!languages.knows(doc)) {
+    palette.choose(noLanguageServer(doc, 'Go to symbol'), [])
     return
   }
-  const symbols = await python.symbols(doc).catch(() => [] as DocSymbol[])
+  const symbols = await languages.symbols(doc).catch(() => [] as DocSymbol[])
   const items: { label: string; detail?: string; hint?: string; run: () => void }[] = []
   const walk = (list: DocSymbol[], parent: string) => {
     for (const s of list) {
@@ -819,6 +1268,11 @@ commands.register({ id: 'nav.references', title: 'Find All References', keys: 'S
 commands.register({ id: 'editor.renameSymbol', title: 'Rename Symbol…', keys: 'F2', when: () => hasDocNow() && editorFocused(), run: () => void renameSymbol() })
 commands.register({ id: 'nav.symbol', title: 'Go to Symbol in File…', keys: 'Ctrl+Shift+O', when: hasDocNow, run: () => void goToSymbol() })
 commands.register({ id: 'view.outline', title: 'Show Outline', run: () => showSidebar('outline') })
+commands.register({ id: 'nav.implementations', title: 'Go to Implementations (subclasses / overrides)', keys: 'Ctrl+F12', when: hasDocNow, run: () => void findImplementations() })
+commands.register({ id: 'nav.typeDefinition', title: 'Go to Type Definition', when: hasDocNow, run: () => void goToTypeDefinition() })
+commands.register({ id: 'nav.projectSymbol', title: 'Go to Symbol in Project…', keys: 'Ctrl+T', when: () => rootFolder !== null, run: goToProjectSymbol })
+commands.register({ id: 'nav.callHierarchy', title: 'Show Call Hierarchy', keys: 'Shift+Alt+H', when: hasDocNow, run: () => void showCallHierarchy() })
+commands.register({ id: 'panel.calls', title: 'Show Calls Panel', run: () => panel.show('calls') })
 commands.register({ id: 'panel.references', title: 'Show References', run: () => panel.show('references') })
 
 // ---------- settings ----------
@@ -827,7 +1281,7 @@ commands.register({ id: 'panel.references', title: 'Show References', run: () =>
 let settings: Settings = DEFAULT_SETTINGS
 /** Your own settings (settings.json), as shown in the Settings dialog. */
 let userSettings: Settings = DEFAULT_SETTINGS
-/** What the open project's .ideforfun/settings.json overrides. */
+/** What the open project's .forge/settings.json overrides. */
 let projectSettings: ProjectSettings = {}
 let projectSettingsPath: string | null = null
 
@@ -835,7 +1289,8 @@ function applySettings(s: Settings, restartLsp = true): void {
   const pythonChanged = s.pythonPath !== settings.pythonPath
   settings = s
   if (pythonChanged && rootFolder && restartLsp) {
-    void startLanguageServer()
+    lspRestarts.delete(pyright.id)
+    void startLanguageServer(pyright.id)
     refreshPythonEnv()
   }
   const root = document.documentElement
@@ -845,6 +1300,7 @@ function applySettings(s: Settings, restartLsp = true): void {
   root.dataset.theme = s.theme
   for (const ed of editors) ed.refreshLayout(s.tabSize)
   terminal.applyTheme(s.fontSize)
+  codeTools.sync(workspace.docs) // Ruff warnings on or off (only called once everything is set up)
 }
 
 /** A relative interpreter path in project settings (.venv/bin/python) is relative to the project. */
@@ -854,7 +1310,10 @@ function resolveInProject(path: string | undefined): string | undefined {
   return rootFolder.replace(/[\\/]+$/, '') + sep + path.replace(/^\.[\\/]/, '')
 }
 
-const SETTING_NAMES: Record<string, string> = { tabSize: 'Tab width', pythonPath: 'Python interpreter', shell: 'Terminal shell' }
+const SETTING_NAMES: Record<string, string> = {
+  tabSize: 'Tab width', pythonPath: 'Python interpreter', shell: 'Terminal shell',
+  formatter: 'Formatter', formatOnSave: 'Format on save', lintWithRuff: 'Ruff warnings'
+}
 
 /** Recompute the settings in effect after yours or the project's change. */
 function applyEffective(restartLsp = true): void {
@@ -864,9 +1323,9 @@ function applyEffective(restartLsp = true): void {
   const keys = Object.keys(projectSettings)
   settingsView.setProjectNote(
     keys.length
-      ? `This project's .ideforfun/settings.json sets: ${keys.map((k) => SETTING_NAMES[k] ?? k).join(', ')}. ` +
+      ? `This project's .forge/settings.json sets: ${keys.map((k) => SETTING_NAMES[k] ?? k).join(', ')}. ` +
         'Those rows show your own setting; the project\'s value is used while it is open.'
-      : rootFolder ? 'A project can set tabSize, pythonPath and shell in .ideforfun/settings.json (Project Settings below).' : null
+      : rootFolder ? 'A project can set tabSize, pythonPath, shell, formatter, formatOnSave and lintWithRuff in .forge/settings.json (Project Settings below).' : null
   )
 }
 
@@ -884,7 +1343,7 @@ const settingsView = new SettingsView(settings, (s) => {
   void window.api.saveSettings(s)
 })
 
-/** Read <project>/.ideforfun/settings.json (a missing file means no overrides). */
+/** Read <project>/.forge/settings.json (a missing file means no overrides). */
 async function loadProjectSettings(folder: string, restartLsp = true): Promise<void> {
   let res
   try {
@@ -904,10 +1363,16 @@ let lastActiveDoc: Doc | null = null
 workspace.subscribe(() => {
   if (workspace.active !== lastActiveDoc) {
     if (workspace.active) welcomeForced = false // a file was opened or picked
+    if (workspace.active) {
+      // A file was picked: close the diff over it.
+      diffView.hide()
+    }
     lastActiveDoc = workspace.active
   }
   updateWelcome()
   refreshOutlineSoon(workspace.active === outlineDoc ? 600 : 50)
+  if (gitView.status) refreshBlameSoon(blame?.doc === workspace.active ? 1500 : 150)
+  refreshFilePanels()
   syncGroups()
   workspace.groups.forEach((g, i) => {
     tabBars[i].render()
@@ -926,13 +1391,13 @@ workspace.subscribe(() => {
   updateLineMarkers()
   findBar.refresh()
   completion.syncDoc()
-  python.syncDocs(workspace.docs.filter((d) => !d.large))
+  languages.syncDocs(workspace.docs.filter((d) => !d.large))
   backups.sync(workspace.docs)
   saveStateSoon()
   scheduleStatus()
   showDiagnostics()
   const folder = rootFolder?.split(/[\\/]/).pop()
-  document.title = [doc ? (doc.dirty ? '● ' : '') + doc.name : null, folder, 'IDEforfun']
+  document.title = [doc ? (doc.dirty ? '● ' : '') + doc.name : null, folder, 'Forge']
     .filter(Boolean).join(' — ')
 })
 
@@ -963,9 +1428,10 @@ export async function openFile(path: string, line?: number): Promise<Doc | null>
 async function saveActive(): Promise<boolean> {
   const doc = workspace.active
   if (!doc) return false
+  if (settings.formatOnSave && /\.pyi?$/i.test(doc.path)) await codeTools.format({ doc, quiet: true })
   try {
     await workspace.save(doc)
-    python.didSave(doc)
+    languages.didSave(doc)
     if (shortcuts.path && samePath(doc.path, shortcuts.path)) void shortcuts.load()
     if (rootFolder && projectSettingsPath && samePath(doc.path, projectSettingsPath)) void loadProjectSettings(rootFolder)
     if (rootFolder && runFilePath && samePath(doc.path, runFilePath)) void loadRunFile(rootFolder)
@@ -1008,19 +1474,32 @@ async function openFolderPath(folder: string): Promise<void> {
   try {
     if (!workspace.closeAll()) return
     rootFolder = folder
+    lastRepoSignature = null
     folderName.textContent = folder
     folderName.classList.remove('muted')
     void window.api.recentAdd(folder).catch(() => {})
+    // Project files live in .forge/ (older projects have .ideforfun/: moved here first).
+    const moved = await window.api.prepareProjectDir(folder).catch(() => 'error' as const)
+    if (moved === 'migrated') statusNote('Moved project settings from .ideforfun/ to .forge/')
+    else if (moved === 'copied') statusNote("Copied project settings to .forge/ (the old .ideforfun/ folder couldn't be moved)")
+    else if (moved === 'error') alert("This project's settings are in .ideforfun/, but Forge couldn't move or copy them to .forge/ (a file may be in use). They aren't used this time: close other programs using the folder and open it again.")
     await loadProjectSettings(folder, false)
     runConfigName = null
     lastTask = null
     tests.reset()
+    breakpoints.clear()
+    watches = []
+    exceptionFilters = ['uncaught']
+    debugView.setWatches([])
     await loadRunFile(folder)
+    await loadBoxes(folder)
     await tree.setRoot(folder)
+    graphView.reset()
+    projectGraph = null
+    projectGraphFolder = null
     workspace.notifyChanged()
     void refreshGit()
-    lspRestarts = 0
-    void startLanguageServer()
+    startLanguageServers()
     refreshPythonEnv()
     await restoreLayout(folder)
   } finally {
@@ -1044,7 +1523,11 @@ function captureState(): WorkspaceState {
     activeGroup: workspace.activeGroup,
     terminals: terminal.shellIds(),
     panel: panel.activeView,
-    runConfig: runConfigName
+    task: tasks.current,
+    runConfig: runConfigName,
+    breakpoints: breakpoints.save(),
+    watches,
+    exceptionFilters
   }
 }
 
@@ -1082,8 +1565,14 @@ async function restoreLayout(folder: string): Promise<void> {
     }
   })
   if (state.runConfig && runFile.configurations.some((c) => c.name === state.runConfig)) runConfigName = state.runConfig
+  breakpoints.load(state.breakpoints.filter((b) => isInside(b.path, folder)))
+  watches = state.watches
+  exceptionFilters = state.exceptionFilters ?? ['uncaught']
+  debugView.setWatches(watches)
+  debugView.renderBreakpoints()
   scheduleStatus()
   terminal.setPending(state.terminals)
+  tasks.switchTo(state.task)
   if (state.panel) panel.show(state.panel)
 }
 
@@ -1137,7 +1626,7 @@ async function offerRestore(folder: string): Promise<void> {
   const rel = (p: string) => p.slice(folder.length).replace(/^[\\/]+/, '')
   const list = found.slice(0, 8).map((b) => `  • ${rel(b.path)}`).join('\n') + (found.length > 8 ? `\n  …and ${found.length - 8} more` : '')
   const restore = confirm(
-    `IDEforfun didn't close properly last time, and ${found.length} file${found.length > 1 ? 's had' : ' had'} unsaved changes:\n\n${list}\n\n` +
+    `Forge didn't close properly last time, and ${found.length} file${found.length > 1 ? 's had' : ' had'} unsaved changes:\n\n${list}\n\n` +
     'Restore those changes? (They open as unsaved; Ctrl+Z goes back to the file on disk.) Cancel throws them away.'
   )
   if (!restore) {
@@ -1156,7 +1645,7 @@ async function offerRestore(folder: string): Promise<void> {
     }
     doc.eol = b.eol
     doc.encoding = b.encoding
-    python.docChanged(doc)
+    languages.docChanged(doc)
   }
   workspace.notifyChanged()
 }
@@ -1278,7 +1767,7 @@ async function runCurrentFile(): Promise<void> {
   editor.focus()
 }
 
-// ---------- run configurations and tasks (.ideforfun/run.json) ----------
+// ---------- run configurations and tasks (.forge/run.json) ----------
 
 let runFile: RunFile = { configurations: [], tasks: [] }
 let runFilePath: string | null = null
@@ -1347,7 +1836,7 @@ function pickRunConfig(): void {
       hint: c.name === runConfigName ? '✓' : undefined,
       run: () => setRunConfig(c.name)
     })),
-    { label: runFile.configurations.length ? 'Edit run configurations…' : 'Add a run configuration…', detail: '.ideforfun/run.json', run: () => void editRunFile() }
+    { label: runFile.configurations.length ? 'Edit run configurations…' : 'Add a run configuration…', detail: '.forge/run.json', run: () => void editRunFile() }
   ]
   palette.choose('Run configuration for F5 / Ctrl+F5', items)
 }
@@ -1370,9 +1859,9 @@ function runTask(task: Task): void {
 function pickTask(): void {
   const items = [
     ...runFile.tasks.map((t) => ({ label: t.name, detail: t.command, run: () => runTask(t) })),
-    { label: runFile.tasks.length ? 'Edit tasks…' : 'Add a task…', detail: '.ideforfun/run.json', run: () => void editRunFile() }
+    { label: runFile.tasks.length ? 'Edit tasks…' : 'Add a task…', detail: '.forge/run.json', run: () => void editRunFile() }
   ]
-  palette.choose(runFile.tasks.length ? 'Run a task (in a new terminal)' : 'No tasks yet: add some to .ideforfun/run.json', items)
+  palette.choose(runFile.tasks.length ? 'Run a task (in a new terminal)' : 'No tasks yet: add some to .forge/run.json', items)
 }
 
 /** What to do when a tool run (pip, venv) ends, by run id. */
@@ -1382,6 +1871,7 @@ let lastExit: { runId: number; code: number | null } | null = null
 window.api.onRunEvent((e) => {
   if (e.runId < lastRunId) return // late event from a run we already replaced
   lastRunId = e.runId
+  if (e.type !== 'output') scheduleStatus() // the ▶ Run / ■ Stop button
   if (e.type === 'start') output.started(e.python)
   else if (e.type === 'output') output.append(e.stream, e.text)
   else if (e.type === 'error') output.error(e.message)
@@ -1410,7 +1900,7 @@ commands.register({
   id: 'run.smart', title: 'Run (or Debug if there are breakpoints) / Continue', keys: 'F5',
   when: () => canLaunch() || debugPaused(),
   run: () => {
-    if (debugPaused()) return void session!.continue()
+    if (debugPaused()) return continueDebugging()
     if (debugging()) return // starting or running: nothing to do
     if (breakpoints.count > 0) return void startDebugging()
     void runCurrentFile()
@@ -1442,6 +1932,21 @@ commands.register({ id: 'debug.stepInto', title: 'Step Into', keys: 'F11', when:
 commands.register({ id: 'debug.stepOut', title: 'Step Out', keys: 'Shift+F11', when: debugPaused, run: () => void session!.stepOut() })
 commands.register({ id: 'debug.pause', title: 'Pause', when: () => session?.state === 'running', run: () => void session!.pause() })
 commands.register({ id: 'debug.toggleBreakpoint', title: 'Toggle Breakpoint', keys: 'F9', when: hasDoc, run: () => toggleBreakpoint() })
+commands.register({
+  id: 'debug.editBreakpoint', title: 'Edit Breakpoint (condition, hit count, log message)…', when: hasDocNow,
+  run: () => editBreakpoint(workspace.active!.path, editor.getCursor().line)
+})
+commands.register({
+  id: 'debug.toggleRaised', title: 'Debug: Pause on Raised Exceptions (on / off)',
+  run: () => {
+    const on = !exceptionFilters.includes('raised')
+    exceptionFilters = on ? [...exceptionFilters, 'raised'] : exceptionFilters.filter((f) => f !== 'raised')
+    for (const p of processes) void p.session.setExceptionFilters(exceptionFilters).catch(() => {})
+    statusNote(on ? 'The debugger now pauses wherever an exception is raised.' : 'The debugger pauses only on uncaught exceptions.')
+    saveStateSoon()
+    debugView.renderBreakpoints()
+  }
+})
 commands.register({ id: 'debug.clearBreakpoints', title: 'Remove All Breakpoints', when: () => breakpoints.count > 0, run: () => breakpoints.clear() })
 commands.register({
   id: 'editor.toggleMinimap', title: 'Toggle Minimap',
@@ -1476,7 +1981,7 @@ commands.register({ id: 'panel.output', title: 'Show Output', run: () => panel.s
 commands.register({ id: 'nav.definition', title: 'Go to Definition', keys: 'F12', when: hasDoc, run: () => void goToDefinition(cursorOnWord()) })
 commands.register({ id: 'nav.back', title: 'Go Back', keys: 'Alt+ArrowLeft', run: () => void goBack() })
 commands.register({ id: 'panel.problems', title: 'Show Problems', keys: 'Ctrl+Shift+M', run: () => panel.show('problems') })
-commands.register({ id: 'python.restartServer', title: 'Restart Python Language Server', when: () => rootFolder !== null, run: () => { lspRestarts = 0; void startLanguageServer() } })
+commands.register({ id: 'python.restartServer', title: 'Restart Python Language Server', when: () => rootFolder !== null, run: () => { lspRestarts.delete(pyright.id); void startLanguageServer(pyright.id) } })
 commands.register({
   id: 'terminal.toggle', title: 'Toggle Terminal', keys: 'Ctrl+`',
   run: () => {
@@ -1497,8 +2002,8 @@ commands.register({
   run: () => updateUserSettings({ fontSize: Math.max(10, userSettings.fontSize - 1) })
 })
 commands.register({
-  id: 'view.toggleTheme', title: 'Toggle Light/Dark Theme',
-  run: () => updateUserSettings({ theme: userSettings.theme === 'dark' ? 'light' : 'dark' })
+  id: 'view.toggleTheme', title: 'Toggle Plain Theme',
+  run: () => updateUserSettings({ theme: userSettings.theme === 'molten' ? 'plain' : 'molten' })
 })
 commands.register({
   id: 'settings.project', title: 'Open Project Settings', when: () => rootFolder !== null,
@@ -1518,11 +2023,29 @@ commands.register({
 // ---------- git status in the file tree ----------
 
 let gitBusy = false
+/** What the repository looked like at the last check (null = not checked yet in this folder). */
+let lastRepoSignature: string | null = null
+
 async function refreshGit(): Promise<void> {
   if (!rootFolder || gitBusy) return
   gitBusy = true
+  const folder = rootFolder
   try {
-    tree.setGitStatus(await window.api.gitStatus(rootFolder))
+    const [status, repo] = await Promise.all([window.api.gitStatus(folder), window.api.gitRepo(folder)])
+    if (rootFolder !== folder) return
+    tree.setGitStatus(status)
+    const hadRepo = gitView.status !== null
+    // Commits, merges, pulls or checkouts done outside the IDE (e.g. in the terminal) change
+    // files on disk: reload the open files that have no unsaved edits.
+    const signature = repo ? JSON.stringify([repo.head, repo.branch, repo.staged, repo.unstaged, repo.conflicts]) : ''
+    if (lastRepoSignature !== null && signature !== lastRepoSignature) void reloadCleanDocs()
+    lastRepoSignature = signature
+    gitView.setStatus(repo)
+    if (repo && !hadRepo) refreshBlameSoon(0)
+    const branch = $('sb-branch')
+    branch.textContent = repo ? `⎇ ${repo.detached ? 'detached' : repo.branch ?? ''}${repo.ahead ? ` ↑${repo.ahead}` : ''}${repo.behind ? ` ↓${repo.behind}` : ''}` : ''
+    // The diff on screen may be out of date (files edited, staged elsewhere...).
+    if (diffView.isVisible) void diffView.reload()
   } finally {
     gitBusy = false
   }
@@ -1532,6 +2055,558 @@ window.addEventListener('focus', () => void refreshGit())
 window.setInterval(() => {
   if (document.hasFocus()) void refreshGit()
 }, 5000)
+
+// ---------- Source Control (git) ----------
+
+/**
+ * Files changed on disk by git (switch branch, pull, discard): reload the open
+ * ones that have no unsaved changes, changing only the lines that differ.
+ */
+async function reloadCleanDocs(): Promise<void> {
+  for (const doc of workspace.docs) {
+    if (doc.dirty) continue
+    const res = await window.api.readTextFile(doc.path).catch(() => null)
+    if (!res || res.kind !== 'text' || doc.dirty) continue
+    const now = doc.buffer.getLines().join('\n')
+    const disk = res.text.replace(/\r\n?/g, '\n')
+    const edit = lineDiff(now, disk)
+    if (!edit) continue
+    applyEditsToDoc(doc, [edit])
+    doc.eol = res.text.includes('\r\n') ? 'CRLF' : 'LF'
+    doc.markSaved()
+  }
+  workspace.notifyChanged()
+}
+
+/** Run a git action from the Git or diff view: show progress and errors, then refresh. */
+async function gitRun(action: () => Promise<{ ok: boolean; error?: string; output: string }>, busyText: string): Promise<boolean> {
+  gitView.setBusy(busyText)
+  let res: { ok: boolean; error?: string; output: string }
+  try {
+    res = await action()
+  } catch (err) {
+    res = { ok: false, output: '', error: String(err) }
+  }
+  gitView.setBusy('')
+  if (!res.ok) alert(`Git: ${res.error ?? 'it failed'}`)
+  else if (/Pull|Fetch|Push/.test(busyText) && res.output) statusNote(res.output.split('\n').filter(Boolean).pop() ?? '')
+  // Switching, pulling and discarding change files on disk.
+  if (res.ok && /Switch|Pull|Discard|Creat/.test(busyText)) await reloadCleanDocs()
+  await refreshGit()
+  void tree.refreshAll()
+  blame = null // commits change who-wrote-what
+  refreshBlameSoon(0)
+  conflictBarKey = ''
+  return res.ok
+}
+
+const gitView = new GitView({
+  folder: () => rootFolder,
+  openDiff: (repo, change, staged) => void diffView.show(repo, change, staged),
+  openFile: (path) => void openFile(path),
+  run: gitRun,
+  trash: async (paths) => {
+    for (const p of paths) {
+      try {
+        await window.api.trashEntry(p)
+      } catch {
+        await window.api.deletePermanently(p)
+      }
+    }
+  },
+  pickBranch: () => void pickBranch(),
+  refresh: () => void refreshGit()
+})
+$('git-panel').append(gitView.root)
+
+const diffView = new DiffView({
+  openFile: (path, line) => void openFile(path, line).then(() => diffView.hide()),
+  run: gitRun,
+  closed: () => editor.focus()
+})
+$('groups').append(diffView.el)
+
+// ---------- Project Graph (how the project fits together) ----------
+
+// One analysis of the project, shared by the Graph, Where you are and In this file panels.
+let projectGraph: ProjectGraph | null = null
+let projectGraphFolder: string | null = null
+let projectScan: Promise<{ graph?: ProjectGraph; error?: string }> | null = null
+function scanProjectGraph(): Promise<{ graph?: ProjectGraph; error?: string }> {
+  if (!rootFolder) return Promise.resolve({ error: 'Open a folder first.' })
+  if (projectScan) return projectScan
+  const folder = rootFolder
+  projectScan = window.api.scanProject(folder, settings.pythonPath || undefined)
+    .catch((err) => ({ error: String(err), scan: undefined }))
+    .then((res) => {
+      projectScan = null
+      if (rootFolder !== folder) return { error: 'The folder changed.' }
+      if (!res.scan) return { error: res.error ?? 'no result' }
+      projectGraph = buildGraph(res.scan)
+      projectGraphFolder = folder
+      refreshFilePanels()
+      return { graph: projectGraph }
+    })
+  return projectScan
+}
+let rescanTimer: number | undefined
+/** A Python file was saved: analyse again soon, if a panel showing the analysis is open. */
+function projectChangedSoon(): void {
+  window.clearTimeout(rescanTimer)
+  rescanTimer = window.setTimeout(() => {
+    if (tasks.isShown('where') || tasks.isShown('infile') || tasks.isShown('graph')) void scanProjectGraph().then(() => { if (tasks.isShown('graph')) void graphView.refresh() })
+  }, 1500)
+}
+
+const whereView = new WhereView({
+  open: (module) => {
+    const m = projectGraph?.modules.find((x) => x.id === module)
+    if (m && rootFolder) void openFile(projectPath(m.path))
+  },
+  reveal: (module) => {
+    tasks.reveal('graph')
+    graphView.revealModule(module)
+  }
+})
+const inFileView = new InFileView((line) => {
+  editor.goTo(line)
+  editor.focus()
+})
+dock.register({ id: 'where', title: 'Where you are', body: whereView.body, onShow: () => showFilePanels() })
+dock.register({ id: 'infile', title: 'In this file', body: inFileView.body, onShow: () => showFilePanels() })
+
+/** An absolute path for a project-relative one. */
+function projectPath(rel: string): string {
+  const folder = rootFolder ?? ''
+  const sep = folder.includes('\\') ? '\\' : '/'
+  return folder.replace(/[\\/]+$/, '') + sep + rel.split('/').join(sep)
+}
+
+/** The panels became visible: analyse the project first if needed. */
+function showFilePanels(): void {
+  if (rootFolder && projectGraphFolder !== rootFolder) void scanProjectGraph()
+  refreshFilePanels()
+}
+
+/** Update Where you are and In this file for the active file. */
+function refreshFilePanels(): void {
+  if (!tasks.isShown('where') && !tasks.isShown('infile')) return
+  const doc = workspace.active
+  let module: string | null = null
+  let message = 'Open a Python file to see where it fits.'
+  if (!rootFolder) message = 'Open a folder first.'
+  else if (doc && /\.pyi?$/i.test(doc.path)) {
+    if (!projectGraph || projectGraphFolder !== rootFolder) message = 'Analysing the project…'
+    else if (!isInside(doc.path, rootFolder)) message = 'This file is outside the project.'
+    else {
+      module = moduleForPath(projectGraph, doc.path.slice(rootFolder.length).replace(/^[\\/]+/, ''))
+      if (!module) message = 'This file was not part of the last analysis (save it to update).'
+    }
+  }
+  whereView.set(module ? projectGraph : null, module, message)
+  inFileView.set(module ? projectGraph : null, module, message)
+}
+
+// ---------- Connect: boxes (.forge/boxes.json) ----------
+
+/** Boxes whose test call is running (their wire is live on the Graph). */
+const liveBoxes = new Set<string>()
+
+/** The absolute path for a path a box writes to, which must stay inside the project. */
+function boxPath(rel: string): string {
+  if (!rootFolder) throw new Error('Open a folder first.')
+  const clean = rel.replace(/\\/g, '/')
+  if (/^([a-z]:)?\//i.test(clean) || clean.split('/').includes('..')) throw new Error(`"${rel}" must be a path inside the project (like api/github.py).`)
+  return projectPath(clean)
+}
+
+/** One edit that turns `from` into `to` (only the part that changed). */
+function textChange(from: string, to: string): TextEdit {
+  let start = 0
+  while (start < from.length && start < to.length && from[start] === to[start]) start++
+  let end = 0
+  while (end < from.length - start && end < to.length - start && from[from.length - 1 - end] === to[to.length - 1 - end]) end++
+  const pos = (offset: number) => {
+    const before = from.slice(0, offset)
+    const line = before.split('\n').length - 1
+    return { line, col: offset - (before.lastIndexOf('\n') + 1) }
+  }
+  return { start: pos(start), end: pos(from.length - end), text: to.slice(start, to.length - end) }
+}
+
+const boxFiles: BoxFiles = {
+  read: async (rel) => {
+    const path = boxPath(rel)
+    const open = workspace.find(path)
+    if (open) return open.getText()
+    const res = await window.api.readTextFile(path).catch(() => null)
+    return res && res.kind === 'text' ? res.text : null
+  },
+  write: async (rel, text) => {
+    const path = boxPath(rel)
+    const open = workspace.find(path)
+    if (open) {
+      // In the editor: one undoable change; saved unless it had unsaved edits of yours.
+      const hadEdits = open.dirty
+      applyEditsToDoc(open, [textChange(open.buffer.getLines().join('\n'), text.replace(/\r\n/g, '\n'))])
+      workspace.notifyChanged()
+      if (hadEdits) statusNote(`${rel} has unsaved edits: the box's change is in the editor, not saved yet`)
+      else {
+        await workspace.save(open)
+        languages.didSave(open)
+      }
+    } else {
+      const res = await window.api.readTextFile(path).catch(() => null)
+      await window.api.writeTextFile(path, text, res && res.kind === 'text' ? res.encoding : 'utf8')
+      languages.filesChangedOnDisk([path])
+      void tree.refreshAll()
+    }
+    void refreshGit()
+    projectChangedSoon()
+  },
+  saveBoxes: async (file) => {
+    if (rootFolder) await window.api.writeProjectFile(rootFolder, 'boxes.json', file)
+  },
+  note: (message) => statusNote(message)
+}
+const boxes = new BoxController(boxFiles)
+
+/** Add an API box: on a module (its code goes at the end of that file), or in a new file. */
+function addBox(module: string | null): void {
+  if (!rootFolder) {
+    alert('Open a folder first.')
+    return
+  }
+  const m = module ? projectGraph?.modules.find((x) => x.id === module) : undefined
+  if (m) boxes.add({ module: m.id }, { file: m.path, mode: 'append' })
+  else boxes.add(null)
+  tasks.reveal('box')
+}
+
+const toolbox = new Toolbox({ add: () => addBox(null) })
+const boxSettings = new BoxSettings(boxes, {
+  // The last response stays in the window: only the box's settings are sent.
+  testCall: (box, requestId) => window.api.apiTestCall(rootFolder ?? '', serializeBoxes([box]).boxes[0], requestId),
+  envNames: () => (rootFolder ? window.api.envNames(rootFolder) : Promise.resolve([])),
+  setSecret: (name, value) => (rootFolder ? window.api.setEnvValue(rootFolder, name, value) : Promise.reject(new Error('Open a folder first.'))),
+  envIgnored: () => (rootFolder ? window.api.envIgnored(rootFolder) : Promise.resolve(true)),
+  ignoreEnv: () => (rootFolder ? window.api.addEnvToGitignore(rootFolder).then(() => void refreshGit()) : Promise.resolve()),
+  confirmCode: (title, code) => showCodeDialog({ title, code, ok: 'Write code' }),
+  showDiff: (current, next) => showCodeDialog({ title: 'Replace your edits with the box\'s code? (- yours, + the box\'s)', diff: codeLineDiff(current, next), ok: 'Overwrite' }),
+  confirm: (message) => confirm(message),
+  alert: (message) => alert(message),
+  liveWire: (id, on) => {
+    if (on) liveBoxes.add(id)
+    else liveBoxes.delete(id)
+    graphView.redrawBoxes()
+  }
+})
+boxes.onChange(() => graphView.redrawBoxes())
+dock.register({ id: 'toolbox', title: 'Toolbox', body: toolbox.body })
+dock.register({ id: 'box', title: 'Box settings', body: boxSettings.body, onShow: () => void boxSettings.refreshEnv() })
+
+/** The project's boxes, from .forge/boxes.json. */
+async function loadBoxes(folder: string): Promise<void> {
+  const res = await window.api.readProjectFile(folder, 'boxes.json').catch(() => null)
+  if (res?.error) statusNote(`.forge/boxes.json couldn't be read (${res.error}): its boxes aren't shown`)
+  liveBoxes.clear()
+  boxes.load(res?.exists && !res.error ? res.value : null)
+  void boxSettings.refreshEnv()
+}
+
+const graphView = new GraphView({
+  scan: () => scanProjectGraph(),
+  boxes: {
+    list: () => boxes.boxes,
+    selected: () => boxes.selected,
+    select: (id) => {
+      boxes.select(id)
+      tasks.reveal('box')
+    },
+    drop: (module) => addBox(module),
+    live: () => liveBoxes
+  },
+  openModule: (rel, line) => {
+    if (!rootFolder) return
+    const sep = rootFolder.includes('\\') ? '\\' : '/'
+    const path = rootFolder.replace(/[\\/]+$/, '') + sep + rel.split('/').join(sep)
+    tasks.switchTo('code')
+    void openFile(path, line)
+  },
+})
+dock.register({ id: 'graph', title: 'Graph', body: graphView.el, onShow: () => void graphView.refresh() })
+commands.register({
+  id: 'view.projectGraph', title: 'Show Project Graph', keys: 'Ctrl+Alt+G', when: () => rootFolder !== null,
+  run: () => {
+    diffView.hide()
+    tasks.reveal('graph')
+  }
+})
+commands.register({
+  id: 'connect.addApiBox', title: 'Add API Box (Connect)', when: () => rootFolder !== null,
+  run: () => {
+    diffView.hide()
+    tasks.reveal('graph')
+    addBox(null)
+  }
+})
+
+/** Switch to a branch, create one, or check out a remote branch. */
+async function pickBranch(): Promise<void> {
+  const repo = gitView.status
+  if (!repo) return
+  const list = await window.api.gitBranches(repo.root)
+  const local = list.filter((b) => !b.remote)
+  const localNames = new Set(local.map((b) => b.name))
+  const remote = list.filter((b) => b.remote && !localNames.has(b.name.slice(b.name.indexOf('/') + 1)))
+  const sw = (name: string, opts: { create: boolean; remote: boolean }) => {
+    void gitRun(() => window.api.gitSwitch(repo.root, name, opts), opts.create ? 'Creating branch…' : 'Switching branch…')
+  }
+  palette.choose(`Switch branch (now on ${repo.branch ?? 'a detached HEAD'})`, [
+    { label: '+ Create new branch…', detail: `from ${repo.branch ?? 'HEAD'}`, run: () => setTimeout(() => palette.prompt('Name for the new branch, e.g. feature/login', (name) => sw(name.trim(), { create: true, remote: false }), '', 'Create branch')) },
+    ...local.map((b) => ({
+      label: b.name,
+      detail: b.upstream ? `tracks ${b.upstream}` : undefined,
+      hint: b.current ? '✓ current' : undefined,
+      run: () => { if (!b.current) sw(b.name, { create: false, remote: false }) }
+    })),
+    ...remote.map((b) => ({ label: b.name, detail: 'remote branch: check it out locally', hint: 'remote', run: () => sw(b.name, { create: false, remote: true }) }))
+  ])
+}
+
+/** Diff of the active file (unstaged changes first, else staged ones). */
+async function diffActiveFile(): Promise<void> {
+  const doc = workspace.active
+  await refreshGit()
+  const repo = gitView.status
+  if (!doc || !repo) return statusNote(repo ? 'Open a file first.' : "This folder isn't a git repository.")
+  const rel = doc.path.slice(repo.root.length).replace(/^[\\/]+/, '').replace(/\\/g, '/')
+  const same = (p: string) => (/^[a-zA-Z]:/.test(repo.root) ? p.toLowerCase() === rel.toLowerCase() : p === rel)
+  const unstaged = repo.unstaged.find((c) => same(c.path))
+  const staged = repo.staged.find((c) => same(c.path))
+  if (unstaged) return diffView.show(repo, unstaged, false)
+  if (staged) return diffView.show(repo, staged, true)
+  statusNote(doc.dirty ? 'No changes on disk yet: save the file to compare it.' : 'This file has no changes since the last commit.')
+}
+
+// ---------- history, blame, merge conflicts ----------
+
+/** The active file's path relative to the repository (with /), or null. */
+function repoPath(doc: Doc | null = workspace.active): string | null {
+  const repo = gitView.status
+  if (!doc || !repo || !isInside(doc.path, repo.root)) return null
+  return doc.path.slice(repo.root.length).replace(/^[\\/]+/, '').replace(/\\/g, '/')
+}
+
+const historyView = new HistoryView({
+  repo: () => gitView.status,
+  activeFile: () => repoPath(),
+  showCommitFile: (repo, sha, subject, path) => void diffView.showCommitFile(repo, sha, subject, path),
+  openFile: (path) => {
+    const repo = gitView.status
+    if (repo) void openFile(repo.root + (repo.root.includes('\\') ? '\\' : '/') + path)
+  }
+})
+panel.addView('history', 'History', historyView.body, historyView.actions, () => void historyView.load())
+
+// Blame: the cursor line's author in the status bar; every line in the gutter when turned on.
+let blameOn = false
+let blame: { doc: Doc; version: number; lines: BlameLine[] } | null = null
+let blameTimer: number | undefined
+let blameGeneration = 0
+
+function blameText(l: BlameLine): string {
+  return l.uncommitted ? 'You · not committed yet' : `${l.author} · ${timeAgo(l.time)} · ${l.summary}`
+}
+
+/** Fetch blame for the active file (using its current text, so unsaved edits line up). */
+function refreshBlameSoon(delay = 600): void {
+  window.clearTimeout(blameTimer)
+  blameTimer = window.setTimeout(() => void loadBlame(), delay)
+}
+
+async function loadBlame(): Promise<void> {
+  const doc = workspace.active
+  const repo = gitView.status
+  const rel = repoPath(doc)
+  if (!doc || !repo || !rel || doc.large || repo.unstaged.some((c) => c.path === rel && c.kind === 'untracked')) {
+    blame = null
+    applyBlame()
+    return
+  }
+  if (blame && blame.doc === doc && blame.version === doc.version) return applyBlame()
+  const gen = ++blameGeneration
+  const version = doc.version
+  const res = await window.api.gitBlame(repo.root, rel, doc.getText()).catch(() => null)
+  if (gen !== blameGeneration || workspace.active !== doc) return
+  blame = res?.ok ? { doc, version, lines: res.lines } : null
+  applyBlame()
+}
+
+function applyBlame(): void {
+  const doc = workspace.active
+  const usable = blame && blame.doc === doc && blame.version === doc?.version ? blame : null
+  editors.forEach((ed, i) => {
+    if (i !== workspace.activeGroup || !blameOn || !usable) return ed.setGutterNotes(null)
+    // Only the first line of each run from the same commit, to keep it readable.
+    ed.setGutterNotes(usable.lines.map((l, k) => (k > 0 && usable.lines[k - 1].sha === l.sha ? '' : l.uncommitted ? 'not committed yet' : `${l.author.split(' ')[0]} · ${timeAgo(l.time)}`)))
+  })
+  scheduleStatus()
+}
+
+function lineBlame(): string {
+  const doc = workspace.active
+  if (!blame || blame.doc !== doc || blame.version !== doc?.version) return ''
+  const l = blame.lines[editor.getCursor().line]
+  return l ? blameText(l) : ''
+}
+
+// Merge conflicts in the active file: shaded, with a bar to resolve them.
+const conflictBar = document.createElement('div')
+conflictBar.className = 'conflict-bar'
+conflictBar.hidden = true
+$('editor-pane').append(conflictBar)
+let conflictCache: { doc: Doc; version: number; list: Conflict[] } | null = null
+
+function conflictsOf(doc: Doc): Conflict[] {
+  if (conflictCache?.doc === doc && conflictCache.version === doc.version) return conflictCache.list
+  const lines = doc.buffer.getLines()
+  const list = doc.large || !lines.some((l) => l.startsWith('<<<<<<<')) ? [] : findConflicts(lines)
+  conflictCache = { doc, version: doc.version, list }
+  editors.forEach((ed, i) => ed.setLineShades(i === workspace.activeGroup ? conflictShades(list) : []))
+  return list
+}
+
+function conflictShades(list: Conflict[]): { from: number; to: number; cls: string }[] {
+  const out: { from: number; to: number; cls: string }[] = []
+  for (const c of list) {
+    const mid = c.base ?? c.separator
+    out.push({ from: c.start, to: c.start, cls: 'conflict-marker' })
+    out.push({ from: c.start + 1, to: mid - 1, cls: 'conflict-current' })
+    if (c.base !== null) out.push({ from: c.base, to: c.base, cls: 'conflict-marker' }, { from: c.base + 1, to: c.separator - 1, cls: 'conflict-base' })
+    out.push({ from: c.separator, to: c.separator, cls: 'conflict-marker' })
+    out.push({ from: c.separator + 1, to: c.end - 1, cls: 'conflict-incoming' })
+    out.push({ from: c.end, to: c.end, cls: 'conflict-marker' })
+  }
+  return out
+}
+
+let conflictBarKey = ''
+function updateConflictBar(): void {
+  const doc = workspace.active
+  const list = doc ? conflictsOf(doc) : []
+  const rel = repoPath(doc)
+  const unresolved = !!rel && !!gitView.status?.conflicts.some((c) => c.path === rel)
+  const cur = list.length && doc ? conflictNear(list, editor.getCursor().line) : null
+  const key = `${doc?.path}|${doc?.version}|${list.indexOf(cur!)}|${unresolved}`
+  if (key === conflictBarKey) return
+  conflictBarKey = key
+  if (!doc || (!list.length && !unresolved)) {
+    conflictBar.hidden = true
+    return
+  }
+  const btn = (text: string, title: string, fn: () => void) => {
+    const b = document.createElement('button')
+    b.textContent = text
+    b.title = title
+    b.addEventListener('click', fn)
+    return b
+  }
+  const label = document.createElement('span')
+  if (cur) {
+    label.textContent = `⚠ Merge conflict ${list.indexOf(cur) + 1} of ${list.length}`
+    conflictBar.replaceChildren(
+      label,
+      btn(`Accept Current${cur.currentLabel ? ` (${cur.currentLabel})` : ''}`, 'Keep your side (green)', () => resolveCurrentConflict('current')),
+      btn(`Accept Incoming${cur.incomingLabel ? ` (${cur.incomingLabel})` : ''}`, 'Take the incoming side (blue)', () => resolveCurrentConflict('incoming')),
+      btn('Accept Both', 'Keep both, yours first', () => resolveCurrentConflict('both')),
+      btn('◀', 'Previous conflict', () => goToConflict(-1)),
+      btn('▶', 'Next conflict', () => goToConflict(1))
+    )
+  } else {
+    label.textContent = '✓ No conflicts left in this file.'
+    conflictBar.replaceChildren(label, btn('Save and Mark Resolved', 'Save the file and stage it (git add)', () => void markResolved()))
+  }
+  conflictBar.hidden = false
+}
+
+function resolveCurrentConflict(choice: Resolution): void {
+  const doc = workspace.active
+  if (!doc) return
+  const list = conflictsOf(doc)
+  const c = conflictNear(list, editor.getCursor().line)
+  if (!c) return
+  const lines = doc.buffer.getLines()
+  const keep = resolveConflict(lines, c, choice)
+  const last = lines.length - 1
+  // Replace the whole block (start..end lines, including the line break after it).
+  const edit: TextEdit = c.end < last
+    ? { start: { line: c.start, col: 0 }, end: { line: c.end + 1, col: 0 }, text: keep.length ? keep.join('\n') + '\n' : '' }
+    : c.start > 0 && !keep.length
+      ? { start: { line: c.start - 1, col: lines[c.start - 1].length }, end: { line: c.end, col: lines[c.end].length }, text: '' }
+      : { start: { line: c.start, col: 0 }, end: { line: c.end, col: lines[c.end].length }, text: keep.join('\n') }
+  applyEditsToDoc(doc, [edit])
+  editor.goTo(Math.min(c.start, doc.buffer.lineCount - 1), 0)
+  updateConflictBar()
+}
+
+function goToConflict(delta: 1 | -1): void {
+  const doc = workspace.active
+  if (!doc) return
+  const list = conflictsOf(doc)
+  if (!list.length) return
+  const line = editor.getCursor().line
+  const i = list.findIndex((c) => line >= c.start && line <= c.end)
+  const next = i === -1
+    ? (delta === 1 ? list.find((c) => c.start > line) ?? list[0] : [...list].reverse().find((c) => c.end < line) ?? list[list.length - 1])
+    : list[(i + delta + list.length) % list.length]
+  editor.goTo(next.start, 0)
+  editor.focus()
+}
+
+async function markResolved(): Promise<void> {
+  const doc = workspace.active
+  const repo = gitView.status
+  const rel = repoPath(doc)
+  if (!doc || !repo || !rel) return
+  if (doc.dirty && !(await saveActive())) return
+  await gitRun(() => window.api.gitStage(repo.root, [rel]), 'Staging…')
+  conflictBarKey = ''
+  updateConflictBar()
+}
+
+const inConflict = () => !!workspace.active && conflictsOf(workspace.active).length > 0
+commands.register({ id: 'git.acceptCurrent', title: 'Merge Conflict: Accept Current', when: inConflict, run: () => resolveCurrentConflict('current') })
+commands.register({ id: 'git.acceptIncoming', title: 'Merge Conflict: Accept Incoming', when: inConflict, run: () => resolveCurrentConflict('incoming') })
+commands.register({ id: 'git.acceptBoth', title: 'Merge Conflict: Accept Both', when: inConflict, run: () => resolveCurrentConflict('both') })
+commands.register({ id: 'git.nextConflict', title: 'Merge Conflict: Next', when: inConflict, run: () => goToConflict(1) })
+commands.register({ id: 'git.prevConflict', title: 'Merge Conflict: Previous', when: inConflict, run: () => goToConflict(-1) })
+commands.register({ id: 'git.history', title: 'Git: Show History', when: () => gitView.status !== null, run: () => { panel.show('history') } })
+commands.register({
+  id: 'git.fileHistory', title: 'Git: File History', when: () => repoPath() !== null,
+  run: () => { panel.show('history'); void historyView.showFile(repoPath()!) }
+})
+commands.register({
+  id: 'git.toggleBlame', title: 'Git: Toggle Blame (who changed each line)', when: () => gitView.status !== null,
+  run: () => {
+    blameOn = !blameOn
+    statusNote(blameOn ? 'Blame on: who last changed each line is shown next to the line numbers.' : 'Blame off.')
+    if (blameOn) void loadBlame()
+    else applyBlame()
+  }
+})
+$('sb-blame').addEventListener('click', () => commands.run('git.fileHistory'))
+
+commands.register({ id: 'git.show', title: 'Show Source Control (Git)', keys: 'Ctrl+Shift+G', run: () => { showSidebar('git'); gitView.focusMessage() } })
+commands.register({ id: 'git.diffFile', title: 'Git: Show Changes in This File', when: () => hasDocNow() && rootFolder !== null, run: () => void diffActiveFile() })
+commands.register({ id: 'git.commit', title: 'Git: Commit', when: () => gitView.status !== null, run: () => { showSidebar('git'); void gitView.commit() } })
+commands.register({ id: 'git.branch', title: 'Git: Switch Branch…', when: () => gitView.status !== null, run: () => void pickBranch() })
+commands.register({ id: 'git.pull', title: 'Git: Pull', when: () => gitView.status !== null, run: () => void gitRun(() => window.api.gitSync(gitView.status!.root, 'pull'), 'Pulling…') })
+commands.register({ id: 'git.push', title: 'Git: Push', when: () => gitView.status !== null, run: () => void gitRun(() => window.api.gitSync(gitView.status!.root, 'push'), 'Pushing…') })
+commands.register({ id: 'git.fetch', title: 'Git: Fetch', when: () => gitView.status !== null, run: () => void gitRun(() => window.api.gitSync(gitView.status!.root, 'fetch'), 'Fetching…') })
+commands.register({ id: 'git.stageAll', title: 'Git: Stage All Changes', when: () => !!gitView.status?.unstaged.length, run: () => void gitRun(() => window.api.gitStage(gitView.status!.root, gitView.status!.unstaged.map((c) => c.path)), 'Staging…') })
+commands.register({ id: 'git.init', title: 'Git: Initialize Repository', when: () => rootFolder !== null && gitView.status === null, run: () => void gitRun(() => window.api.gitInit(rootFolder!), 'Creating repository…') })
+$('sb-branch').addEventListener('click', () => void pickBranch())
 
 // ---------- sidebar: Files | Search ----------
 
@@ -1544,20 +2619,12 @@ const searchView = new SearchView(
 )
 $('search-panel').append(searchView.root)
 
-function showSidebar(view: 'files' | 'search' | 'outline'): void {
-  $('file-tree').hidden = view !== 'files'
-  $('search-panel').hidden = view !== 'search'
-  $('outline-panel').hidden = view !== 'outline'
-  for (const b of document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs button')) {
-    b.setAttribute('aria-selected', String(b.dataset.view === view))
-  }
+type SidebarView = 'files' | 'search' | 'outline' | 'git'
+/** Files, Search, Outline and Git are panels: show one in the current task. */
+function showSidebar(view: SidebarView): void {
+  tasks.reveal(view)
+  if (view === 'git') void refreshGit()
   if (view === 'outline') void refreshOutline()
-}
-for (const b of document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs button')) {
-  b.addEventListener('click', () => {
-    showSidebar(b.dataset.view as 'files' | 'search' | 'outline')
-    if (b.dataset.view === 'search') searchView.focus()
-  })
 }
 commands.register({
   id: 'search.project', title: 'Search in Project', keys: 'Ctrl+Shift+F', when: () => rootFolder !== null,
@@ -1610,6 +2677,7 @@ const pyEnv = new PythonEnv({
   },
   openFile: (path) => void openFile(path),
   changed: scheduleStatus,
+  envChanged: () => void window.api.forgetTools().then(() => codeTools.retry(workspace.docs)),
   report: (message) => alert(message)
 })
 
@@ -1655,6 +2723,72 @@ commands.register({
 })
 commands.register({ id: 'tests.stop', title: 'Stop Tests', when: () => tests.isRunning, run: () => void window.api.stopTests() })
 
+// ---------- code quality: Ruff warnings, quick fixes, formatting ----------
+
+let noteTimer: number | undefined
+/** A short message in the status bar that goes away by itself. */
+function statusNote(text: string): void {
+  const el = $('sb-note')
+  el.textContent = text
+  window.clearTimeout(noteTimer)
+  noteTimer = window.setTimeout(() => { el.textContent = '' }, 4000)
+}
+
+/** Apply edits to several files: open ones in place (undoable), others on disk. */
+async function applyWorkspaceEdits(edits: FileEdits): Promise<boolean> {
+  const failed: string[] = []
+  const onDisk: string[] = []
+  for (const [path, list] of edits) {
+    const open = workspace.find(path)
+    if (open) {
+      applyEditsToDoc(open, list)
+      continue
+    }
+    try {
+      const res = await window.api.readTextFile(path)
+      if (res.kind !== 'text') throw new Error('not a text file')
+      await window.api.writeTextFile(path, applyEdits(res.text, list), res.encoding)
+      onDisk.push(path)
+    } catch (err) {
+      failed.push(`${path} (${err instanceof Error ? err.message : String(err)})`)
+    }
+  }
+  languages.filesChangedOnDisk(onDisk)
+  workspace.notifyChanged()
+  if (failed.length) alert(`These files couldn't be changed:\n${failed.join('\n')}`)
+  return failed.length === 0
+}
+languages.applyEditHandler = applyWorkspaceEdits
+
+const codeTools = new CodeTools({
+  languages,
+  palette,
+  root: () => rootFolder,
+  interpreter: () => pyEnv.current?.path ?? null,
+  settings: () => settings,
+  active: () => workspace.active,
+  selection: () => {
+    const { anchor, head } = editor.getSelection()
+    const headFirst = head.line < anchor.line || (head.line === anchor.line && head.col < anchor.col)
+    return headFirst ? { start: head, end: anchor } : { start: anchor, end: head }
+  },
+  applyEdits: (doc, edits) => applyEditsToDoc(doc, edits),
+  applyFileEdits: applyWorkspaceEdits,
+  install: (tool) => pyEnv.install(tool),
+  setLightbulb: (line) => editors.forEach((ed, i) => ed.setLightbulb(i === workspace.activeGroup ? line : null)),
+  note: statusNote,
+  report: (message) => alert(message)
+})
+workspace.subscribe(() => codeTools.sync(workspace.docs))
+
+const pyDoc = () => hasDocNow() && /\.pyi?$/i.test(workspace.active!.path)
+commands.register({ id: 'editor.quickFix', title: 'Quick Fix…', keys: 'Ctrl+.', when: hasDocNow, run: () => void codeTools.quickFix() })
+commands.register({ id: 'editor.format', title: 'Format Document', keys: 'Shift+Alt+F', when: pyDoc, run: () => void codeTools.format() })
+commands.register({ id: 'editor.formatSelection', title: 'Format Selection', when: pyDoc, run: () => void codeTools.format({ selection: true }) })
+commands.register({ id: 'editor.organizeImports', title: 'Organize Imports', keys: 'Shift+Alt+O', when: pyDoc, run: () => void codeTools.organizeImports() })
+commands.register({ id: 'editor.fixAll', title: 'Fix All Auto-fixable Problems (Ruff)', when: pyDoc, run: () => void codeTools.fixAll() })
+commands.register({ id: 'python.installRuff', title: 'Install Ruff (linter and formatter)', when: () => rootFolder !== null, run: () => pyEnv.install('ruff') })
+
 // ---------- keyboard shortcuts you can change ----------
 
 const shortcuts = new Shortcuts(commands, palette, (message) => alert(message))
@@ -1689,12 +2823,12 @@ function updateStatus(): void {
     set('sb-indent', `Spaces: ${settings.tabSize}`)
     set('sb-encoding', encodingLabel(doc.encoding))
     set('sb-eol', doc.eol)
-    const lang = doc.path.toLowerCase().endsWith('.py') ? 'Python' : 'Plain Text'
-    set('sb-lang', doc.large ? `${lang} (large file: no error checking)` : lang)
+    const lang = doc.mode.language
+    set('sb-lang', doc.large && lang.server ? `${lang.name} (large file: no error checking)` : lang.name)
   } else {
     for (const id of ['sb-cursor', 'sb-indent', 'sb-encoding', 'sb-eol', 'sb-lang']) set(id, '')
   }
-  const all = python.allDiagnostics()
+  const all = languages.allDiagnostics()
   const errors = all.reduce((n, [, list]) => n + list.filter((d) => d.severity === 1).length, 0)
   const warnings = all.reduce((n, [, list]) => n + list.filter((d) => d.severity === 2).length, 0)
   const problemsEl = $('sb-problems')
@@ -1713,7 +2847,22 @@ function updateStatus(): void {
     }
   }
   if (!$('outline-panel').hidden) outline.highlight(doc ? editor.getCursor() : null)
-  set('sb-debug', session?.state === 'paused' ? '🐞 Paused' : session?.active ? '🐞 Debugging' : '')
+  codeTools.updateLightbulb(doc, doc ? editor.getCursor().line : null)
+  updateOccurrences()
+  updateConflictBar()
+  const who = lineBlame()
+  set('sb-blame', who.length > 70 ? who.slice(0, 69) + '…' : who)
+  $('sb-blame').title = who ? `${who}\nClick for this file's history` : ''
+  set('sb-debug', processes.some((p) => p.session.state === 'paused') ? '🐞 Paused' : rootSession?.active ? '🐞 Debugging' : '')
+  const busy = output.isRunning || debugging()
+  const runButton = $('run-button')
+  const runLabel = busy ? '■ Stop' : '▶ Run'
+  if (runButton.textContent !== runLabel) {
+    runButton.textContent = runLabel
+    runButton.classList.toggle('stop', busy)
+    runButton.title = busy ? 'Stop (Shift+F5)' : 'Run (F5 / Ctrl+F5)'
+  }
+  set('project-branch', gitView.status?.branch ? ` · ${gitView.status.branch}` : '')
   set('sb-run', rootFolder ? `▶ ${runConfigName ?? 'Current file'}` : '')
   set('sb-python', pyEnv.statusText)
   set('sb-deps', pyEnv.missingText)
@@ -1777,7 +2926,7 @@ $('sb-problems').addEventListener('click', () => panel.show('problems'))
 $('sb-run').addEventListener('click', () => commands.run('run.selectConfig'))
 $('sb-python').addEventListener('click', () => commands.run('python.selectInterpreter'))
 $('sb-deps').addEventListener('click', () => pyEnv.showMissing())
-python.onDiagnostics(scheduleStatus)
+languages.onDiagnostics(scheduleStatus)
 updateStatus()
 
 commands.register({
@@ -1800,11 +2949,11 @@ commands.register({ id: 'palette.commands', title: 'Show All Commands', keys: 'C
 commands.register({ id: 'palette.files', title: 'Go to File…', keys: 'Ctrl+P', when: () => rootFolder !== null, run: () => void palette.open('') })
 commands.register({ id: 'palette.line', title: 'Go to Line…', keys: 'Ctrl+G', when: hasDoc, run: () => void palette.open(':') })
 
-$('open-settings').addEventListener('click', () => settingsView.open())
-$('run-file').addEventListener('click', () => void runCurrentFile())
-$('debug-file').addEventListener('click', () => void startDebugging())
-$('stop-run').addEventListener('click', () => commands.run('run.stop'))
-$('open-folder').addEventListener('click', () => void openFolder())
+for (const b of document.querySelectorAll<HTMLButtonElement>('#task-switcher button')) {
+  b.addEventListener('click', () => tasks.switchTo(b.dataset.task as TaskId))
+}
+// ▶ Run, or ■ Stop while something runs.
+$('run-button').addEventListener('click', () => commands.run(output.isRunning || debugging() ? 'run.stop' : 'run.smart'))
 
 // While typing in the terminal, keys belong to the shell (Ctrl+C, Ctrl+W, Ctrl+F...).
 // Only these IDE commands' shortcuts still work there (whatever keys they're set to).
@@ -1843,11 +2992,27 @@ window.addEventListener('beforeunload', (e) => {
 // Every command is registered by now, so the menu can show all their shortcuts.
 void shortcuts.load()
 
+const TASK_NAMES: Record<TaskId, string> = { code: 'Code', connect: 'Connect', debug: 'Debug', run: 'Run' }
+TASKS.forEach((t, i) => commands.register({ id: `task.${t}`, title: `Switch to ${TASK_NAMES[t]}`, keys: `Ctrl+Alt+${i + 1}`, run: () => tasks.switchTo(t) }))
+commands.register({ id: 'view.resetLayout', title: 'Reset Layout of This Task', run: () => tasks.resetCurrent() })
+commands.register({ id: 'view.editLayout', title: 'Edit Layout (move, close and add panels)', run: () => setEditingLayout(!dock.editing) })
+// The dock starts with the defaults, then your saved arrangements.
+tasks.switchTo('code')
+void window.api.getLayouts().catch(() => ({})).then((saved) => tasks.useSaved(saved))
+window.addEventListener('beforeunload', () => tasks.flush())
+
 void window.api.getSettings().then(async (s) => {
   userSettings = s
   settingsView.set(s)
   applyEffective()
   updateWelcome()
+  // The editors measured their characters before the code font may have loaded: measure again once it has.
+  void Promise.all([document.fonts.load('14px "JetBrains Mono"'), document.fonts.load('13px "Space Grotesk"')])
+    .catch(() => [])
+    .then(() => {
+      for (const ed of editors) ed.refreshLayout(settings.tabSize)
+      terminal.applyTheme(settings.fontSize)
+    })
   // Reopen the last project (with its tabs), unless that's turned off or it's gone.
   if (s.reopenLastProject && !rootFolder) {
     try {

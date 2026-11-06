@@ -6,16 +6,28 @@
  * and, when the text changes at line L, throw away only the cached states
  * after L. States are computed lazily, only up to the lines being drawn.
  */
-import type { Token, LineState } from './tokenizer'
-import { tokenizeLine } from './tokenizer'
+import type { Token } from './tokenizer'
 import { TextBuffer } from './textBuffer'
+import type { LanguageMode } from './modes'
 
 export class Highlighter {
   /** states[i] = state at the start of line i. Always valid for every index it holds. */
-  private states: LineState[] = ['']
+  private states: string[] = ['']
+  private current: LanguageMode
 
-  constructor(private readonly buffer: TextBuffer) {
+  /** `mode` is asked on every use: when it changes (the file was renamed), everything is redone. */
+  constructor(private readonly buffer: TextBuffer, private readonly mode: () => LanguageMode) {
+    this.current = mode()
     buffer.subscribe((change) => this.invalidateFrom(change.at.line))
+  }
+
+  private check(): LanguageMode {
+    const m = this.mode()
+    if (m !== this.current) {
+      this.current = m
+      this.states = ['']
+    }
+    return m
   }
 
   /** How many line states are cached (for tests). */
@@ -24,7 +36,8 @@ export class Highlighter {
   }
 
   tokensFor(line: number): Token[] {
-    return tokenizeLine(this.buffer.getLine(line), this.stateAt(line)).tokens
+    const mode = this.check()
+    return mode.tokenize(this.buffer.getLine(line), this.stateAt(line)).tokens
   }
 
   /**
@@ -33,11 +46,13 @@ export class Highlighter {
    * the rest of a big file.
    */
   tokensIfCached(line: number): Token[] | null {
+    this.check()
     return line < this.states.length ? this.tokensFor(line) : null
   }
 
   /** Cache more line states, for at most `budgetMs`. Returns true if there's more to do. */
   warmUp(budgetMs: number, upTo = this.buffer.lineCount - 1): boolean {
+    this.check()
     const end = performance.now() + budgetMs
     while (this.states.length <= upTo) {
       this.stateAt(Math.min(upTo, this.states.length + 200))
@@ -46,10 +61,10 @@ export class Highlighter {
     return this.states.length <= upTo
   }
 
-  private stateAt(line: number): LineState {
+  private stateAt(line: number): string {
     while (this.states.length <= line) {
       const prev = this.states.length - 1
-      this.states.push(tokenizeLine(this.buffer.getLine(prev), this.states[prev]).endState)
+      this.states.push(this.current.tokenize(this.buffer.getLine(prev), this.states[prev]).endState)
     }
     return this.states[line]
   }

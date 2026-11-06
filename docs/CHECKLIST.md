@@ -67,65 +67,70 @@ to real source code or runtime behaviour.
 Language features (Pyright already does the analysis for most of these; they're mostly UI work):
 - [x] Find references (v0.31: Shift+F12, References tab with line previews)
 - [x] Rename symbol across project (v0.31: F2; open files undoable, closed files changed on disk after confirming)
-- [ ] Go to implementation
-- [ ] Call hierarchy
+- [x] Go to implementation (v0.34: Ctrl+F12, Python-style: subclasses of a class, overrides of a method; also Go to Type Definition, Ctrl+T symbols in the project, other uses of a name highlighted)
+- [x] Call hierarchy (v0.34: Shift+Alt+H, Calls tab, incoming / outgoing, expands step by step)
 - [x] Document symbols / outline panel (v0.31: Outline sidebar tab follows the cursor, filter; Ctrl+Shift+O)
-- [ ] Import organisation and automatic import suggestions
-- [ ] Code actions and quick fixes
-- [ ] Format document / selection (Black, Ruff)
-- [ ] Linting integration (Ruff)
-- [ ] Semantic syntax highlighting
-- [ ] Language-support architecture: language integrations instead of Python-specific editor logic, so several language servers can run side by side (groundwork for Tier 6.2)
+- [x] Import organisation and automatic import suggestions (v0.33: Shift+Alt+O with Ruff, or Pyright's; auto-import suggestions in completion since v0.13)
+- [x] Code actions and quick fixes (v0.33: Ctrl+. / 💡: Ruff fixes, Pyright code actions, # noqa, fix all)
+- [x] Format document / selection (Black, Ruff) (v0.33: Shift+Alt+F, Format Selection, format on save)
+- [x] Linting integration (Ruff) (v0.33: as you type, in Problems and squiggles, uses the project's Ruff config)
+- [ ] Semantic syntax highlighting (Pyright doesn't provide semantic tokens; needs basedpyright or our own analysis)
+- [x] Language-support architecture: language integrations instead of Python-specific editor logic, so several language servers can run side by side (groundwork for Tier 6.2) (v0.39: each file has a language that sets its highlighting, comment marker and Enter-indent; language servers run by id side by side and each file goes to its language's server; new JSON/JSONC, TOML, YAML and INI highlighting)
 
 Git:
-- [ ] Git diff viewer
-- [ ] Stage/unstage individual hunks
-- [ ] Commit interface
-- [ ] Branch switching and creation
-- [ ] Merge conflict resolution
-- [ ] Git history and file blame, with a graph view
+- [x] Git diff viewer (v0.35: click a changed file; colored, line numbers, Python highlighting)
+- [x] Stage/unstage individual hunks (v0.35: Stage / Unstage / Discard Hunk in the diff)
+- [x] Commit interface (v0.35: Git tab, Ctrl+Enter, amend, stage-all offer; fetch / pull / push)
+- [x] Branch switching and creation (v0.35: ⎇ in the status bar or Git tab; local, new and remote branches)
+- [x] Merge conflict resolution (v0.36: shaded sides, Accept Current / Incoming / Both bar, next / previous, save and mark resolved)
+- [x] Git history and file blame, with a graph view (v0.36: History tab with graph, commit files and diffs, file history; blame in the status bar and gutter)
 
 Debugger improvements:
-- [ ] Support `input()` while debugging (run the debugged program in a terminal)
-- [ ] Conditional breakpoints
-- [ ] Watch expressions
-- [ ] Option to pause on every raised exception, not just uncaught ones
-- [ ] Breakpoint management panel (and keep breakpoints between sessions)
-- [ ] Debug multiple processes
+- [x] Support `input()` while debugging (run the debugged program in a terminal) (v0.37: runInTerminal; setting to use the Debug console instead)
+- [x] Conditional breakpoints (v0.37: condition, hit count, log message, on/off; right-click a line number)
+- [x] Watch expressions (v0.37: Watch section, re-evaluated on every pause, expandable)
+- [x] Option to pause on every raised exception, not just uncaught ones (v0.37: Breakpoints section checkboxes, Run menu)
+- [x] Breakpoint management panel (and keep breakpoints between sessions) (v0.37: Breakpoints section; saved per project with watches)
+- [x] Debug multiple processes (v0.37: threads are listed and selectable; v0.40: child processes (multiprocessing, subprocess running Python) are attached automatically, with a Processes list; breakpoints work in them and whichever process pauses comes to the front)
 
 ## Tier 4: Visual identity and workspace
+
+The IDE is now **Forge** (design: docs/superpowers/specs/2026-11-06-forge-design.md).
 
 Goal: give the IDE a distinctive identity rather than reskinning a conventional editor layout.
 Best started once a first graph view exists (5.1), so the layout is designed around real visual tools.
 
-- [ ] Design a distinctive workspace layout
-- [ ] Rethink how files, terminals, graphs and debugging coexist
-- [ ] Customisable workspace panels
-- [ ] Dockable panels and floating windows
-- [ ] Multiple workspace layouts (coding, debugging and visualisation)
+- [x] Design a distinctive workspace layout (v0.43: Forge task workspace)
+- [x] Rethink how files, terminals, graphs and debugging coexist (v0.43: tasks Code / Connect / Debug / Run, each with its own arrangement)
+- [x] Customisable workspace panels (v0.43: Edit Layout mode: move, close, add back, reset)
+- [ ] Dockable panels and floating windows (v0.43: docking done, drag tabs to any side or into another panel; floating windows not yet)
+- [x] Multiple workspace layouts (coding, debugging and visualisation) (v0.43: Forge task workspace)
 - [ ] Context-aware interface that surfaces relevant tools for the current task
 - [ ] Customisable information density
 - [ ] Animated transitions between workspace states
 - [ ] Visual navigation through projects
-- [ ] Consistent visual language for graphs, code, debugging and terminal
+- [x] Consistent visual language for graphs, code, debugging and terminal (v0.42: Forge look: Molten / Plain themes, Smithy schematic shapes, bundled fonts)
+- [x] Forge task workspace: Code / Connect / Debug / Run, movable panels, Edit Layout mode (Part 2 of docs/superpowers/specs/2026-11-06-forge-design.md) (v0.43: Forge task workspace); Where you are and In this file panels
+- [ ] Live run feedback on the graph: while the program runs, sparks travel along the connections and the running boxes glow (Molten); a dot and a highlight in Plain. Needs runtime tracing of calls (see 5.2 / 5.5). Requested 2026-11-06
+- [x] Connect task and the API box (Part 3 of the same spec; also covers parts of 5.3) (v0.44: Toolbox, Box settings, test call, tick boxes, CSV code kept in sync; .env loaded into Run / Tests / Debug / terminals)
 
 ## Tier 5: Visual programming environment
 
 Visualisations are interactive representations of real code, not a separate programming system.
 
 ### 5.1 Project intelligence graph
-- [ ] Parse the project using Python's `ast` (a helper script run with the project's own Python)
-- [ ] Build a project dependency graph: files, modules, classes, functions, imports
-- [ ] Function-to-function call relationships
-- [ ] Detect API endpoints called (`requests`, `httpx`, `aiohttp`)
-- [ ] Detect API routes (FastAPI, Flask)
-- [ ] Detect environment variables
-- [ ] Display dependencies between components
-- [ ] Click a graph node to navigate to its source code
-- [ ] Highlight a node's dependencies and dependants
-- [ ] Filter graph by type, file or relationship
-- [ ] Detect circular imports
-- [ ] Identify unused functions and potentially unreachable code where statically determinable
+- [x] Parse the project using Python's `ast` (a helper script run with the project's own Python) (v0.41: Ctrl+Alt+G / View → Project Graph)
+- [x] Build a project dependency graph: files, modules, classes, functions, imports (v0.41: absolute, relative and submodule imports; packages used)
+- [x] Function-to-function call relationships (v0.41: Calls view; local, imported, module.func, self.method, Class().method)
+- [x] Detect API endpoints called (`requests`, `httpx`, `aiohttp`) (v0.41: incl. sessions/clients; shown as web API nodes by host)
+- [x] Detect API routes (FastAPI, Flask)
+- [x] Detect environment variables (os.environ[...], os.getenv, environ.get)
+- [x] Display dependencies between components (v0.41: hand-written layered SVG layout, pan / zoom / fit)
+- [x] Click a graph node to navigate to its source code (double-click; details on single click)
+- [x] Highlight a node's dependencies and dependants (hover or select: uses in blue, used by in orange)
+- [x] Filter graph by type, file or relationship (v0.41: Modules / Calls, one module's calls, name filter, tests / packages / web APIs toggles)
+- [x] Detect circular imports (red edges; listed in the findings)
+- [ ] Identify unused functions and potentially unreachable code where statically determinable (v0.41: possibly unused functions/classes listed and struck through; unreachable code still to do)
 
 ### 5.2 Live network visualisation
 - [ ] Runtime instrumentation for `requests`, `httpx` and `aiohttp`
@@ -141,20 +146,20 @@ Visualisations are interactive representations of real code, not a separate prog
 - [ ] Compare network activity between runs
 
 ### 5.3 Visual API integration
-- [ ] Drag from a file/function to an unconnected API
+- [x] Drag from a file/function to an unconnected API (v0.44: drag the API box from the Toolbox onto a module)
 - [ ] Generate client modules and imports
-- [ ] Generate `.env` keys
+- [x] Generate `.env` keys (v0.44: API box)
 - [ ] OpenAPI / Swagger support
   - [ ] Generate functions for individual endpoints
   - [ ] Generate request and response models
   - [ ] Generate authentication handling
-- [ ] Support APIs without specifications
-  - [ ] Generate base URL configuration
-  - [ ] Generate authentication configuration
-  - [ ] Generate an example request
-- [ ] Preview generated code before applying changes
-- [ ] Ensure visual changes generate normal, readable Python
-- [ ] When removing a visual connection, offer to remove associated code
+- [x] Support APIs without specifications (v0.44: API box)
+  - [x] Generate base URL configuration
+  - [x] Generate authentication configuration
+  - [x] Generate an example request (the generated function, and the test call)
+- [x] Preview generated code before applying changes (v0.44: API box)
+- [x] Ensure visual changes generate normal, readable Python (v0.44: standard library only)
+- [x] When removing a visual connection, offer to remove associated code (v0.44: API box)
 - [ ] Detect changes to generated code and update graph relationships
 - [ ] Later: AI-assisted API documentation interpretation and integration
 
@@ -170,6 +175,14 @@ Visualisations are interactive representations of real code, not a separate prog
 - [ ] Preview intermediate DataFrame contents
 - [ ] Visualise data filtering, grouping and merging
 - [ ] Export visual pipelines as ordinary Python
+
+Block library (for the pipeline graph): blocks are whole steps, not single statements, so graphs stay small and map cleanly to code.
+- [ ] Each block is an ordinary Python function; inputs and outputs come from its parameters, type hints and return value
+- [ ] Placing a block inserts a readable call (plus import); wiring blocks passes one block's result to the next
+- [ ] Built-in library of useful steps (read CSV/JSON, filter rows, group by, call API endpoint, retry, save)
+- [ ] User blocks: mark a project function (e.g. `@block` or `.ideforfun/blocks/`) and it appears in the library
+- [ ] Editing a block opens its Python; editing a built-in makes a project copy first, so library updates never overwrite it
+- [ ] A single "for each" container block instead of loop/if wiring
 
 ### 5.5 Execution visualisation
 - [ ] Live call graph while debugging

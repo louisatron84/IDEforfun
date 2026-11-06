@@ -30,6 +30,9 @@ class TerminalSession {
   ptyId: number | null = null
   /** A name to show instead of the shell's (e.g. the task it runs). */
   label: string | null = null
+  /** Runs this program instead of a shell (e.g. the program being debugged); it isn't restarted. */
+  program: { args: string[]; env: Record<string, string | null> } | null = null
+  pid: number | null = null
   private starting = false
   private exited = false
 
@@ -52,6 +55,7 @@ class TerminalSession {
     this.term.loadAddon(this.fit)
     this.term.open(this.el)
     this.term.onData((data) => {
+      if (this.exited && this.program) return // a finished program isn't restarted
       if (this.exited) {
         // Any key after the shell exited starts a new one.
         this.exited = false
@@ -90,7 +94,9 @@ class TerminalSession {
     else {
       this.exited = true
       this.ptyId = null
-      this.term.write(`\r\n\x1b[90m[shell exited with code ${e.code}: press any key to start a new one]\x1b[0m\r\n`)
+      this.term.write(this.program
+        ? `\r\n\x1b[90m[program exited with code ${e.code}]\x1b[0m\r\n`
+        : `\r\n\x1b[90m[shell exited with code ${e.code}: press any key to start a new one]\x1b[0m\r\n`)
     }
   }
 
@@ -99,7 +105,13 @@ class TerminalSession {
     this.starting = true
     try {
       this.layout()
-      this.ptyId = await window.api.terminalCreate(this.getCwd(), this.term.cols, this.term.rows, this.profile?.id)
+      if (this.program) {
+        const r = await window.api.terminalRun(this.program.args, this.getCwd(), this.program.env, this.term.cols, this.term.rows)
+        this.ptyId = r.id
+        this.pid = r.pid
+      } else {
+        this.ptyId = await window.api.terminalCreate(this.getCwd(), this.term.cols, this.term.rows, this.profile?.id)
+      }
     } catch (err) {
       this.term.write(`\x1b[31mCould not start a shell: ${String(err)}\x1b[0m\r\n`)
     } finally {
@@ -137,6 +149,7 @@ class TerminalSession {
 
   applyTheme(fontSize: number): void {
     this.term.options.fontSize = fontSize
+    this.term.options.fontFamily = cssVar('--font-code')
     this.term.options.theme = theme()
     this.layout()
   }
@@ -254,12 +267,13 @@ export class TerminalView {
   }
 
   /** Open a new terminal (the default shell unless one is given). */
-  async newTerminal(profile?: ShellProfile, opts: { cwd?: string; label?: string } = {}): Promise<TerminalSession> {
+  async newTerminal(profile?: ShellProfile, opts: { cwd?: string; label?: string; program?: { args: string[]; env: Record<string, string | null> } } = {}): Promise<TerminalSession> {
     const shells = await this.loadShells()
     const chosen = profile ?? shells.find((s) => s.id === this.defaultShellId()) ?? shells[0] ?? null
     const getCwd = opts.cwd ? () => opts.cwd! : this.getCwd
     const session = new TerminalSession(this.nextNumber++, chosen, getCwd, () => this.renderList())
     if (opts.label) session.label = opts.label
+    if (opts.program) session.program = opts.program
     if (this.fontSize !== null) session.applyTheme(this.fontSize)
     this.sessions.push(session)
     this.screens.append(session.el)
@@ -275,6 +289,15 @@ export class TerminalView {
   async runCommand(label: string, command: string, cwd: string): Promise<void> {
     const session = await this.newTerminal(undefined, { cwd, label })
     if (session.ptyId !== null) window.api.terminalWrite(session.ptyId, command + '\r')
+  }
+
+  /**
+   * Run a program in a new terminal (the debugger asks for this so the
+   * program can read the keyboard). Returns its process id.
+   */
+  async runProgram(label: string, args: string[], cwd: string, env: Record<string, string | null>): Promise<number | undefined> {
+    const session = await this.newTerminal(undefined, { cwd, label, program: { args, env } })
+    return session.pid ?? undefined
   }
 
   async newTerminalWithShell(): Promise<void> {

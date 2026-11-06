@@ -6,30 +6,29 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
     />
-    <title>IDEforfun</title>
+    <title>Forge</title>
+    <link rel="stylesheet" href="./theme.css" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <header id="toolbar">
-      <button id="open-folder">Open Folder</button>
-      <span id="folder-name" class="muted">No folder open</span>
+      <span class="wordmark">Forge</span>
+      <nav id="task-switcher" role="tablist" aria-label="Task">
+        <button role="tab" data-task="code" title="Code (Ctrl+Alt+1)">Code</button>
+        <button role="tab" data-task="connect" title="Connect: the project graph (Ctrl+Alt+2)">Connect</button>
+        <button role="tab" data-task="debug" title="Debug (Ctrl+Alt+3)">Debug</button>
+        <button role="tab" data-task="run" title="Run: output and tests (Ctrl+Alt+4)">Run</button>
+      </nav>
       <span class="spacer"></span>
-      <button id="run-file" class="secondary" title="Run current Python file (Ctrl+F5, or F5 when there are no breakpoints)">▶ Run</button>
-      <button id="debug-file" class="secondary" title="Debug current Python file (F5 when there are breakpoints)">🐞 Debug</button>
-      <button id="stop-run" class="secondary" title="Stop (Shift+F5)">■ Stop</button>
-      <button id="open-settings" class="secondary icon" title="Settings (Ctrl+,)" aria-label="Settings">⚙</button>
+      <span id="project-label"><span id="folder-name" class="muted">No folder open</span><span id="project-branch" class="muted"></span></span>
+      <button id="run-button" title="Run (F5 / Ctrl+F5)">▶ Run</button>
     </header>
-    <div id="workspace">
-      <aside id="sidebar">
-        <div id="sidebar-tabs" role="tablist" aria-label="Sidebar">
-          <button role="tab" data-view="files" aria-selected="true" title="Files">Files</button>
-          <button role="tab" data-view="search" aria-selected="false" title="Search in project (Ctrl+Shift+F)">Search</button>
-          <button role="tab" data-view="outline" aria-selected="false" title="Outline of the open file">Outline</button>
-        </div>
-        <div id="file-tree" class="sidebar-view"></div>
-        <div id="search-panel" class="sidebar-view" hidden></div>
-        <div id="outline-panel" class="sidebar-view" hidden></div>
-      </aside>
+    <div id="dock"></div>
+    <div id="panel-store" hidden>
+      <div id="file-tree" class="sidebar-view"></div>
+      <div id="search-panel" class="sidebar-view"></div>
+      <div id="outline-panel" class="sidebar-view"></div>
+      <div id="git-panel" class="sidebar-view"></div>
       <main id="editor-pane">
         <div id="groups">
           <div class="group active" id="group-0">
@@ -40,12 +39,15 @@
       </main>
     </div>
     <footer id="statusbar" aria-label="Status bar">
+      <button id="sb-branch" class="sb-item" title="Git branch: click to switch or create one"></button>
+      <button id="sb-blame" class="sb-item" title="Who last changed this line: click for the file's history"></button>
       <button id="sb-problems" class="sb-item" title="Problems (Ctrl+Shift+M)"></button>
       <span id="sb-debug" class="sb-item"></span>
       <button id="sb-deps" class="sb-item warn" title="Packages the project needs that aren't installed: click to install"></button>
       <button id="sb-python" class="sb-item"></button>
       <button id="sb-run" class="sb-item" title="What Run (F5) starts: click to pick a run configuration"></button>
       <span class="spacer"></span>
+      <span id="sb-note" class="sb-item" role="status"></span>
       <button id="sb-cursor" class="sb-item" title="Go to line (Ctrl+G)"></button>
       <button id="sb-indent" class="sb-item" title="Indentation: change in Settings (Ctrl+,)"></button>
       <button id="sb-encoding" class="sb-item" title="Encoding: reopen or save with another one"></button>

@@ -94,6 +94,42 @@ export class Palette {
   private stopCapture(): void {
     this.keyCapture = null
     this.input.readOnly = false
+    this.searchProvider = null
+  }
+
+  /** In search mode: asked for results as you type (e.g. symbols across the project). */
+  private searchProvider: ((query: string) => Promise<{ label: string; detail?: string; hint?: string; run: () => void }[]>) | null = null
+  private searchTimer: number | undefined
+  private searchGeneration = 0
+
+  /** Choices that come from a search as you type (the provider does the filtering). */
+  search(prompt: string, provider: (query: string) => Promise<{ label: string; detail?: string; hint?: string; run: () => void }[]>, initial = ''): void {
+    this.choose(prompt, [])
+    this.searchProvider = provider
+    this.input.value = initial
+    this.input.select()
+    this.update()
+  }
+
+  private runSearch(query: string): void {
+    const provider = this.searchProvider!
+    window.clearTimeout(this.searchTimer)
+    const gen = ++this.searchGeneration
+    this.items = [{ label: query ? 'Searching…' : 'Type a name to search for', positions: [], run: () => {} }]
+    this.selected = 0
+    this.input.placeholder = this.choicePrompt
+    this.renderList()
+    if (!query) return
+    this.searchTimer = window.setTimeout(() => {
+      void provider(query).then((results) => {
+        if (gen !== this.searchGeneration || this.searchProvider !== provider || !this.isOpen) return
+        this.items = results.length
+          ? results.slice(0, MAX_ITEMS).map((r) => ({ label: r.label, positions: [], detail: r.detail, hint: r.hint, run: r.run }))
+          : [{ label: `Nothing called "${query}" found`, positions: [], run: () => {} }]
+        this.selected = 0
+        this.renderList()
+      }).catch(() => {})
+    }, 180)
   }
 
   /** Ask for a line of text (e.g. a folder path); Enter calls `submit` with it. */
@@ -145,6 +181,10 @@ export class Palette {
 
   private update(): void {
     const value = this.input.value
+    if (this.searchProvider) {
+      this.runSearch(value.trim())
+      return
+    }
     if (this.keyCapture) {
       this.items = [{ label: 'Press the new shortcut now (Escape cancels)', positions: [], run: () => {} }]
       this.selected = 0

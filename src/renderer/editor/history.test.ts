@@ -35,6 +35,24 @@ describe('History', () => {
     expect(buffer.getText()).toBe('ab\ncd\nef')
   })
 
+  it('keeps typing in one step when a keystroke only steps over an auto-closed bracket', () => {
+    const { buffer, history, tick } = setup('')
+    // "g(" inserts "g()" with the cursor between; ")" steps over; ":" continues.
+    let pos = history.transact('typing', p(0, 0), () => buffer.insert(p(0, 0), 'g'))
+    tick(50)
+    pos = history.transact('typing', pos, () => {
+      buffer.insert(pos, '()')
+      return p(0, 2)
+    })
+    tick(50)
+    pos = history.transact('typing', pos, () => p(0, 3)) // step over ")": no change
+    tick(50)
+    history.transact('typing', pos, () => buffer.insert(pos, ':'))
+    expect(buffer.getText()).toBe('g():')
+    history.undo()
+    expect(buffer.getText()).toBe('')
+  })
+
   it('groups quick consecutive typing into one undo step', () => {
     const { buffer, history, tick } = setup('')
     let pos = p(0, 0)
