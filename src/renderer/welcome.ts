@@ -106,6 +106,7 @@ export class WelcomePage {
     if (folder) {
       right.append(this.section('This project', [
         { label: 'Go to File…', command: 'palette.files' },
+        { label: 'Project Graph', command: 'view.projectGraph', detail: 'how the modules fit together' },
         { label: 'Search in Project', command: 'search.project' },
         { label: 'Run Task…', command: 'tasks.run' },
         { label: 'Run Configurations…', command: 'run.selectConfig' },

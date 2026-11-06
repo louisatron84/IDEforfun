@@ -74,6 +74,7 @@ const api: IdeApi = {
     return () => ipcRenderer.removeListener('debug:exit', handler)
   },
   listFiles: (root) => ipcRenderer.invoke('fs:listFiles', root),
+  scanProject: (root, python) => ipcRenderer.invoke('graph:scan', root, python),
   searchProject: (root, query, opts) => ipcRenderer.invoke('search:project', root, query, opts),
   gitStatus: (folder) => ipcRenderer.invoke('git:status', folder),
   gitRepo: (folder) => ipcRenderer.invoke('git:repo', folder),

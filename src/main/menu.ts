@@ -131,6 +131,7 @@ export function buildMenu(state: MenuState = { keys: {}, recent: [] }): Menu {
         sep,
         cmd('Files', 'view.files', 'CmdOrCtrl+Shift+E'),
         cmd('Outline', 'view.outline'),
+        cmd('Project Graph', 'view.projectGraph', 'CmdOrCtrl+Alt+G'),
         cmd('References', 'panel.references'),
         cmd('Problems', 'panel.problems', 'CmdOrCtrl+Shift+M'),
         cmd('Output', 'panel.output'),

@@ -36,6 +36,8 @@ import { WelcomePage } from './welcome'
 import { CodeTools } from './codeTools'
 import { GitView } from './gitView'
 import { DiffView } from './diffView'
+import { GraphView } from './graph/graphView'
+import { buildGraph } from '../shared/projectGraph'
 import { HistoryView } from './historyView'
 import { conflictNear, findConflicts, resolveConflict, type Conflict, type Resolution } from '../shared/conflicts'
 import { timeAgo, type BlameLine } from '../shared/history'
@@ -1288,7 +1290,11 @@ let lastActiveDoc: Doc | null = null
 workspace.subscribe(() => {
   if (workspace.active !== lastActiveDoc) {
     if (workspace.active) welcomeForced = false // a file was opened or picked
-    if (workspace.active) diffView.hide() // a file was picked: close the diff over it
+    if (workspace.active) {
+      // A file was picked: close the diff or graph over it.
+      diffView.hide()
+      graphView.hide()
+    }
     lastActiveDoc = workspace.active
   }
   updateWelcome()
@@ -1409,6 +1415,8 @@ async function openFolderPath(folder: string): Promise<void> {
     debugView.setWatches([])
     await loadRunFile(folder)
     await tree.setRoot(folder)
+    graphView.hide()
+    graphView.reset()
     workspace.notifyChanged()
     void refreshGit()
     startLanguageServers()
@@ -2034,6 +2042,31 @@ const diffView = new DiffView({
   closed: () => editor.focus()
 })
 $('groups').append(diffView.el)
+
+// ---------- Project Graph (how the project fits together) ----------
+
+const graphView = new GraphView({
+  scan: async () => {
+    if (!rootFolder) return { error: 'Open a folder first.' }
+    const res = await window.api.scanProject(rootFolder, settings.pythonPath || undefined).catch((err) => ({ error: String(err), scan: undefined }))
+    return res.scan ? { graph: buildGraph(res.scan) } : { error: res.error ?? 'no result' }
+  },
+  openModule: (rel, line) => {
+    if (!rootFolder) return
+    const sep = rootFolder.includes('\\') ? '\\' : '/'
+    const path = rootFolder.replace(/[\\/]+$/, '') + sep + rel.split('/').join(sep)
+    void openFile(path, line).then(() => graphView.hide())
+  },
+  closed: () => editor.focus()
+})
+$('groups').append(graphView.el)
+commands.register({
+  id: 'view.projectGraph', title: 'Show Project Graph', keys: 'Ctrl+Alt+G', when: () => rootFolder !== null,
+  run: () => {
+    diffView.hide()
+    void graphView.show()
+  }
+})
 
 /** Switch to a branch, create one, or check out a remote branch. */
 async function pickBranch(): Promise<void> {

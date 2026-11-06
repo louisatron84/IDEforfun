@@ -1,3 +1,4 @@
+import type { RawScan } from './projectGraph'
 import type { ProjectSettings, Settings } from './settings'
 import type { KeyOverrides } from './keybindings'
 import type { WorkspaceState } from './projectState'
@@ -200,6 +201,8 @@ export interface IdeApi {
 
   /** Every file under a folder (for quick open), skipping .git, node_modules, etc. */
   listFiles(root: string): Promise<{ path: string; rel: string }[]>
+  /** Analyse every Python file of a project (for the Project Graph); `python`: the configured interpreter. */
+  scanProject(root: string, python?: string): Promise<{ scan?: RawScan; error?: string }>
 
   /** Search every text file under `root` (Ctrl+Shift+F). */
   searchProject(root: string, query: string, opts: FindOptions): Promise<ProjectSearchResult>

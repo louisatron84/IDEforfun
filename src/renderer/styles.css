@@ -1397,3 +1397,75 @@ button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 .debug-proc.paused .debug-proc-state { color: var(--warning, #e5c07b); }
 .debug-proc:hover { background: var(--bg-hover); }
 .debug-proc-state { font-weight: normal; opacity: 0.8; }
+
+/* ---------- Project Graph ---------- */
+.graph-view { position: absolute; inset: 0; z-index: 7; display: flex; flex-direction: column; background: var(--bg); outline: none; }
+.graph-view[hidden] { display: none; }
+.graph-toolbar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--bg-panel); flex-wrap: wrap; font-size: 12px; }
+.graph-title { font-weight: 600; font-size: 13px; margin-right: 4px; }
+.graph-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 5px; overflow: hidden; }
+.graph-seg button { background: none; border: none; color: var(--fg-muted); padding: 3px 10px; cursor: pointer; font: inherit; }
+.graph-seg button + button { border-left: 1px solid var(--border); }
+.graph-seg button.active { background: var(--bg-active); color: var(--fg); }
+.graph-chip { background: var(--bg-active); border: 1px solid var(--border); color: var(--fg); border-radius: 10px; padding: 2px 8px; cursor: pointer; font: inherit; }
+.graph-chip[hidden] { display: none; }
+.graph-search { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 3px 8px; width: 180px; font: inherit; }
+.graph-toggle { display: inline-flex; align-items: center; gap: 4px; color: var(--fg-muted); cursor: pointer; user-select: none; }
+.graph-status { color: var(--fg-muted); margin-left: auto; white-space: nowrap; }
+.graph-button { background: none; border: 1px solid var(--border); color: var(--fg); border-radius: 4px; padding: 2px 9px; cursor: pointer; font: inherit; }
+.graph-button:hover, .graph-seg button:hover { background: var(--bg-hover); }
+.graph-body { flex: 1; display: flex; min-height: 0; }
+.graph-canvas { flex: 1; position: relative; overflow: hidden; cursor: grab; }
+.graph-canvas.panning { cursor: grabbing; }
+.graph-svg { width: 100%; height: 100%; display: block; user-select: none; }
+.graph-note { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); max-width: 460px; text-align: center; color: var(--fg-muted); pointer-events: none; }
+.graph-note[hidden] { display: none; }
+
+.gnode { cursor: pointer; transition: opacity 0.12s; }
+.gnode rect:first-of-type { fill: var(--bg-panel); stroke: var(--border); stroke-width: 1; }
+.gnode .glabel { fill: var(--fg); font: 600 12px var(--font-code); }
+.gnode .gdetail { fill: var(--fg-muted); font: 11px var(--font-ui); }
+.gnode.k-external rect:first-of-type, .gnode.k-host rect:first-of-type { fill: var(--bg); stroke-dasharray: 4 3; }
+.gnode.k-host .glabel { fill: #56a8f5; }
+.gnode.k-code .glabel { font-style: italic; }
+.gnode.test rect:first-of-type { stroke-dasharray: 2 2; }
+.gnode.unused .glabel { fill: var(--fg-muted); text-decoration: line-through; }
+.gnode.cyc rect:first-of-type { stroke: #e06c75; }
+.gnode.err .glabel { fill: #e06c75; }
+.gnode.match rect:first-of-type { stroke: var(--accent); stroke-width: 2; }
+.gnode:hover rect:first-of-type { fill: var(--bg-hover); }
+.gnode.selected rect:first-of-type { stroke: var(--accent); stroke-width: 2; }
+
+.gedge { fill: none; stroke: var(--fg-muted); stroke-width: 1.2; opacity: 0.55; transition: opacity 0.12s; }
+.gedge.k-external, .gedge.k-http { stroke-dasharray: 4 3; }
+.gedge.cyc { stroke: #e06c75; opacity: 0.85; }
+.arrow { fill: var(--fg-muted); }
+.arrow.cyc { fill: #e06c75; }
+.arrow.out { fill: #56a8f5; }
+.arrow.in { fill: #e5a05b; }
+
+/* Hover / selection: light up the node, what it uses (blue) and what uses it (orange). */
+.graph-svg.hl .gnode:not(.focus):not(.out):not(.in) { opacity: 0.25; }
+.graph-svg.hl .gedge:not(.out):not(.in) { opacity: 0.08; }
+.graph-svg.hl .gedge.out { stroke: #56a8f5; opacity: 1; stroke-width: 2; }
+.graph-svg.hl .gedge.in { stroke: #e5a05b; opacity: 1; stroke-width: 2; }
+.graph-svg.hl .gnode.out rect:first-of-type { stroke: #56a8f5; }
+.graph-svg.hl .gnode.in rect:first-of-type { stroke: #e5a05b; }
+.graph-svg.hl .gnode.focus rect:first-of-type { stroke: var(--accent); stroke-width: 2; }
+
+.graph-side { width: 320px; flex-shrink: 0; border-left: 1px solid var(--border); background: var(--bg-panel); overflow: auto; padding: 10px 0; font-size: 12px; }
+.graph-side-intro { padding: 0 12px 8px; color: var(--fg-muted); line-height: 1.45; }
+.graph-side-title { padding: 0 12px; font: 600 13px var(--font-code); word-break: break-all; }
+.graph-side-sub { padding: 2px 12px 8px; color: var(--fg-muted); word-break: break-all; }
+.graph-side-actions { display: flex; gap: 6px; padding: 0 12px 6px; }
+.graph-side-head { padding: 10px 12px 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-muted); }
+.graph-side-empty { padding: 2px 12px; color: var(--fg-muted); }
+.graph-side-warn { margin: 6px 12px; padding: 6px 8px; border-left: 3px solid #e06c75; background: var(--bg); color: var(--fg); }
+.graph-item { display: flex; justify-content: space-between; gap: 8px; padding: 3px 12px; cursor: pointer; }
+.graph-item:hover { background: var(--bg-hover); }
+.graph-item-text { font-family: var(--font-code); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-item-detail { color: var(--fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
+.graph-item.warn .graph-item-text { color: #e06c75; }
+.graph-item.dim .graph-item-text { color: var(--fg-muted); text-decoration: line-through; }
+
+@media (max-width: 900px) { .graph-side { width: 240px; } }

@@ -114,18 +114,18 @@ Best started once a first graph view exists (5.1), so the layout is designed aro
 Visualisations are interactive representations of real code, not a separate programming system.
 
 ### 5.1 Project intelligence graph
-- [ ] Parse the project using Python's `ast` (a helper script run with the project's own Python)
-- [ ] Build a project dependency graph: files, modules, classes, functions, imports
-- [ ] Function-to-function call relationships
-- [ ] Detect API endpoints called (`requests`, `httpx`, `aiohttp`)
-- [ ] Detect API routes (FastAPI, Flask)
-- [ ] Detect environment variables
-- [ ] Display dependencies between components
-- [ ] Click a graph node to navigate to its source code
-- [ ] Highlight a node's dependencies and dependants
-- [ ] Filter graph by type, file or relationship
-- [ ] Detect circular imports
-- [ ] Identify unused functions and potentially unreachable code where statically determinable
+- [x] Parse the project using Python's `ast` (a helper script run with the project's own Python) (v0.41: Ctrl+Alt+G / View → Project Graph)
+- [x] Build a project dependency graph: files, modules, classes, functions, imports (v0.41: absolute, relative and submodule imports; packages used)
+- [x] Function-to-function call relationships (v0.41: Calls view; local, imported, module.func, self.method, Class().method)
+- [x] Detect API endpoints called (`requests`, `httpx`, `aiohttp`) (v0.41: incl. sessions/clients; shown as web API nodes by host)
+- [x] Detect API routes (FastAPI, Flask)
+- [x] Detect environment variables (os.environ[...], os.getenv, environ.get)
+- [x] Display dependencies between components (v0.41: hand-written layered SVG layout, pan / zoom / fit)
+- [x] Click a graph node to navigate to its source code (double-click; details on single click)
+- [x] Highlight a node's dependencies and dependants (hover or select: uses in blue, used by in orange)
+- [x] Filter graph by type, file or relationship (v0.41: Modules / Calls, one module's calls, name filter, tests / packages / web APIs toggles)
+- [x] Detect circular imports (red edges; listed in the findings)
+- [ ] Identify unused functions and potentially unreachable code where statically determinable (v0.41: possibly unused functions/classes listed and struck through; unreachable code still to do)
 
 ### 5.2 Live network visualisation
 - [ ] Runtime instrumentation for `requests`, `httpx` and `aiohttp`
