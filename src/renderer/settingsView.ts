@@ -194,6 +194,14 @@ export class SettingsView {
     const dbgRow = this.row('Debug in terminal', 'Run the program being debugged in a terminal, so input() works', dbg)
     dbgRow.querySelector('label')!.htmlFor = dbg.id
 
+    const dbgTask = document.createElement('input')
+    dbgTask.type = 'checkbox'
+    dbgTask.id = 'setting-debug-task'
+    dbgTask.checked = s.switchToDebugTask
+    dbgTask.addEventListener('change', () => this.update({ switchToDebugTask: dbgTask.checked }))
+    const dbgTaskRow = this.row('Debug task', 'Switch to the Debug task while debugging (and back afterwards)', dbgTask)
+    dbgTaskRow.querySelector('label')!.htmlFor = dbgTask.id
+
     const rows: HTMLElement[] = [header]
     if (this.projectNote) {
       const note = document.createElement('p')
@@ -201,7 +209,7 @@ export class SettingsView {
       note.textContent = this.projectNote
       rows.push(note)
     }
-    rows.push(fontRow, themeRow, tabRow, pyRow, shellRow, fmtRow, fosRow, lintRow, dbgRow, reopenRow)
+    rows.push(fontRow, themeRow, tabRow, pyRow, shellRow, fmtRow, fosRow, lintRow, dbgRow, dbgTaskRow, reopenRow)
 
     if (this.links.length) {
       const linkRow = document.createElement('div')

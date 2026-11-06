@@ -23,6 +23,8 @@ export interface Settings {
   lintWithRuff: boolean
   /** Run the program being debugged in a terminal (so input() works) instead of the Debug console. */
   debugInTerminal: boolean
+  /** Switch to the Debug task while debugging (and back afterwards). */
+  switchToDebugTask: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -36,7 +38,8 @@ export const DEFAULT_SETTINGS: Settings = {
   formatter: 'auto',
   formatOnSave: false,
   lintWithRuff: true,
-  debugInTerminal: true
+  debugInTerminal: true,
+  switchToDebugTask: true
 }
 
 export const FONT_SIZE_MIN = 10
@@ -62,6 +65,7 @@ export function normalizeSettings(raw: unknown): Settings {
   if (typeof r.formatOnSave === 'boolean') s.formatOnSave = r.formatOnSave
   if (typeof r.lintWithRuff === 'boolean') s.lintWithRuff = r.lintWithRuff
   if (typeof r.debugInTerminal === 'boolean') s.debugInTerminal = r.debugInTerminal
+  if (typeof r.switchToDebugTask === 'boolean') s.switchToDebugTask = r.switchToDebugTask
   return s
 }
 

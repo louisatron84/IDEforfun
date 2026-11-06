@@ -1,6 +1,7 @@
 import type { RawScan } from './projectGraph'
 import type { ProjectSettings, Settings } from './settings'
 import type { KeyOverrides } from './keybindings'
+import type { SavedLayouts } from './layouts'
 import type { WorkspaceState } from './projectState'
 import type { TestFile } from './tests'
 import type { Branch, RepoStatus } from './git'
@@ -253,6 +254,9 @@ export interface IdeApi {
   getSettings(): Promise<Settings>
   saveSettings(settings: Settings): Promise<void>
 
+  /** Your workspace arrangement per task (layouts.json; missing tasks use their defaults). */
+  getLayouts(): Promise<SavedLayouts>
+  saveLayouts(layouts: SavedLayouts): Promise<void>
   /** Your shortcut changes from keybindings.json (error = the file couldn't be read). */
   getKeybindings(): Promise<{ overrides: KeyOverrides; path: string; error?: string }>
   saveKeybindings(overrides: KeyOverrides): Promise<void>

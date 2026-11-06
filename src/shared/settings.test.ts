@@ -8,7 +8,7 @@ describe('normalizeSettings', () => {
     expect(normalizeSettings({})).toEqual(DEFAULT_SETTINGS)
   })
   it('keeps valid values', () => {
-    const s = { fontSize: 18, theme: 'plain', tabSize: 2, pythonPath: 'C:\\Py\\python.exe', shell: 'gitbash', reopenLastProject: false, showWelcome: false, formatter: 'black', formatOnSave: true, lintWithRuff: false, debugInTerminal: false }
+    const s = { fontSize: 18, theme: 'plain', tabSize: 2, pythonPath: 'C:\\Py\\python.exe', shell: 'gitbash', reopenLastProject: false, showWelcome: false, formatter: 'black', formatOnSave: true, lintWithRuff: false, debugInTerminal: false, switchToDebugTask: false }
     expect(normalizeSettings(s)).toEqual(s)
   })
   it('only accepts plain shell ids', () => {
@@ -46,3 +46,12 @@ describe('project settings', () => {
     expect(effectiveSettings(DEFAULT_SETTINGS, { tabSize: 2 }).tabSize).toBe(2)
   })
 })
+
+describe('switchToDebugTask', () => {
+  it('defaults to true and keeps false', () => {
+    expect(DEFAULT_SETTINGS.switchToDebugTask).toBe(true)
+    expect(normalizeSettings({ switchToDebugTask: false }).switchToDebugTask).toBe(false)
+    expect(normalizeSettings({ switchToDebugTask: 'no' }).switchToDebugTask).toBe(true)
+  })
+})
+

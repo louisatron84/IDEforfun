@@ -108,6 +108,8 @@ const api: IdeApi = {
     return () => ipcRenderer.removeListener('lsp:exit', handler)
   },
   resolvePythonForAnalysis: (root, configured) => ipcRenderer.invoke('lsp:resolvePython', root, configured),
+  getLayouts: () => ipcRenderer.invoke('layouts:get'),
+  saveLayouts: (layouts) => ipcRenderer.invoke('layouts:save', layouts),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
   getKeybindings: () => ipcRenderer.invoke('keys:get'),

@@ -4,6 +4,9 @@
  * Stored as JSON in the app's data folder (never inside the project).
  */
 
+
+import { TASKS, type TaskId } from './layouts'
+
 export const MAX_RECENT = 12
 
 export interface DocState {
@@ -26,6 +29,8 @@ export interface WorkspaceState {
   terminals: string[]
   /** Bottom panel view that was open, or null if the panel was closed. */
   panel: string | null
+  /** The task the project was in (Code, Connect, Debug, Run). */
+  task: TaskId
   /** The run configuration picked for Run / Debug (null = the open file). */
   runConfig: string | null
   breakpoints: SavedBreakpointState[]
@@ -97,6 +102,7 @@ export function normalizeWorkspaceState(raw: unknown): WorkspaceState {
     activeGroup: Math.min(int(r.activeGroup), groups.length - 1),
     terminals,
     panel: typeof r.panel === 'string' && /^[\w-]+$/.test(r.panel) ? r.panel : null,
+    task: typeof r.task === 'string' && (TASKS as readonly string[]).includes(r.task) ? (r.task as TaskId) : 'code',
     runConfig: typeof r.runConfig === 'string' && r.runConfig ? r.runConfig : null,
     breakpoints: Array.isArray(r.breakpoints) ? r.breakpoints.slice(0, 2000).flatMap((b): SavedBreakpointState[] => {
       if (!b || typeof b !== 'object') return []

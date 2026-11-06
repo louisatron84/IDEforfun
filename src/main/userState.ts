@@ -1,6 +1,7 @@
 /**
  * Small JSON files the app keeps between sessions (in the app's data folder):
  *   keybindings.json      your keyboard shortcut changes
+ *   layouts.json          your workspace arrangement for each task
  *   recent.json           recently opened folders
  *   workspaces/<id>.json  each project's tabs, layout and terminals
  * and the project's own <project>/.forge/settings.json.
@@ -9,6 +10,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { normalizeKeybindings, type KeyOverrides } from '../shared/keybindings'
+import { normalizeLayouts, type SavedLayouts } from '../shared/layouts'
 import { addRecent, normalizeRecent, normalizeWorkspaceState, removeRecent, type WorkspaceState } from '../shared/projectState'
 import { normalizeProjectSettings, PROJECT_DIR, PROJECT_SETTINGS_FILE, type ProjectSettings } from '../shared/settings'
 import { backupName } from './backups'
@@ -57,6 +59,15 @@ export class UserState {
       out[id] = keys.length === 0 ? null : keys.length === 1 ? keys[0] : keys
     }
     await writeJson(this.keybindingsPath, out)
+  }
+
+  /** Workspace arrangements per task (layouts.json); a bad or missing file means the defaults. */
+  async layouts(): Promise<SavedLayouts> {
+    return normalizeLayouts((await readJson(join(this.dir(), 'layouts.json'))).value)
+  }
+
+  async saveLayouts(layouts: unknown): Promise<void> {
+    await writeJson(join(this.dir(), 'layouts.json'), normalizeLayouts(layouts))
   }
 
   /** Create keybindings.json if needed (for editing it by hand). */

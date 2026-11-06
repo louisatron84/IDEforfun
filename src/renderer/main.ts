@@ -1455,6 +1455,7 @@ function captureState(): WorkspaceState {
     activeGroup: workspace.activeGroup,
     terminals: terminal.shellIds(),
     panel: panel.activeView,
+    task: 'code', // the task controller fills this in (Task 5)
     runConfig: runConfigName,
     breakpoints: breakpoints.save(),
     watches,

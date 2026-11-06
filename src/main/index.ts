@@ -280,6 +280,8 @@ ipcMain.on('term:kill', (_event, id: number) => terminals.kill(id))
 
 // ---------- shortcuts, recent folders, per-project layout and settings ----------
 ipcMain.handle('keys:get', () => userState.keybindings())
+ipcMain.handle('layouts:get', () => userState.layouts())
+ipcMain.handle('layouts:save', (_event, layouts: unknown) => userState.saveLayouts(layouts))
 ipcMain.handle('keys:save', (_event, overrides: KeyOverrides) => userState.saveKeybindings(overrides))
 ipcMain.handle('keys:ensureFile', () => userState.ensureKeybindingsFile())
 ipcMain.on('menu:setKeys', (_event, keys: Record<string, string | null>) => {
