@@ -102,6 +102,13 @@ export function buildMenu(state: MenuState = { keys: {}, recent: [] }): Menu {
         cmd('Search in Project', 'search.project', 'CmdOrCtrl+Shift+F'),
         sep,
         cmd('Toggle Comment', 'editor.toggleComment', 'CmdOrCtrl+/'),
+        sep,
+        cmd('Quick Fix…', 'editor.quickFix', 'CmdOrCtrl+.'),
+        cmd('Format Document', 'editor.format', 'Shift+Alt+F'),
+        cmd('Format Selection', 'editor.formatSelection'),
+        cmd('Organize Imports', 'editor.organizeImports', 'Shift+Alt+O'),
+        cmd('Fix All Auto-fixable Problems', 'editor.fixAll'),
+        sep,
         cmd('Fold All', 'editor.foldAll'),
         cmd('Unfold All', 'editor.unfoldAll')
       ]

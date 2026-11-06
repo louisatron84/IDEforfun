@@ -31,9 +31,10 @@ import { Shortcuts } from './shortcuts'
 import { PythonEnv, type PythonTool } from './pythonEnv'
 import { TestView } from './testView'
 import { WelcomePage } from './welcome'
+import { CodeTools } from './codeTools'
 import { ReferencesView } from './referencesView'
 import { OutlineView } from './outlineView'
-import { applyEdits, type DocSymbol, type Location, type TextEdit, SYMBOL_KIND } from './lsp/navigation'
+import { applyEdits, type DocSymbol, type FileEdits, type Location, type TextEdit, SYMBOL_KIND } from './lsp/navigation'
 import { isTestFile } from '../shared/tests'
 import { normalizeRunFile, resolveConfiguration, resolveTask, RUN_FILE, starterRunFile, type LaunchSpec, type RunFile, type Task } from '../shared/runConfig'
 
@@ -75,6 +76,10 @@ const editorOptions = (index: number): EditorOptions => ({
   onGutterClick: (line) => {
     workspace.focusGroup(index)
     toggleBreakpoint(line)
+  },
+  onLightbulb: () => {
+    workspace.focusGroup(index)
+    void codeTools.quickFix()
   },
   // Hover info is for the side you're working in.
   onMouseMove: (pos, e) => {
@@ -845,6 +850,7 @@ function applySettings(s: Settings, restartLsp = true): void {
   root.dataset.theme = s.theme
   for (const ed of editors) ed.refreshLayout(s.tabSize)
   terminal.applyTheme(s.fontSize)
+  codeTools.sync(workspace.docs) // Ruff warnings on or off (only called once everything is set up)
 }
 
 /** A relative interpreter path in project settings (.venv/bin/python) is relative to the project. */
@@ -854,7 +860,10 @@ function resolveInProject(path: string | undefined): string | undefined {
   return rootFolder.replace(/[\\/]+$/, '') + sep + path.replace(/^\.[\\/]/, '')
 }
 
-const SETTING_NAMES: Record<string, string> = { tabSize: 'Tab width', pythonPath: 'Python interpreter', shell: 'Terminal shell' }
+const SETTING_NAMES: Record<string, string> = {
+  tabSize: 'Tab width', pythonPath: 'Python interpreter', shell: 'Terminal shell',
+  formatter: 'Formatter', formatOnSave: 'Format on save', lintWithRuff: 'Ruff warnings'
+}
 
 /** Recompute the settings in effect after yours or the project's change. */
 function applyEffective(restartLsp = true): void {
@@ -866,7 +875,7 @@ function applyEffective(restartLsp = true): void {
     keys.length
       ? `This project's .ideforfun/settings.json sets: ${keys.map((k) => SETTING_NAMES[k] ?? k).join(', ')}. ` +
         'Those rows show your own setting; the project\'s value is used while it is open.'
-      : rootFolder ? 'A project can set tabSize, pythonPath and shell in .ideforfun/settings.json (Project Settings below).' : null
+      : rootFolder ? 'A project can set tabSize, pythonPath, shell, formatter, formatOnSave and lintWithRuff in .ideforfun/settings.json (Project Settings below).' : null
   )
 }
 
@@ -963,6 +972,7 @@ export async function openFile(path: string, line?: number): Promise<Doc | null>
 async function saveActive(): Promise<boolean> {
   const doc = workspace.active
   if (!doc) return false
+  if (settings.formatOnSave && /\.pyi?$/i.test(doc.path)) await codeTools.format({ doc, quiet: true })
   try {
     await workspace.save(doc)
     python.didSave(doc)
@@ -1610,6 +1620,7 @@ const pyEnv = new PythonEnv({
   },
   openFile: (path) => void openFile(path),
   changed: scheduleStatus,
+  envChanged: () => void window.api.forgetTools().then(() => codeTools.retry(workspace.docs)),
   report: (message) => alert(message)
 })
 
@@ -1654,6 +1665,72 @@ commands.register({
   run: () => { showTests(); void tests.runAt(workspace.active!.path, editor.getCursor().line) }
 })
 commands.register({ id: 'tests.stop', title: 'Stop Tests', when: () => tests.isRunning, run: () => void window.api.stopTests() })
+
+// ---------- code quality: Ruff warnings, quick fixes, formatting ----------
+
+let noteTimer: number | undefined
+/** A short message in the status bar that goes away by itself. */
+function statusNote(text: string): void {
+  const el = $('sb-note')
+  el.textContent = text
+  window.clearTimeout(noteTimer)
+  noteTimer = window.setTimeout(() => { el.textContent = '' }, 4000)
+}
+
+/** Apply edits to several files: open ones in place (undoable), others on disk. */
+async function applyWorkspaceEdits(edits: FileEdits): Promise<boolean> {
+  const failed: string[] = []
+  const onDisk: string[] = []
+  for (const [path, list] of edits) {
+    const open = workspace.find(path)
+    if (open) {
+      applyEditsToDoc(open, list)
+      continue
+    }
+    try {
+      const res = await window.api.readTextFile(path)
+      if (res.kind !== 'text') throw new Error('not a text file')
+      await window.api.writeTextFile(path, applyEdits(res.text, list), res.encoding)
+      onDisk.push(path)
+    } catch (err) {
+      failed.push(`${path} (${err instanceof Error ? err.message : String(err)})`)
+    }
+  }
+  python.filesChangedOnDisk(onDisk)
+  workspace.notifyChanged()
+  if (failed.length) alert(`These files couldn't be changed:\n${failed.join('\n')}`)
+  return failed.length === 0
+}
+python.applyEditHandler = applyWorkspaceEdits
+
+const codeTools = new CodeTools({
+  python,
+  palette,
+  root: () => rootFolder,
+  interpreter: () => pyEnv.current?.path ?? null,
+  settings: () => settings,
+  active: () => workspace.active,
+  selection: () => {
+    const { anchor, head } = editor.getSelection()
+    const headFirst = head.line < anchor.line || (head.line === anchor.line && head.col < anchor.col)
+    return headFirst ? { start: head, end: anchor } : { start: anchor, end: head }
+  },
+  applyEdits: (doc, edits) => applyEditsToDoc(doc, edits),
+  applyFileEdits: applyWorkspaceEdits,
+  install: (tool) => pyEnv.install(tool),
+  setLightbulb: (line) => editors.forEach((ed, i) => ed.setLightbulb(i === workspace.activeGroup ? line : null)),
+  note: statusNote,
+  report: (message) => alert(message)
+})
+workspace.subscribe(() => codeTools.sync(workspace.docs))
+
+const pyDoc = () => hasDocNow() && /\.pyi?$/i.test(workspace.active!.path)
+commands.register({ id: 'editor.quickFix', title: 'Quick Fix…', keys: 'Ctrl+.', when: hasDocNow, run: () => void codeTools.quickFix() })
+commands.register({ id: 'editor.format', title: 'Format Document', keys: 'Shift+Alt+F', when: pyDoc, run: () => void codeTools.format() })
+commands.register({ id: 'editor.formatSelection', title: 'Format Selection', when: pyDoc, run: () => void codeTools.format({ selection: true }) })
+commands.register({ id: 'editor.organizeImports', title: 'Organize Imports', keys: 'Shift+Alt+O', when: pyDoc, run: () => void codeTools.organizeImports() })
+commands.register({ id: 'editor.fixAll', title: 'Fix All Auto-fixable Problems (Ruff)', when: pyDoc, run: () => void codeTools.fixAll() })
+commands.register({ id: 'python.installRuff', title: 'Install Ruff (linter and formatter)', when: () => rootFolder !== null, run: () => pyEnv.install('ruff') })
 
 // ---------- keyboard shortcuts you can change ----------
 
@@ -1713,6 +1790,7 @@ function updateStatus(): void {
     }
   }
   if (!$('outline-panel').hidden) outline.highlight(doc ? editor.getCursor() : null)
+  codeTools.updateLightbulb(doc, doc ? editor.getCursor().line : null)
   set('sb-debug', session?.state === 'paused' ? '🐞 Paused' : session?.active ? '🐞 Debugging' : '')
   set('sb-run', rootFolder ? `▶ ${runConfigName ?? 'Current file'}` : '')
   set('sb-python', pyEnv.statusText)

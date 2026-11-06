@@ -89,10 +89,17 @@ describe('PythonLanguage', () => {
       ] }
     })
     expect(calls).toBe(1)
-    expect(lang.diagnosticsFor('c:\\PROJ\\a.py')).toEqual([
+    expect(lang.diagnosticsFor('c:\\PROJ\\a.py')).toMatchObject([
       { start: { line: 0, col: 4 }, end: { line: 0, col: 7 }, severity: 1, message: '"foo" is not defined', source: 'Pyright', code: 'reportUndefinedVariable' }
     ])
     expect(lang.allDiagnostics().map(([path]) => path)).toEqual(['C:\\proj\\a.py'])
+    // Other tools' diagnostics (Ruff) are shown together with Pyright's.
+    lang.setExternalDiagnostics('ruff', 'C:\\proj\\a.py', [{ start: { line: 1, col: 0 }, end: { line: 1, col: 2 }, severity: 2, message: 'F401', source: 'Ruff' }])
+    expect(lang.diagnosticsFor('c:\\proj\\A.py').map((d) => d.source)).toEqual(['Pyright', 'Ruff'])
+    expect(lang.allDiagnostics()).toHaveLength(1)
+    expect(calls).toBe(2)
+    lang.clearExternalDiagnostics('ruff')
+    expect(lang.diagnosticsFor('C:\\proj\\a.py')).toHaveLength(1)
   })
 
   it('re-opens tracked docs after a restart', async () => {

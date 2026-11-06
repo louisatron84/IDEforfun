@@ -57,6 +57,8 @@ your terminal has `ELECTRON_RUN_AS_NODE` set. Clear it first: `$env:ELECTRON_RUN
 | Shift+F12 | Find all references (References tab in the bottom panel) |
 | F2 (in the editor) | Rename a symbol everywhere it's used |
 | Ctrl+Shift+O | Go to a class / function in this file (also the Outline tab in the sidebar) |
+| Ctrl+. (or click 💡) | Quick fixes: Ruff's fixes, Pyright's actions, ignore a rule on this line |
+| Shift+Alt+F / Shift+Alt+O | Format the file (Ruff or Black) / organize imports (sort, remove unused) |
 | Ctrl+Shift+M | Problems (errors and warnings from Pyright) |
 | F5 | Run the current Python file (auto-saves). With breakpoints set it debugs instead; while paused it continues |
 | Ctrl+F5 / Shift+F5 | Run without debugging / stop (running or debugging) |
@@ -109,6 +111,10 @@ the app's data folder, which you can also edit by hand ("Edit Keyboard Shortcuts
   from `requirements.txt` or the project's `pyproject.toml`, or save what's installed to
   `requirements.txt`. If the project needs packages that aren't installed, the status
   bar says so (⚠ n missing packages); click it to install them. pip runs in the Output panel.
+- **Ruff and Black**: if Ruff is installed in the project's Python (Quick Fix offers to
+  install it), its warnings show as you type next to Pyright's, with 💡 on lines it can fix.
+  Format with Ruff or Black (Settings → Formatter, optional format on save); the project's
+  own Ruff/Black configuration is used.
 - **Tests** (Run → Tests, or the Tests tab in the bottom panel): every test in
   `test_*.py` / `*_test.py`, grouped by file. Run all of them, only the failed ones, a
   file, or one test (▶ on its row, or "Run Test at Cursor"). Failures show their message;

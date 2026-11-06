@@ -32,6 +32,8 @@ export interface PythonEnvHooks {
   openFile(path: string): void
   /** Something shown in the status bar changed. */
   changed(): void
+  /** The interpreter was (re)checked: installed tools may have changed. */
+  envChanged?(): void
   report(message: string): void
 }
 
@@ -72,6 +74,7 @@ export class PythonEnv {
     this.current = current
     this.checked = !!current
     this.hooks.changed()
+    this.hooks.envChanged?.()
     if (!current) {
       this.missing = []
       return

@@ -1135,6 +1135,16 @@ body { display: flex; flex-direction: column; }
 .editor.focused .selection-layer .extra-cursor { display: block; }
 
 /* ---- code folding ---- */
+.editor .lightbulb {
+  position: absolute;
+  left: -3px; /* just left of where a breakpoint dot goes */
+  z-index: 1;
+  top: 0;
+  font-size: 11px;
+  cursor: pointer;
+  filter: saturate(1.2);
+}
+.editor .lightbulb:hover { transform: scale(1.2); }
 .editor .fold-toggle {
   position: absolute;
   right: 6px;

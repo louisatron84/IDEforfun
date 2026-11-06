@@ -18,6 +18,21 @@ export interface Diagnostic {
   message: string
   source?: string
   code?: string | number
+  /** A fix that comes with it (Ruff). */
+  fix?: { title: string; edits: { start: Position; end: Position; text: string }[]; safe: boolean }
+  /** Link to the rule's documentation. */
+  url?: string
+  /** The server's own diagnostic object (sent back when asking for code actions). */
+  raw?: unknown
+}
+
+/** A code action from the language server (quick fix, organise imports...). */
+export interface CodeAction {
+  title: string
+  kind: string
+  preferred: boolean
+  edit?: FileEdits
+  command?: { command: string; arguments?: unknown[] }
 }
 
 interface LspRange {
@@ -56,6 +71,10 @@ export class PythonLanguage {
   private cancelTimer: (() => void) | null = null
   private readonly diagnostics = new Map<string, { path: string; list: Diagnostic[] }>()
   private readonly diagnosticListeners = new Set<() => void>()
+  /** Diagnostics from other tools (Ruff), per source and file. */
+  private readonly external = new Map<string, Map<string, { path: string; list: Diagnostic[] }>>()
+  /** Applies edits the server asks for (workspace/applyEdit); returns whether it worked. */
+  applyEditHandler: ((edits: FileEdits) => Promise<boolean> | boolean) | null = null
   serverCapabilities: Record<string, any> = {}
 
   constructor(private readonly client: LspClient, opts: { schedule?: Schedule } = {}) {
@@ -64,6 +83,11 @@ export class PythonLanguage {
     client.onRequest('workspace/configuration', (params: { items: { section?: string }[] }) =>
       params.items.map((item) => this.configFor(item.section))
     )
+    client.onRequest('workspace/applyEdit', async (params: { edit: unknown }) => {
+      const edits = parseWorkspaceEdit(params?.edit)
+      const applied = this.applyEditHandler ? await this.applyEditHandler(edits) : false
+      return { applied }
+    })
     client.onNotification('textDocument/publishDiagnostics', (params: { uri: string; diagnostics: any[] }) => {
       const path = uriToPath(params.uri)
       const list: Diagnostic[] = params.diagnostics.map((d) => {
@@ -75,6 +99,7 @@ export class PythonLanguage {
         }
         if (d.source !== undefined) diag.source = d.source
         if (d.code !== undefined) diag.code = d.code
+        diag.raw = d
         return diag
       })
       if (list.length) this.diagnostics.set(key(path), { path, list })
@@ -98,7 +123,7 @@ export class PythonLanguage {
         rootUri,
         workspaceFolders: [{ uri: rootUri, name: rootPath.split(/[\\/]/).pop() }],
         capabilities: {
-          workspace: { configuration: true, workspaceFolders: true, workspaceEdit: { documentChanges: true } },
+          workspace: { configuration: true, workspaceFolders: true, workspaceEdit: { documentChanges: true }, applyEdit: true, executeCommand: {} },
           textDocument: {
             synchronization: { didSave: true, dynamicRegistration: false },
             publishDiagnostics: { relatedInformation: false },
@@ -110,7 +135,11 @@ export class PythonLanguage {
             definition: { linkSupport: false },
             references: {},
             rename: { prepareSupport: true },
-            documentSymbol: { hierarchicalDocumentSymbolSupport: true }
+            documentSymbol: { hierarchicalDocumentSymbolSupport: true },
+            codeAction: {
+              codeActionLiteralSupport: { codeActionKind: { valueSet: ['quickfix', 'refactor', 'source', 'source.organizeImports'] } },
+              isPreferredSupport: true
+            }
           }
         }
       })
@@ -298,6 +327,55 @@ export class PythonLanguage {
     return parseSymbols(res)
   }
 
+  /** Quick fixes and other actions for a range (with the diagnostics there). */
+  async codeActions(doc: Doc, start: Position, end: Position, diagnostics: Diagnostic[], only?: string[]): Promise<CodeAction[]> {
+    if (!this.started || !this.open.has(doc)) return []
+    this.flush()
+    const res = await this.client.request<any[]>('textDocument/codeAction', {
+      textDocument: { uri: pathToUri(doc.path) },
+      range: { start: toLsp(start), end: toLsp(end) },
+      context: { diagnostics: diagnostics.map((d) => d.raw).filter(Boolean), ...(only ? { only } : {}) }
+    })
+    const out: CodeAction[] = []
+    for (const a of Array.isArray(res) ? res : []) {
+      if (!a || typeof a.title !== 'string') continue
+      // A bare Command (no kind/edit) is also allowed.
+      if (typeof a.command === 'string') {
+        out.push({ title: a.title, kind: '', preferred: false, command: { command: a.command, arguments: a.arguments } })
+        continue
+      }
+      const action: CodeAction = { title: a.title, kind: typeof a.kind === 'string' ? a.kind : '', preferred: !!a.isPreferred }
+      if (a.edit) action.edit = parseWorkspaceEdit(a.edit)
+      if (a.command?.command) action.command = { command: a.command.command, arguments: a.command.arguments }
+      if (action.edit || action.command) out.push(action)
+    }
+    return out
+  }
+
+  /** Run a server command (e.g. from a code action). Edits come back via workspace/applyEdit. */
+  async executeCommand(command: { command: string; arguments?: unknown[] }): Promise<void> {
+    if (!this.started) return
+    await this.client.request('workspace/executeCommand', { command: command.command, arguments: command.arguments ?? [] })
+  }
+
+  /** Replace another tool's diagnostics for a file (e.g. Ruff); shown together with Pyright's. */
+  setExternalDiagnostics(source: string, path: string, list: Diagnostic[]): void {
+    let bySource = this.external.get(source)
+    if (!bySource) this.external.set(source, (bySource = new Map()))
+    if (list.length) bySource.set(key(path), { path, list })
+    else if (!bySource.delete(key(path))) return
+    this.diagnosticListeners.forEach((l) => l())
+  }
+
+  /** Forget another tool's diagnostics (all files, or one). */
+  clearExternalDiagnostics(source: string, path?: string): void {
+    const bySource = this.external.get(source)
+    if (!bySource?.size) return
+    if (path) bySource.delete(key(path))
+    else bySource.clear()
+    this.diagnosticListeners.forEach((l) => l())
+  }
+
   /** Tell the server files changed on disk behind its back (e.g. a rename edited closed files). */
   filesChangedOnDisk(paths: string[]): void {
     if (!this.started || !paths.length) return
@@ -316,12 +394,24 @@ export class PythonLanguage {
   }
 
   diagnosticsFor(path: string): Diagnostic[] {
-    return this.diagnostics.get(key(path))?.list ?? []
+    const k = key(path)
+    const own = this.diagnostics.get(k)?.list ?? []
+    const extra = [...this.external.values()].flatMap((m) => m.get(k)?.list ?? [])
+    return extra.length ? [...own, ...extra] : own
   }
 
-  /** [path, diagnostics] for every file that has some. */
+  /** [path, diagnostics] for every file that has some (Pyright's and other tools'). */
   allDiagnostics(): [string, Diagnostic[]][] {
-    return [...this.diagnostics.values()].map((d) => [d.path, d.list])
+    const all = new Map<string, { path: string; list: Diagnostic[] }>()
+    for (const [k, d] of this.diagnostics) all.set(k, { path: d.path, list: [...d.list] })
+    for (const m of this.external.values()) {
+      for (const [k, d] of m) {
+        const cur = all.get(k)
+        if (cur) cur.list.push(...d.list)
+        else all.set(k, { path: d.path, list: [...d.list] })
+      }
+    }
+    return [...all.values()].map((d) => [d.path, d.list])
   }
 
   /** Wait until the server is initialized (for requests made right after start). */

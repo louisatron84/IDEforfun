@@ -70,10 +70,10 @@ Language features (Pyright already does the analysis for most of these; they're 
 - [ ] Go to implementation
 - [ ] Call hierarchy
 - [x] Document symbols / outline panel (v0.31: Outline sidebar tab follows the cursor, filter; Ctrl+Shift+O)
-- [ ] Import organisation and automatic import suggestions
-- [ ] Code actions and quick fixes
-- [ ] Format document / selection (Black, Ruff)
-- [ ] Linting integration (Ruff)
+- [x] Import organisation and automatic import suggestions (v0.33: Shift+Alt+O with Ruff, or Pyright's; auto-import suggestions in completion since v0.13)
+- [x] Code actions and quick fixes (v0.33: Ctrl+. / 💡: Ruff fixes, Pyright code actions, # noqa, fix all)
+- [x] Format document / selection (Black, Ruff) (v0.33: Shift+Alt+F, Format Selection, format on save)
+- [x] Linting integration (Ruff) (v0.33: as you type, in Problems and squiggles, uses the project's Ruff config)
 - [ ] Semantic syntax highlighting
 - [ ] Language-support architecture: language integrations instead of Python-specific editor logic, so several language servers can run side by side (groundwork for Tier 6.2)
 

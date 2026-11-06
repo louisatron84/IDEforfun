@@ -3,6 +3,7 @@ import { buildMenu, type EditAction, type MenuState } from './menu'
 import { ensureProjectFile, ensureProjectSettings, readProjectFile, readProjectSettings, updateProjectSettings, UserState } from './userState'
 import { checkDependencies, describePython, findInterpreters, freeze, listPackages } from './pyenv'
 import { discoverTests, hasPytest, TestRunner } from './tests'
+import { forgetTools, formatText, ruffCheck, ruffFix, toolsAvailable } from './pyTools'
 import type { TestRunRequest } from '../shared/api'
 import type { KeyOverrides } from '../shared/keybindings'
 import type { ProjectSettings } from '../shared/settings'
@@ -274,6 +275,16 @@ ipcMain.handle('py:current', async (_event, root: string, configured?: string) =
 ipcMain.handle('py:packages', (_event, python: string) => listPackages(python))
 ipcMain.handle('py:freeze', (_event, python: string) => freeze(python))
 ipcMain.handle('py:deps', (_event, root: string, python: string) => checkDependencies(root, python))
+ipcMain.handle('tools:available', (_event, python: string | null, cwd: string) => toolsAvailable(python, cwd))
+ipcMain.handle('tools:forget', () => forgetTools())
+ipcMain.handle('tools:ruffCheck', (_event, python: string | null, cwd: string, path: string, text: string) => ruffCheck(python, cwd, path, text))
+ipcMain.handle('tools:ruffFix', (_event, python: string | null, cwd: string, path: string, text: string, select?: string[]) =>
+  ruffFix(python, cwd, path, text, Array.isArray(select) ? select.filter((s) => /^[A-Z]+\d*$/.test(s)) : undefined)
+)
+ipcMain.handle('tools:format', (_event, python: string | null, cwd: string, path: string, text: string, tool: 'ruff' | 'black', lines?: { from: number; to: number }) =>
+  formatText(python, cwd, path, text, tool === 'black' ? 'black' : 'ruff',
+    lines && Number.isInteger(lines.from) && Number.isInteger(lines.to) ? { from: lines.from, to: lines.to } : undefined)
+)
 ipcMain.handle('tests:discover', (_event, root: string) => discoverTests(root))
 ipcMain.handle('tests:hasPytest', (_event, python: string) => hasPytest(python))
 ipcMain.handle('tests:run', (event, req: TestRunRequest) => testRunner.run(event.sender, req))

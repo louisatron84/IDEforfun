@@ -5,6 +5,15 @@ import type { TestFile } from './tests'
 import type { FindOptions } from './regex'
 import type { Encoding, TextFileResult } from './encoding'
 
+/** What a tool (Ruff / Black) gave back: its output, or why it couldn't run. */
+export interface ToolResult {
+  ok: boolean
+  output: string
+  error?: string
+  /** The tool isn't installed. */
+  missing?: boolean
+}
+
 /** Which tests to run, and how. */
 export interface TestRunRequest {
   python: string
@@ -230,6 +239,16 @@ export interface IdeApi {
   listPackages(python: string): Promise<{ packages: { name: string; version: string }[]; error?: string }>
   pipFreeze(python: string): Promise<{ text: string; error?: string }>
   /** requirements.txt / pyproject.toml dependencies, and which aren't installed. */
+  /** Which of Ruff and Black can run for this interpreter. */
+  toolsAvailable(python: string | null, cwd: string): Promise<{ ruff: boolean; black: boolean }>
+  /** Forget which tools were found (after installing one). */
+  forgetTools(): Promise<void>
+  /** ruff check on a file's text; output is Ruff's JSON. */
+  ruffCheck(python: string | null, cwd: string, path: string, text: string): Promise<ToolResult>
+  /** ruff check --fix (optionally only some rules); output is the fixed text. */
+  ruffFix(python: string | null, cwd: string, path: string, text: string, select?: string[]): Promise<ToolResult>
+  /** Format with Ruff or Black (optionally only lines from..to, 1-based); output is the formatted text. */
+  formatText(python: string | null, cwd: string, path: string, text: string, tool: 'ruff' | 'black', lines?: { from: number; to: number }): Promise<ToolResult>
   /** Test files in the project and the tests in each. */
   discoverTests(root: string): Promise<TestFile[]>
   hasPytest(python: string): Promise<boolean>

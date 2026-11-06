@@ -166,6 +166,24 @@ export class SettingsView {
     const reopenRow = this.row('Reopen last project', 'At startup, open the last folder with its tabs and layout', reopen)
     reopenRow.querySelector('label')!.htmlFor = reopen.id
 
+    // Formatting and linting
+    const fmtRow = this.row('Formatter', 'For Format Document (Shift+Alt+F). Auto: Ruff if installed, else Black',
+      this.segmented('formatter', [['auto', 'Auto'], ['ruff', 'Ruff'], ['black', 'Black']], s.formatter, (v) => this.update({ formatter: v as Settings['formatter'] })))
+    const fos = document.createElement('input')
+    fos.type = 'checkbox'
+    fos.id = 'setting-format-on-save'
+    fos.checked = s.formatOnSave
+    fos.addEventListener('change', () => this.update({ formatOnSave: fos.checked }))
+    const fosRow = this.row('Format on save', 'Format Python files every time they are saved', fos)
+    fosRow.querySelector('label')!.htmlFor = fos.id
+    const lint = document.createElement('input')
+    lint.type = 'checkbox'
+    lint.id = 'setting-ruff'
+    lint.checked = s.lintWithRuff
+    lint.addEventListener('change', () => this.update({ lintWithRuff: lint.checked }))
+    const lintRow = this.row('Ruff warnings', "Show Ruff's lint warnings and quick fixes (when Ruff is installed)", lint)
+    lintRow.querySelector('label')!.htmlFor = lint.id
+
     const rows: HTMLElement[] = [header]
     if (this.projectNote) {
       const note = document.createElement('p')
@@ -173,7 +191,7 @@ export class SettingsView {
       note.textContent = this.projectNote
       rows.push(note)
     }
-    rows.push(fontRow, themeRow, tabRow, pyRow, shellRow, reopenRow)
+    rows.push(fontRow, themeRow, tabRow, pyRow, shellRow, fmtRow, fosRow, lintRow, reopenRow)
 
     if (this.links.length) {
       const linkRow = document.createElement('div')

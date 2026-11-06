@@ -45,6 +45,8 @@ export interface EditorOptions {
   onCtrlClick?: (pos: Position) => void
   /** Click in the line-number gutter (0-based line), e.g. to toggle a breakpoint. */
   onGutterClick?: (line: number) => void
+  /** The 💡 next to a line with quick fixes was clicked. */
+  onLightbulb?: (line: number) => void
   /** The editor got keyboard focus (with a split view: this side became active). */
   onFocus?: () => void
   /** The cursor or selection moved, or the text changed (e.g. to update the status bar). */
@@ -188,6 +190,7 @@ export class Editor {
       const line = this.lineAtY(e.clientY - this.content.getBoundingClientRect().top)
       if (line < 0 || line >= this.buffer.lineCount) return
       if ((e.target as HTMLElement).closest('.fold-toggle')) this.toggleFold(line)
+      else if ((e.target as HTMLElement).closest('.lightbulb')) this.opts.onLightbulb?.(line)
       else this.opts.onGutterClick?.(line)
     })
     this.root.addEventListener('scroll', () => {
@@ -1118,6 +1121,12 @@ export class Editor {
         toggle.title = folded ? 'Unfold (Ctrl+Shift+])' : 'Fold (Ctrl+Shift+[)'
         num.append(toggle)
       }
+      if (i === this.lightbulbLine) {
+        const bulb = el('span', 'lightbulb')
+        bulb.textContent = '💡'
+        bulb.title = 'Quick fixes (Ctrl+.)'
+        num.append(bulb)
+      }
       numberEls.push(num)
     }
     const offset = `translateY(${PAD_TOP + first * this.lineHeight}px)`
@@ -1153,6 +1162,15 @@ export class Editor {
   /** Debugger markers for the shown document: breakpoint lines, and the line it's paused on. */
   private breakpoints: ReadonlySet<number> = new Set()
   private execLine: number | null = null
+
+  /** Line showing a 💡 (it has quick fixes), or null. */
+  private lightbulbLine: number | null = null
+
+  setLightbulb(line: number | null): void {
+    if (line === this.lightbulbLine) return
+    this.lightbulbLine = line
+    if (this.hasDoc) this.renderLines()
+  }
 
   setLineMarkers(breakpoints: Iterable<number>, execLine: number | null): void {
     this.breakpoints = new Set(breakpoints)
