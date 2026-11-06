@@ -151,6 +151,25 @@ export function newApiBox(existingIds: readonly string[], name = 'API'): ApiBox 
   return box
 }
 
+/** The module a project-relative Python path is: `api/github.py` → `api.github`. */
+export function moduleOfPath(rel: string): string {
+  return rel.replace(/\\/g, '/').replace(/\.pyi?$/i, '').replace(/\/__init__$/, '').split('/').filter(Boolean).join('.')
+}
+
+/** Rename a box; until its code is written, the default file (and its place on the Graph) follow the name, and default CSV names always do. */
+export function renameBox(box: ApiBox, name: string): void {
+  const old = box.name
+  box.name = name
+  const oldFile = `api/${pyName(old)}.py`
+  if (box.hash === null && box.target.mode === 'new' && box.target.file === oldFile) {
+    box.target = { ...box.target, file: `api/${pyName(name)}.py` }
+    if (!box.attach || box.attach.module === moduleOfPath(oldFile)) box.attach = { module: moduleOfPath(box.target.file) }
+  }
+  for (const r of box.requests) {
+    if (r.output === `${pyName(old)}_${pyName(r.name)}.csv`) r.output = `${pyName(name)}_${pyName(r.name)}.csv`
+  }
+}
+
 // ---------- boxes.json ----------
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)

@@ -166,7 +166,7 @@ Forge is organised by **task**, picked in the top bar (or Ctrl+Alt+1…4):
 - **Code**: Files / Search / Outline / Git on the left, the editor, *Where you are* (a small map of
   what the current file imports and what imports it) and *In this file* (each function with what it
   reaches and who uses it) on the right, and the drawer (Terminal, Problems, Output, Tests…) below.
-- **Connect**: the project graph.
+- **Connect**: the project graph, the Toolbox and Box settings (see below).
 - **Debug**: the editor with the Debug panel; starting a debug session switches here and back
   afterwards (Settings → Debug task).
 - **Run**: the editor with Output and Tests.
@@ -174,6 +174,31 @@ Forge is organised by **task**, picked in the top bar (or Ctrl+Alt+1…4):
 Every part of the window is a panel. **View → Edit Layout** lets you drag a panel's tab onto any
 side or into another panel, close panels and add them back; each task keeps its own arrangement
 (View → Reset Layout of This Task to start over). Dividers can be dragged at any time.
+
+## Connect and the API box
+
+Connect an API to your project without writing the plumbing (and without AI):
+
+1. In the **Connect** task, drag **API** from the Toolbox onto a module on the Graph (its code goes
+   at the end of that file), or click it to put the code in a new file (`api/<name>.py`).
+2. In **Box settings**, fill in the URL (or a base URL and a path), query parameters, headers, a
+   JSON body for POST/PUT/PATCH, and auth. Secrets are saved to the project's `.env` (Forge offers to
+   add `.env` to `.gitignore`); `boxes.json` and the generated code only hold the variable's name.
+3. Press **⚡ Test call**. Forge sends the request once and lists the fields it got back: tick the
+   ones you want (nested fields fold out; pick which list holds the records if there are several).
+   The preview shows the first rows of the CSV.
+4. **Write code** shows the Python, then writes it: one function per request (e.g.
+   `github_users(output_path="github_users.csv")`) that calls the API with `urllib`, keeps the ticked
+   fields, writes a CSV with `csv.DictWriter` and returns the rows. `{placeholders}` in the URL and
+   query rows marked *argument* become parameters.
+
+After that, every change in the box rewrites its block (between `# forge:box …` and
+`# forge:end …`) straight away. If you edit the block by hand, the box stops and offers
+**Overwrite with box** (with a diff) or **Keep my edits**. A box can hold several requests, each
+writing its own CSV. Boxes are saved in `.forge/boxes.json`.
+
+Forge loads the project's `.env` into Run, Tests, Debug and new terminals, so the generated code
+finds its secrets (variables already set in your environment win).
 
 ## Layout
 - `src/main/`: Electron main process: file system, running Python (`python.ts`), terminals (`terminals.ts`), settings

@@ -112,7 +112,7 @@ Best started once a first graph view exists (5.1), so the layout is designed aro
 - [x] Consistent visual language for graphs, code, debugging and terminal (v0.42: Forge look: Molten / Plain themes, Smithy schematic shapes, bundled fonts)
 - [x] Forge task workspace: Code / Connect / Debug / Run, movable panels, Edit Layout mode (Part 2 of docs/superpowers/specs/2026-11-06-forge-design.md) (v0.43: Forge task workspace); Where you are and In this file panels
 - [ ] Live run feedback on the graph: while the program runs, sparks travel along the connections and the running boxes glow (Molten); a dot and a highlight in Plain. Needs runtime tracing of calls (see 5.2 / 5.5). Requested 2026-11-06
-- [ ] Connect task and the API box (Part 3 of the same spec; also covers parts of 5.3)
+- [x] Connect task and the API box (Part 3 of the same spec; also covers parts of 5.3) (v0.44: Toolbox, Box settings, test call, tick boxes, CSV code kept in sync; .env loaded into Run / Tests / Debug / terminals)
 
 ## Tier 5: Visual programming environment
 
@@ -146,20 +146,20 @@ Visualisations are interactive representations of real code, not a separate prog
 - [ ] Compare network activity between runs
 
 ### 5.3 Visual API integration
-- [ ] Drag from a file/function to an unconnected API
+- [x] Drag from a file/function to an unconnected API (v0.44: drag the API box from the Toolbox onto a module)
 - [ ] Generate client modules and imports
-- [ ] Generate `.env` keys
+- [x] Generate `.env` keys (v0.44: API box)
 - [ ] OpenAPI / Swagger support
   - [ ] Generate functions for individual endpoints
   - [ ] Generate request and response models
   - [ ] Generate authentication handling
-- [ ] Support APIs without specifications
-  - [ ] Generate base URL configuration
-  - [ ] Generate authentication configuration
-  - [ ] Generate an example request
-- [ ] Preview generated code before applying changes
-- [ ] Ensure visual changes generate normal, readable Python
-- [ ] When removing a visual connection, offer to remove associated code
+- [x] Support APIs without specifications (v0.44: API box)
+  - [x] Generate base URL configuration
+  - [x] Generate authentication configuration
+  - [x] Generate an example request (the generated function, and the test call)
+- [x] Preview generated code before applying changes (v0.44: API box)
+- [x] Ensure visual changes generate normal, readable Python (v0.44: standard library only)
+- [x] When removing a visual connection, offer to remove associated code (v0.44: API box)
 - [ ] Detect changes to generated code and update graph relationships
 - [ ] Later: AI-assisted API documentation interpretation and integration
 

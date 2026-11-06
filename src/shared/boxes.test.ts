@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { envName, functionNameFor, newApiBox, newRequest, normalizeBoxes, pyName, serializeBoxes } from './boxes'
+import { envName, functionNameFor, moduleOfPath, newApiBox, newRequest, normalizeBoxes, pyName, renameBox, serializeBoxes } from './boxes'
 
 describe('box names', () => {
   it('pyName makes valid Python names', () => {
@@ -41,6 +41,29 @@ describe('new boxes', () => {
     expect(b.id).not.toBe(a.id)
     const r = newRequest(a)
     expect(a.requests.map((x) => x.id)).not.toContain(r.id)
+  })
+})
+
+describe('renaming and moving', () => {
+  it('moduleOfPath', () => {
+    expect(moduleOfPath('api/github.py')).toBe('api.github')
+    expect(moduleOfPath('pkg\\sub\\__init__.py')).toBe('pkg.sub')
+    expect(moduleOfPath('main.py')).toBe('main')
+  })
+
+  it('renameBox moves default names along until the code is written', () => {
+    const box = newApiBox([], 'API')
+    box.attach = { module: 'api.api' }
+    renameBox(box, 'GitHub')
+    expect(box.name).toBe('GitHub')
+    expect(box.target.file).toBe('api/github.py')
+    expect(box.attach).toEqual({ module: 'api.github' })
+    expect(box.requests[0].output).toBe('github_data.csv')
+    box.requests[0].output = 'mine.csv'
+    box.hash = 'abc'
+    renameBox(box, 'Hub')
+    expect(box.target.file).toBe('api/github.py')
+    expect(box.requests[0].output).toBe('mine.csv')
   })
 })
 

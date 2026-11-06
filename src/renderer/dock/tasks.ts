@@ -14,6 +14,8 @@ import type { SavedLayouts } from '../../shared/layouts'
 /** Panels that live at the side (with Files); everything else goes in the drawer (with Terminal). */
 const SIDE_PANELS = new Set(['files', 'search', 'outline', 'git', 'where', 'infile'])
 const DRAWER_ANCHOR = 'terminal'
+/** Panels that belong with the Graph: revealing one goes to Connect. */
+const CONNECT_PANELS = new Set(['toolbox', 'box'])
 const SIDE_ANCHOR = 'files'
 
 type Schedule = (fn: () => void, ms: number) => () => void
@@ -75,6 +77,10 @@ export class TaskController {
     }
     if (panel === EDITOR) return this.switchTo('code')
     if (panel === 'graph') return this.switchTo('connect')
+    if (CONNECT_PANELS.has(panel) && this.task !== 'connect') {
+      this.switchTo('connect')
+      return this.reveal(panel)
+    }
     this.update(this.place(root, panel))
   }
 
@@ -85,6 +91,7 @@ export class TaskController {
       return side ? insertPanel(root, panel, side.id, 'center') : insertAtEdge(root, panel, 'left', 0.2)
     }
     if (panel === EDITOR || panel === 'graph') return insertAtEdge(root, panel, 'right', 0.6)
+    if (CONNECT_PANELS.has(panel)) return insertAtEdge(root, panel, 'right', 0.26)
     const drawer = findStack(root, DRAWER_ANCHOR)
     if (drawer) {
       const next = insertPanel(root, panel, drawer.id, 'center')

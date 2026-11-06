@@ -29,6 +29,9 @@ describe('default arrangements', () => {
     expect(placedPanels(defaultArrangement('connect'))).toContain('graph')
     expect(placedPanels(defaultArrangement('connect'))).not.toContain(EDITOR)
   })
+  it('connect has the Toolbox and Box settings beside the graph', () => {
+    expect(placedPanels(defaultArrangement('connect'))).toEqual(expect.arrayContaining(['graph', 'toolbox', 'box']))
+  })
 })
 
 describe('insertPanel', () => {

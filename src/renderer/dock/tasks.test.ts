@@ -62,6 +62,19 @@ describe('TaskController', () => {
     expect(tasks.current).toBe('connect')
   })
 
+  it('reveal: Toolbox and Box settings switch to Connect; placed beside the graph if moved away', () => {
+    const { tasks, view } = setup()
+    tasks.reveal('box')
+    expect(tasks.current).toBe('connect')
+    expect(tasks.isShown('box')).toBe(true)
+    tasks.closePanel('toolbox')
+    tasks.switchTo('code')
+    tasks.reveal('toolbox')
+    expect(tasks.current).toBe('connect')
+    expect(tasks.isShown('toolbox')).toBe(true)
+    expect(view.stackOf('toolbox')!.panels).not.toContain('terminal')
+  })
+
   it('reveal in Debug with the editor placed only activates it', () => {
     const { tasks } = setup()
     tasks.switchTo('debug')

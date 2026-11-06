@@ -52,6 +52,11 @@ import { buildGraph, type ProjectGraph } from '../shared/projectGraph'
 import { WhereView } from './panels/whereView'
 import { InFileView } from './panels/inFileView'
 import { moduleForPath } from './panels/whereModel'
+import { BoxController, type BoxFiles } from './boxes/controller'
+import { BoxSettings } from './boxes/boxSettings'
+import { Toolbox } from './boxes/toolbox'
+import { lineDiff as codeLineDiff, showCodeDialog } from './boxes/codeDialog'
+import { serializeBoxes } from '../shared/boxes'
 import { HistoryView } from './historyView'
 import { conflictNear, findConflicts, resolveConflict, type Conflict, type Resolution } from '../shared/conflicts'
 import { timeAgo, type BlameLine } from '../shared/history'
@@ -1487,6 +1492,7 @@ async function openFolderPath(folder: string): Promise<void> {
     exceptionFilters = ['uncaught']
     debugView.setWatches([])
     await loadRunFile(folder)
+    await loadBoxes(folder)
     await tree.setRoot(folder)
     graphView.reset()
     projectGraph = null
@@ -2201,8 +2207,125 @@ function refreshFilePanels(): void {
   inFileView.set(module ? projectGraph : null, module, message)
 }
 
+// ---------- Connect: boxes (.forge/boxes.json) ----------
+
+/** Boxes whose test call is running (their wire is live on the Graph). */
+const liveBoxes = new Set<string>()
+
+/** The absolute path for a path a box writes to, which must stay inside the project. */
+function boxPath(rel: string): string {
+  if (!rootFolder) throw new Error('Open a folder first.')
+  const clean = rel.replace(/\\/g, '/')
+  if (/^([a-z]:)?\//i.test(clean) || clean.split('/').includes('..')) throw new Error(`"${rel}" must be a path inside the project (like api/github.py).`)
+  return projectPath(clean)
+}
+
+/** One edit that turns `from` into `to` (only the part that changed). */
+function textChange(from: string, to: string): TextEdit {
+  let start = 0
+  while (start < from.length && start < to.length && from[start] === to[start]) start++
+  let end = 0
+  while (end < from.length - start && end < to.length - start && from[from.length - 1 - end] === to[to.length - 1 - end]) end++
+  const pos = (offset: number) => {
+    const before = from.slice(0, offset)
+    const line = before.split('\n').length - 1
+    return { line, col: offset - (before.lastIndexOf('\n') + 1) }
+  }
+  return { start: pos(start), end: pos(from.length - end), text: to.slice(start, to.length - end) }
+}
+
+const boxFiles: BoxFiles = {
+  read: async (rel) => {
+    const path = boxPath(rel)
+    const open = workspace.find(path)
+    if (open) return open.getText()
+    const res = await window.api.readTextFile(path).catch(() => null)
+    return res && res.kind === 'text' ? res.text : null
+  },
+  write: async (rel, text) => {
+    const path = boxPath(rel)
+    const open = workspace.find(path)
+    if (open) {
+      // In the editor: one undoable change; saved unless it had unsaved edits of yours.
+      const hadEdits = open.dirty
+      applyEditsToDoc(open, [textChange(open.buffer.getLines().join('\n'), text.replace(/\r\n/g, '\n'))])
+      workspace.notifyChanged()
+      if (hadEdits) statusNote(`${rel} has unsaved edits: the box's change is in the editor, not saved yet`)
+      else {
+        await workspace.save(open)
+        languages.didSave(open)
+      }
+    } else {
+      const res = await window.api.readTextFile(path).catch(() => null)
+      await window.api.writeTextFile(path, text, res && res.kind === 'text' ? res.encoding : 'utf8')
+      languages.filesChangedOnDisk([path])
+      void tree.refreshAll()
+    }
+    void refreshGit()
+    projectChangedSoon()
+  },
+  saveBoxes: async (file) => {
+    if (rootFolder) await window.api.writeProjectFile(rootFolder, 'boxes.json', file)
+  },
+  note: (message) => statusNote(message)
+}
+const boxes = new BoxController(boxFiles)
+
+/** Add an API box: on a module (its code goes at the end of that file), or in a new file. */
+function addBox(module: string | null): void {
+  if (!rootFolder) {
+    alert('Open a folder first.')
+    return
+  }
+  const m = module ? projectGraph?.modules.find((x) => x.id === module) : undefined
+  if (m) boxes.add({ module: m.id }, { file: m.path, mode: 'append' })
+  else boxes.add(null)
+  tasks.reveal('box')
+}
+
+const toolbox = new Toolbox({ add: () => addBox(null) })
+const boxSettings = new BoxSettings(boxes, {
+  // The last response stays in the window: only the box's settings are sent.
+  testCall: (box, requestId) => window.api.apiTestCall(rootFolder ?? '', serializeBoxes([box]).boxes[0], requestId),
+  envNames: () => (rootFolder ? window.api.envNames(rootFolder) : Promise.resolve([])),
+  setSecret: (name, value) => (rootFolder ? window.api.setEnvValue(rootFolder, name, value) : Promise.reject(new Error('Open a folder first.'))),
+  envIgnored: () => (rootFolder ? window.api.envIgnored(rootFolder) : Promise.resolve(true)),
+  ignoreEnv: () => (rootFolder ? window.api.addEnvToGitignore(rootFolder).then(() => void refreshGit()) : Promise.resolve()),
+  confirmCode: (title, code) => showCodeDialog({ title, code, ok: 'Write code' }),
+  showDiff: (current, next) => showCodeDialog({ title: 'Replace your edits with the box\'s code? (- yours, + the box\'s)', diff: codeLineDiff(current, next), ok: 'Overwrite' }),
+  confirm: (message) => confirm(message),
+  alert: (message) => alert(message),
+  liveWire: (id, on) => {
+    if (on) liveBoxes.add(id)
+    else liveBoxes.delete(id)
+    graphView.redrawBoxes()
+  }
+})
+boxes.onChange(() => graphView.redrawBoxes())
+dock.register({ id: 'toolbox', title: 'Toolbox', body: toolbox.body })
+dock.register({ id: 'box', title: 'Box settings', body: boxSettings.body, onShow: () => void boxSettings.refreshEnv() })
+
+/** The project's boxes, from .forge/boxes.json. */
+async function loadBoxes(folder: string): Promise<void> {
+  const res = await window.api.readProjectFile(folder, 'boxes.json').catch(() => null)
+  if (res?.error) statusNote(`.forge/boxes.json couldn't be read (${res.error}): its boxes aren't shown`)
+  liveBoxes.clear()
+  boxes.load(res?.exists && !res.error ? res.value : null)
+  void boxSettings.refreshEnv()
+}
+
 const graphView = new GraphView({
   scan: () => scanProjectGraph(),
+  boxes: {
+    list: () => boxes.boxes,
+    selected: () => boxes.selected,
+    select: (id) => {
+      boxes.select(id)
+      tasks.reveal('box')
+    },
+    drop: (module) => addBox(module),
+    live: () => liveBoxes
+  },
   openModule: (rel, line) => {
     if (!rootFolder) return
     const sep = rootFolder.includes('\\') ? '\\' : '/'
@@ -2217,6 +2340,14 @@ commands.register({
   run: () => {
     diffView.hide()
     tasks.reveal('graph')
+  }
+})
+commands.register({
+  id: 'connect.addApiBox', title: 'Add API Box (Connect)', when: () => rootFolder !== null,
+  run: () => {
+    diffView.hide()
+    tasks.reveal('graph')
+    addBox(null)
   }
 })
 

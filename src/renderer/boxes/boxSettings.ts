@@ -4,7 +4,7 @@
  * its code has been written, to the code. Secrets typed here go to the
  * project's .env and nowhere else.
  */
-import { envName, functionNameFor, HTTP_METHODS, newRequest, type ApiBox, type ApiRequest, type BoxAuth, type FieldNode, type HttpMethod, type KeyValue } from '../../shared/boxes'
+import { envName, functionNameFor, HTTP_METHODS, moduleOfPath, newRequest, renameBox, type ApiBox, type ApiRequest, type BoxAuth, type FieldNode, type HttpMethod, type KeyValue } from '../../shared/boxes'
 import { authEnv, urlArgs } from '../../shared/boxCode'
 import { fieldKey, pickRecords, rowsFor } from '../../shared/apiFields'
 import type { TestCallResult } from '../../shared/api'
@@ -154,7 +154,7 @@ export class BoxSettings {
 
   private header(box: ApiBox): HTMLElement {
     const h = el('div', 'box-header')
-    const name = this.input('box.name', box.name, (v, b) => (b.name = v.trim() || b.name), { wide: true })
+    const name = this.input('box.name', box.name, (v, b) => renameBox(b, v.trim() || b.name), { wide: true })
     name.classList.add('box-name')
     h.append(name, this.button('Remove box', 'remove', () => void this.removeBox(box), 'box-button quiet'))
     return h
@@ -201,6 +201,7 @@ export class BoxSettings {
       b.detached = false
     }
     b.target = target
+    b.attach = { module: moduleOfPath(target.file) }
   }
 
   private secretRow(name: string): HTMLElement {

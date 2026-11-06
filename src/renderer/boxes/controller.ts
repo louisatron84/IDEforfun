@@ -4,7 +4,7 @@
  * up to date: box → code only. A block edited by hand is left alone until
  * the user chooses to overwrite it or keep their edits.
  */
-import { newApiBox, normalizeBoxes, serializeBoxes, type ApiBox, type BoxesFile } from '../../shared/boxes'
+import { moduleOfPath, newApiBox, normalizeBoxes, serializeBoxes, type ApiBox, type BoxesFile } from '../../shared/boxes'
 import { blockHash, generateBlock } from '../../shared/boxCode'
 import { blockState, findBlock, insertBlock, removeBlock, replaceBlock, withEol } from '../../shared/boxSync'
 import { defaultTicks, fieldTree, pickRecords, recordLists, type RecordList } from '../../shared/apiFields'
@@ -71,8 +71,9 @@ export class BoxController {
     let name = 'API'
     for (let n = 2; names.has(name); n++) name = `API ${n}`
     const box = newApiBox(this.list.map((b) => b.id), name)
-    box.attach = attach
     if (target) box.target = target
+    // A box in a new file sits beside that file's module once it exists.
+    box.attach = attach ?? { module: moduleOfPath(box.target.file) }
     this.list.push(box)
     this.selected = box.id
     void this.save()

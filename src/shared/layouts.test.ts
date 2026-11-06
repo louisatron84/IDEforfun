@@ -40,6 +40,7 @@ describe('normalizeLayouts', () => {
   it('a Code layout without the editor is dropped (the default is used instead)', () => {
     expect(normalizeLayouts({ code: st('s1', ['files']) })).toEqual({})
     expect(normalizeLayouts({ connect: st('s1', ['graph']) }).connect).toEqual(st('s1', ['graph']))
+    expect(normalizeLayouts({ connect: st('s1', ['graph', 'toolbox', 'box']) }).connect).toEqual(st('s1', ['graph', 'toolbox', 'box']))
   })
 
   it('a split with no direction or a stack with no panels is unusable', () => {

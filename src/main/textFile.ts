@@ -3,7 +3,8 @@
  * order marks, else UTF-8 if valid, else Western/Latin-1), spots binary
  * files, and refuses files too big to open.
  */
-import { readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import { HUGE_FILE_BYTES, MAX_FILE_BYTES, type Encoding, type TextFileResult } from '../shared/encoding'
 
 /** NUL bytes near the start mean it's almost certainly not a text file. */
@@ -90,5 +91,6 @@ export async function readTextFile(
 }
 
 export async function writeTextFile(path: string, text: string, encoding: Encoding): Promise<void> {
+  await mkdir(dirname(path), { recursive: true })
   await writeFile(path, encode(text, encoding))
 }
