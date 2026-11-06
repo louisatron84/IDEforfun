@@ -8,8 +8,12 @@ describe('normalizeSettings', () => {
     expect(normalizeSettings({})).toEqual(DEFAULT_SETTINGS)
   })
   it('keeps valid values', () => {
-    const s = { fontSize: 18, theme: 'plain', tabSize: 2, pythonPath: 'C:\\Py\\python.exe', shell: 'gitbash', reopenLastProject: false, showWelcome: false, formatter: 'black', formatOnSave: true, lintWithRuff: false, debugInTerminal: false, switchToDebugTask: false, showRunsOnGraph: false }
+    const s = { fontSize: 18, theme: 'plain', tabSize: 2, pythonPath: 'C:\\Py\\python.exe', shell: 'gitbash', reopenLastProject: false, showWelcome: false, formatter: 'black', formatOnSave: true, lintWithRuff: false, debugInTerminal: false, switchToDebugTask: false, showRunsOnGraph: false, density: 'compact', animations: false }
     expect(normalizeSettings(s)).toEqual(s)
+  })
+  it('density: one of three, normal by default', () => {
+    expect(normalizeSettings({ density: 'tiny' }).density).toBe('normal')
+    expect(normalizeSettings({ density: 'roomy' }).density).toBe('roomy')
   })
   it('only accepts plain shell ids', () => {
     expect(normalizeSettings({ shell: 'rm -rf /' }).shell).toBe('')

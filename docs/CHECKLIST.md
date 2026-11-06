@@ -106,8 +106,8 @@ Best started once a first graph view exists (5.1), so the layout is designed aro
 - [ ] Dockable panels and floating windows (v0.43: docking done, drag tabs to any side or into another panel; floating windows not yet)
 - [x] Multiple workspace layouts (coding, debugging and visualisation) (v0.43: Forge task workspace)
 - [ ] Context-aware interface that surfaces relevant tools for the current task
-- [ ] Customisable information density
-- [ ] Animated transitions between workspace states
+- [x] Customisable information density (v0.46: Settings → Density: Compact, Normal or Roomy panels and bars (the editor and terminal follow the font size))
+- [x] Animated transitions between workspace states (v0.46: switching task, and moving / adding / closing panels (Settings → Animations; off with reduced motion))
 - [ ] Visual navigation through projects
 - [x] Consistent visual language for graphs, code, debugging and terminal (v0.42: Forge look: Molten / Plain themes, Smithy schematic shapes, bundled fonts)
 - [x] Forge task workspace: Code / Connect / Debug / Run, movable panels, Edit Layout mode (Part 2 of docs/superpowers/specs/2026-11-06-forge-design.md) (v0.43: Forge task workspace); Where you are and In this file panels

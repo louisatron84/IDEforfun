@@ -27,6 +27,10 @@ export interface Settings {
   switchToDebugTask: boolean
   /** While a program runs with the Graph in view, show where it's at. */
   showRunsOnGraph: boolean
+  /** How much fits in the panels: smaller and tighter, or larger and roomier (the editor and terminal follow the font size). */
+  density: 'compact' | 'normal' | 'roomy'
+  /** Animate switching tasks and moving panels (always off when the system asks for reduced motion). */
+  animations: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -42,7 +46,9 @@ export const DEFAULT_SETTINGS: Settings = {
   lintWithRuff: true,
   debugInTerminal: true,
   switchToDebugTask: true,
-  showRunsOnGraph: true
+  showRunsOnGraph: true,
+  density: 'normal',
+  animations: true
 }
 
 export const FONT_SIZE_MIN = 10
@@ -70,6 +76,8 @@ export function normalizeSettings(raw: unknown): Settings {
   if (typeof r.debugInTerminal === 'boolean') s.debugInTerminal = r.debugInTerminal
   if (typeof r.switchToDebugTask === 'boolean') s.switchToDebugTask = r.switchToDebugTask
   if (typeof r.showRunsOnGraph === 'boolean') s.showRunsOnGraph = r.showRunsOnGraph
+  if (r.density === 'compact' || r.density === 'normal' || r.density === 'roomy') s.density = r.density
+  if (typeof r.animations === 'boolean') s.animations = r.animations
   return s
 }
 

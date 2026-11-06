@@ -48,8 +48,10 @@ export class TaskController {
   }
 
   switchTo(task: TaskId): void {
+    const changed = task !== this.task
     this.task = task
     this.view.render(this.root)
+    if (changed) this.view.animate?.('task')
     this.opts.taskChanged(task)
   }
 
@@ -125,19 +127,19 @@ export class TaskController {
   }
 
   resetCurrent(): void {
-    this.update(defaultArrangement(this.task))
+    this.update(defaultArrangement(this.task), true)
   }
 
   closePanel(id: string): void {
     if (id === EDITOR) return
     const next = removePanel(this.root, id)
-    if (next) this.update(next)
+    if (next) this.update(next, true)
   }
 
   /** Put a closed panel back (Edit Layout's "Add panel"), without switching task. */
   addPanel(id: string): void {
     if (findStack(this.root, id)) return this.reveal(id)
-    this.update(this.place(this.root, id))
+    this.update(this.place(this.root, id), true)
   }
 
   /** Panels the current task doesn't place. */
@@ -149,7 +151,7 @@ export class TaskController {
   /** Drag and drop in Edit Layout mode. */
   drop(panel: string, targetStackId: string, zone: Zone): void {
     const next = movePanel(this.root, panel, targetStackId, zone)
-    if (next !== this.root) this.update(next)
+    if (next !== this.root) this.update(next, true)
   }
 
   beginDebug(enabled: boolean): void {
@@ -164,9 +166,10 @@ export class TaskController {
     if (back && this.task === 'debug') this.switchTo(back)
   }
 
-  private update(root: DockNode): void {
+  private update(root: DockNode, animate = false): void {
     this.arrangements[this.task] = root
     this.view.render(root)
+    if (animate) this.view.animate?.('layout')
     this.saveSoon()
   }
 

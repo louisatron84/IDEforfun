@@ -58,6 +58,7 @@ export class DockView {
     this.panels.set(def.id, { ...def })
     def.body.hidden = true
     def.body.classList.add('dock-panel-body')
+    def.body.dataset.panel = def.id
     this.store.append(def.body)
     if (def.actions) {
       def.actions.hidden = true
@@ -97,6 +98,15 @@ export class DockView {
   }
 
   /** Draw an arrangement, moving panel elements into place. */
+  /** A short entrance animation for what was just drawn: a task switch, or a change to the layout (CSS decides; off with reduced motion). */
+  animate(kind: 'task' | 'layout'): void {
+    const cls = `dock-anim-${kind}`
+    this.rootEl.classList.remove('dock-anim-task', 'dock-anim-layout')
+    void this.rootEl.offsetWidth // restart the animation
+    this.rootEl.classList.add(cls)
+    window.setTimeout(() => this.rootEl.classList.remove(cls), 400)
+  }
+
   render(root: DockNode): void {
     this.current = root
     const before = this.visible

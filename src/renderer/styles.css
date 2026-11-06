@@ -1835,3 +1835,22 @@ button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 .pipeline-menu-doc { color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .graph-io { font-family: var(--font-code); font-size: 11px; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .graph-io-more { font-size: 11px; color: var(--fg-muted); }
+
+/* ---------- Information density (Settings → Density): the panels and bars, not the editor or terminal ---------- */
+:root[data-density="compact"] .dock-panel-body:not([data-panel="editor"]):not([data-panel="terminal"]),
+:root[data-density="compact"] .dock-tabs,
+:root[data-density="compact"] #toolbar,
+:root[data-density="compact"] #statusbar { zoom: 0.88; }
+:root[data-density="roomy"] .dock-panel-body:not([data-panel="editor"]):not([data-panel="terminal"]),
+:root[data-density="roomy"] .dock-tabs,
+:root[data-density="roomy"] #toolbar,
+:root[data-density="roomy"] #statusbar { zoom: 1.12; }
+
+/* ---------- Animated transitions between workspace states ---------- */
+:root[data-animations="on"] .dock-anim-task { animation: dock-task-in 0.22s ease-out; }
+:root[data-animations="on"] .dock-anim-layout .dock-stack { animation: dock-layout-in 0.18s ease-out; }
+@keyframes dock-task-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes dock-layout-in { from { opacity: 0.4; transform: scale(0.985); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .dock-anim-task, .dock-anim-layout .dock-stack { animation: none !important; }
+}

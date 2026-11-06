@@ -1404,6 +1404,8 @@ function applySettings(s: Settings, restartLsp = true): void {
   root.style.setProperty('--line-height', `${Math.round(s.fontSize * 1.45)}px`)
   root.style.setProperty('--tab-size', String(s.tabSize))
   root.dataset.theme = s.theme
+  root.dataset.density = s.density
+  root.dataset.animations = s.animations ? 'on' : 'off'
   for (const ed of editors) ed.refreshLayout(s.tabSize)
   terminal.applyTheme(s.fontSize)
   codeTools.sync(workspace.docs) // Ruff warnings on or off (only called once everything is set up)
