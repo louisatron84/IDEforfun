@@ -187,3 +187,15 @@ export function zoneAt(rect: { left: number; top: number; width: number; height:
   const d: [Zone, number][] = [['left', fx], ['right', 1 - fx], ['top', fy], ['bottom', 1 - fy]]
   return d.reduce((a, b) => (b[1] < a[1] ? b : a))[0]
 }
+
+/** Add a panel in a new stack along one side of the whole layout, taking `size` of it. */
+export function insertAtEdge(root: DockNode, panel: string, zone: Exclude<Zone, 'center'>, size: number): DockNode {
+  const base = (findStack(root, panel) ? removePanel(root, panel) : root) ?? root
+  const fresh: StackNode = { kind: 'stack', id: nextId(base), panels: [panel], active: panel }
+  const before = zone === 'left' || zone === 'top'
+  const s = Math.min(0.9, Math.max(0.1, size))
+  return {
+    kind: 'split', id: `n${Number(fresh.id.slice(1)) + 1}`, dir: zone === 'left' || zone === 'right' ? 'row' : 'column',
+    children: before ? [fresh, base] : [base, fresh], sizes: before ? [s, 1 - s] : [1 - s, s]
+  }
+}

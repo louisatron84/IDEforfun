@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  EDITOR, PANEL_IDS, TASKS, activate, defaultArrangement, findStack, insertPanel, movePanel, placedPanels, removePanel, resize, setCollapsed, zoneAt,
+  EDITOR, PANEL_IDS, TASKS, activate, defaultArrangement, findStack, insertAtEdge, insertPanel, movePanel, placedPanels, removePanel, resize, setCollapsed, zoneAt,
   type DockNode, type SplitNode, type StackNode
 } from './model'
 
@@ -116,5 +116,16 @@ describe('zoneAt', () => {
     expect(zoneAt(rect, 95, 40)).toBe('right')
     expect(zoneAt(rect, 50, 3)).toBe('top')
     expect(zoneAt(rect, 50, 97)).toBe('bottom')
+  })
+})
+
+describe('insertAtEdge', () => {
+  it('wraps the whole layout with a new stack on one side, at the given size', () => {
+    const r = insertAtEdge(tree(), 'terminal2', 'bottom', 0.3) as SplitNode
+    expect(r).toMatchObject({ kind: 'split', dir: 'column', sizes: [0.7, 0.3] })
+    expect((r.children[1] as StackNode).panels).toEqual(['terminal2'])
+    const l = insertAtEdge(stack('s1', ['editor']), 'files', 'left', 0.2) as SplitNode
+    expect(l.sizes).toEqual([0.2, 0.8])
+    expect((l.children[0] as StackNode).panels).toEqual(['files'])
   })
 })
