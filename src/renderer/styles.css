@@ -1886,3 +1886,14 @@ button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 .pm-file.dim { opacity: 0.25; }
 .pm-name { font-family: var(--font-code); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .pm-lines { color: var(--fg-muted); white-space: nowrap; }
+
+/* ---------- Floating windows: a panel in its own OS window ---------- */
+.dock-float { height: 24px; min-width: 24px; background: none; border: 0; color: var(--fg-muted); border-radius: var(--radius); cursor: pointer; font: inherit; }
+.dock-float:hover { background: var(--bg-hover); color: var(--fg); }
+body.floating-window { display: flex; flex-direction: column; height: 100vh; margin: 0; overflow: hidden; }
+.floating-bar { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-bottom: 1px solid var(--border); background: var(--bg-panel); flex: none; }
+.floating-title { font-weight: 600; flex: 1; }
+.floating-back { background: var(--raised); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius); padding: 2px 8px; font: inherit; cursor: pointer; }
+.floating-back:hover { background: var(--bg-hover); }
+.floating-body { position: relative; flex: 1; min-height: 0; }
+.floating-body > .dock-panel-body { position: absolute; inset: 0; overflow: auto; }

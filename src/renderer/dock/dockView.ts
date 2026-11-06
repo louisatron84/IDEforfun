@@ -24,6 +24,8 @@ export interface DockHooks {
   changed(root: DockNode): void
   closePanel(id: string): void
   drop(panel: string, targetStackId: string, zone: Zone): void
+  /** Pop a panel out into its own window (the ⧉ button). */
+  floatPanel?(id: string): void
 }
 
 const el = (cls: string): HTMLDivElement => {
@@ -41,6 +43,8 @@ export class DockView {
   /** Last scroll position of everything scrolled inside the dock. */
   private readonly scrolls = new Map<Element, { top: number; left: number }>()
   private _editing = false
+  /** Panels in their own window: id → bring that window to the front. Their elements are left alone. */
+  private readonly floating = new Map<string, () => void>()
 
   constructor(private readonly container: HTMLElement, private readonly hooks: DockHooks) {
     this.rootEl = el('dock-root')
@@ -94,7 +98,40 @@ export class DockView {
 
   /** Placed, active in its stack, and the stack isn't collapsed. */
   isShown(id: string): boolean {
-    return this.visible.has(id)
+    return this.visible.has(id) || this.floating.has(id)
+  }
+
+  /** A panel's element and buttons, to move into a floating window (null if unknown). */
+  panelParts(id: string): { title: string; body: HTMLElement; actions?: HTMLElement; onShow?: () => void } | null {
+    const p = this.panels.get(id)
+    return p ? { title: p.title, body: p.body, actions: p.actions, onShow: p.onShow } : null
+  }
+
+  /** The panel now lives in its own window (`focus` brings it forward), or (null) is back in the dock. */
+  setFloating(id: string, focus: (() => void) | null): void {
+    const p = this.panels.get(id)
+    if (focus) {
+      this.floating.set(id, focus)
+      return
+    }
+    this.floating.delete(id)
+    if (p) {
+      // Back from its window: into the store until it's placed again.
+      p.body.hidden = true
+      this.store.append(document.adoptNode(p.body))
+      if (p.actions) {
+        p.actions.hidden = true
+        this.store.append(document.adoptNode(p.actions))
+      }
+    }
+  }
+
+  isFloating(id: string): boolean {
+    return this.floating.has(id)
+  }
+
+  focusFloating(id: string): void {
+    this.floating.get(id)?.()
   }
 
   /** Draw an arrangement, moving panel elements into place. */
@@ -113,6 +150,7 @@ export class DockView {
     this.visible = new Set()
     // Everything goes back to the store first; what's placed is moved out again below.
     for (const p of this.panels.values()) {
+      if (this.floating.has(p.id)) continue
       p.body.hidden = true
       p.tab = undefined
       this.store.append(p.body)
@@ -159,7 +197,8 @@ export class DockView {
     const body = el('dock-body')
     for (const id of n.panels) {
       const p = this.panels.get(id)
-      if (!p) continue
+      // A panel in its own window isn't drawn here.
+      if (!p || this.floating.has(id)) continue
       const tab = document.createElement('button')
       tab.className = `dock-tab${id === n.active ? ' active' : ''}`
       tab.dataset.panel = id
@@ -190,6 +229,14 @@ export class DockView {
         p.actions.hidden = id !== n.active
       }
       if (on) this.visible.add(id)
+    }
+    if (this.hooks.floatPanel && n.active !== 'editor' && n.active !== 'terminal' && !n.collapsed && this.panels.has(n.active)) {
+      const pop = document.createElement('button')
+      pop.className = 'dock-float'
+      pop.textContent = '⧉'
+      pop.title = `Open ${this.panels.get(n.active)!.title} in its own window`
+      pop.addEventListener('click', () => this.hooks.floatPanel!(n.active))
+      actions.append(pop)
     }
     strip.append(tabs, actions)
     body.hidden = !!n.collapsed

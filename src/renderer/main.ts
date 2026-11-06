@@ -72,6 +72,7 @@ import { builtinBlocks, projectBlocks } from '../shared/blocks'
 import { moduleOfPath } from '../shared/boxes'
 import { suggestTools } from '../shared/suggest'
 import { showProjectMap } from './projectMap'
+import { FloatingPanels } from './dock/floating'
 import { envKeys } from '../shared/openapi'
 import { addImport, generateClient, generatedState, importLine } from '../shared/openapiCode'
 import type { TraceTick } from './graph/liveRun'
@@ -295,8 +296,16 @@ let tasks: TaskController
 const dock = new DockView($('dock'), {
   changed: (root) => tasks.changed(root),
   closePanel: (id) => { tasks.closePanel(id); editBar.fill() },
-  drop: (p, s, z) => tasks.drop(p, s, z)
+  drop: (p, s, z) => tasks.drop(p, s, z),
+  floatPanel: (id) => floatingPanels.float(id)
 })
+/** Panels in their own OS windows (the ⧉ button on a panel's tab strip). */
+const floatingPanels = new FloatingPanels(dock, {
+  removeFromLayout: (id) => tasks.closePanel(id),
+  placeBack: (id) => tasks.addPanel(id),
+  note: (message) => statusNote(message)
+})
+window.addEventListener('beforeunload', () => floatingPanels.closeAll())
 tasks = new TaskController(dock, {
   saved: {},
   save: (layouts) => void window.api.saveLayouts(layouts).catch(() => {}),
@@ -1409,6 +1418,7 @@ function applySettings(s: Settings, restartLsp = true): void {
   root.dataset.theme = s.theme
   root.dataset.density = s.density
   root.dataset.animations = s.animations ? 'on' : 'off'
+  floatingPanels.syncLook()
   for (const ed of editors) ed.refreshLayout(s.tabSize)
   terminal.applyTheme(s.fontSize)
   codeTools.sync(workspace.docs) // Ruff warnings on or off (only called once everything is set up)

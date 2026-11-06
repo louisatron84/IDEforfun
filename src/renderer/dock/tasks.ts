@@ -69,6 +69,8 @@ export class TaskController {
 
   /** Make a panel visible in the current task (placing it if needed). */
   reveal(panel: string): void {
+    // In its own window: bring that forward.
+    if (this.view.isFloating?.(panel)) return this.view.focusFloating?.(panel)
     const root = this.root
     const stack = findStack(root, panel)
     if (stack) {

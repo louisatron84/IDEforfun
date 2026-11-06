@@ -26,4 +26,5 @@ Patch CRLF files with Python scripts written via the Write tool (Bash heredocs e
 - 5.5 debug on graph: 3811058; recursion + replay: 5b0d85a
 - 5.3 OpenAPI: 8b44c10
 - 5.4 data flow + pipelines: ec10d63
-- Tier 3 semantic highlighting (basedpyright): next commit
+- Tier 3 semantic highlighting (basedpyright): e2851d9
+- Tier 4: density + animations d53827d, suggestions 22a082d, project map eccb2f5, floating windows: next commit

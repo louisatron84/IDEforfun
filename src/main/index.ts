@@ -63,6 +63,27 @@ function createWindow(): void {
     }
   })
 
+  // Only Forge's own floating panels open windows (blank, filled by the window itself);
+  // web links go to the browser; anything else is refused.
+  win.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    if (url === 'about:blank' && /^forge-float-[\w-]{1,40}$/.test(frameName)) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 640, height: 460, title: 'Forge', backgroundColor: '#1e1f22', autoHideMenuBar: true,
+          webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true }
+        }
+      }
+    }
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
+    return { action: 'deny' }
+  })
+  win.webContents.on('did-create-window', (child) => child.setMenu(null))
+  // Floating windows close with the main one.
+  win.on('closed', () => {
+    for (const w of BrowserWindow.getAllWindows()) if (w !== win && !w.isDestroyed()) w.destroy()
+  })
+
   // A reload or closed window abandons its terminals: don't leave shells running.
   win.webContents.on('did-start-loading', () => {
     testRunner.stop()

@@ -103,7 +103,7 @@ Best started once a first graph view exists (5.1), so the layout is designed aro
 - [x] Design a distinctive workspace layout (v0.43: Forge task workspace)
 - [x] Rethink how files, terminals, graphs and debugging coexist (v0.43: tasks Code / Connect / Debug / Run, each with its own arrangement)
 - [x] Customisable workspace panels (v0.43: Edit Layout mode: move, close, add back, reset)
-- [ ] Dockable panels and floating windows (v0.43: docking done, drag tabs to any side or into another panel; floating windows not yet)
+- [x] Dockable panels and floating windows (v0.43: docking done, drag tabs to any side or into another panel; v0.46: ⧉ on a panel opens it in its own OS window, Back to the dock or closing the window returns it; the editor and terminal stay docked)
 - [x] Multiple workspace layouts (coding, debugging and visualisation) (v0.43: Forge task workspace)
 - [x] Context-aware interface that surfaces relevant tools for the current task (v0.46: suggestions in the top bar from what you're doing: Network for a file calling web APIs, Pipeline for tables, Tests, Debug it after a failed run, Problems, Git)
 - [x] Customisable information density (v0.46: Settings → Density: Compact, Normal or Roomy panels and bars (the editor and terminal follow the font size))
