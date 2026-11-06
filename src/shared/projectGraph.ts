@@ -29,6 +29,12 @@ export interface RawDef {
 export interface RawRoute { methods: string[]; path: string; func: string; line: number; framework: string; owner: string | null }
 export interface RawHttp { library: string; method: string; url: string | null; line: number; func: string | null }
 export interface RawEnv { name: string; line: number; func: string | null; default: boolean }
+/**
+ * Statements that can never run. `reason`: what stops the code before them
+ * (return, raise, break, continue, 'branches' when every branch of an
+ * if/else or try stops, 'constant' for `if False:` and the like).
+ */
+export interface RawUnreachable { line: number; endLine: number; func: string | null; reason: 'return' | 'raise' | 'break' | 'continue' | 'branches' | 'constant' }
 export interface RawFile {
   /** Relative to the project, with / separators. */
   path: string
@@ -39,6 +45,8 @@ export interface RawFile {
   routes: RawRoute[]
   http: RawHttp[]
   env: RawEnv[]
+  /** Missing from scans by older versions of the script. */
+  unreachable?: RawUnreachable[]
   lines: number
   error?: string
   all?: string[]
@@ -108,11 +116,27 @@ export interface ProjectGraph {
   cycles: string[][]
   /** Functions, methods and classes nothing in the project seems to use. */
   unused: SymbolNode[]
+  /** Code that can never run, by module then line. */
+  unreachable: (RawUnreachable & { module: string })[]
   routes: (RawRoute & { module: string })[]
   http: HttpUse[]
   env: { name: string; uses: { module: string; line: number; func: string | null; default: boolean }[] }[]
   errors: { module: string; path: string; error: string }[]
   truncated: boolean
+}
+
+/** "lines 13–14, after a return": where some unreachable code is and why it can't run. */
+export function describeUnreachable(u: RawUnreachable): string {
+  const where = u.line === u.endLine ? `line ${u.line}` : `lines ${u.line}–${u.endLine}`
+  const why = {
+    return: 'after a return',
+    raise: 'after a raise',
+    break: 'after a break',
+    continue: 'after a continue',
+    branches: 'every branch above it stops',
+    constant: 'its condition is always false'
+  }[u.reason]
+  return `${where}, ${why}`
 }
 
 export const isTestPath = (path: string): boolean =>
@@ -305,6 +329,7 @@ export function buildGraph(scan: RawScan): ProjectGraph {
     calls,
     cycles,
     unused,
+    unreachable: scan.files.flatMap((f) => (f.unreachable ?? []).map((u) => ({ ...u, module: f.module }))).sort((a, b) => a.module.localeCompare(b.module) || a.line - b.line),
     routes,
     http,
     env: [...envMap].map(([name, uses]) => ({ name, uses })).sort((a, b) => a.name.localeCompare(b.name)),

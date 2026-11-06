@@ -1356,6 +1356,8 @@ button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 .graph-side-head { padding: 10px 12px 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-muted); }
 .graph-side-empty { padding: 2px 12px; color: var(--fg-muted); }
 .graph-side-warn { margin: 6px 12px; padding: 6px 8px; border-left: 3px solid var(--err); background: var(--bg); color: var(--fg); }
+.graph-side-link { display: block; width: calc(100% - 24px); text-align: left; font: inherit; border-top: 0; border-right: 0; border-bottom: 0; cursor: pointer; }
+.graph-side-link:hover { color: var(--accent, var(--fg)); text-decoration: underline; }
 .graph-item { display: flex; justify-content: space-between; gap: 8px; padding: 3px 12px; cursor: pointer; }
 .graph-item:hover { background: var(--bg-hover); }
 .graph-item-text { font-family: var(--font-code); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

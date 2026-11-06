@@ -130,7 +130,7 @@ Visualisations are interactive representations of real code, not a separate prog
 - [x] Highlight a node's dependencies and dependants (hover or select: uses in blue, used by in orange)
 - [x] Filter graph by type, file or relationship (v0.41: Modules / Calls, one module's calls, name filter, tests / packages / web APIs toggles)
 - [x] Detect circular imports (red edges; listed in the findings)
-- [ ] Identify unused functions and potentially unreachable code where statically determinable (v0.41: possibly unused functions/classes listed and struck through; unreachable code still to do)
+- [x] Identify unused functions and potentially unreachable code where statically determinable (v0.41: possibly unused functions/classes listed and struck through; v0.46: "Code that never runs" in the Graph findings, on modules and on functions: after return / raise / break / continue, after an if/else or try whose branches all stop, and under `if False:`)
 
 ### 5.2 Live network visualisation
 - [ ] Runtime instrumentation for `requests`, `httpx` and `aiohttp`

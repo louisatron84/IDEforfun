@@ -1,7 +1,7 @@
 # Reads every Python file of a project with the `ast` module and prints what the
 # IDE's project graph needs as JSON: modules, imports, classes and functions with
 # the calls and names they use, web routes (Flask, FastAPI), outgoing HTTP calls
-# (requests, httpx, aiohttp) and environment variables.
+# (requests, httpx, aiohttp), environment variables and code that can never run.
 #
 # Run as:  python - <project folder>   (this script on stdin, JSON on stdout)
 # Only reads files; never imports or runs the project's code.
@@ -234,6 +234,86 @@ class FileScan(ast.NodeVisitor):
     visit_AsyncWith = visit_With
 
 
+# ---------- code that can never run ----------
+
+STOP_REASONS = ((ast.Return, 'return'), (ast.Raise, 'raise'), (ast.Break, 'break'), (ast.Continue, 'continue'))
+
+
+def bool_const(test):
+    """True or False when a condition is written as a constant, else None."""
+    if isinstance(test, ast.Constant) and type(test.value) is bool:
+        return test.value
+    return None
+
+
+def block_stops(stmts):
+    """Why this block never carries on to the statement after it, or None if it might."""
+    for st in stmts:
+        reason = stmt_stops(st)
+        if reason:
+            return reason
+    return None
+
+
+def stmt_stops(st):
+    for kind, reason in STOP_REASONS:
+        if isinstance(st, kind):
+            return reason
+    if isinstance(st, ast.If) and st.orelse and block_stops(st.body) and block_stops(st.orelse):
+        return 'branches'
+    if isinstance(st, ast.Try) or type(st).__name__ == 'TryStar':
+        if st.finalbody and block_stops(st.finalbody):
+            return block_stops(st.finalbody)
+        # Only if no handler can fall through. (A `with` is never counted: its
+        # context manager may swallow an exception.)
+        if (block_stops(st.body) or block_stops(st.orelse)) and all(block_stops(h.body) for h in st.handlers):
+            return 'branches'
+    return None
+
+
+def find_unreachable(tree):
+    """Runs of statements that can never run, with the function they're in."""
+    found = []
+
+    def note(stmts, func, reason):
+        found.append({'line': stmts[0].lineno, 'endLine': stmts[-1].end_lineno, 'func': func, 'reason': reason})
+
+    def block(stmts, func):
+        for i, st in enumerate(stmts):
+            visit(st, func)
+            reason = stmt_stops(st)
+            if reason and i + 1 < len(stmts):
+                note(stmts[i + 1:], func, reason)
+                return
+
+    def visit(st, func):
+        if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            block(st.body, st.name if func is None else func + '.' + st.name)
+            return
+        if isinstance(st, (ast.If, ast.While)):
+            value = bool_const(st.test)
+            if value is False:
+                note(st.body, func, 'constant')
+                if st.orelse:
+                    block(st.orelse, func)
+                return
+            if value is True and isinstance(st, ast.If) and st.orelse:
+                block(st.body, func)
+                note(st.orelse, func, 'constant')
+                return
+        for field in ('body', 'orelse', 'finalbody'):
+            sub = getattr(st, field, None)
+            if isinstance(sub, list) and sub and isinstance(sub[0], ast.stmt):
+                block(sub, func)
+        for handler in getattr(st, 'handlers', None) or []:
+            block(handler.body, func)
+        for case in getattr(st, 'cases', None) or []:
+            block(case.body, func)
+
+    block(tree.body, None)
+    return sorted(found, key=lambda u: u['line'])
+
+
 def module_name(rel):
     parts = rel[:-3].split('/')
     is_package = parts[-1] == '__init__'
@@ -267,6 +347,7 @@ def scan_file(root, rel):
     for d in defs:
         d['refs'] = sorted(d['refs'])
     entry.update(imports=s.imports, defs=defs, routes=s.routes, http=s.http, env=s.env)
+    entry['unreachable'] = find_unreachable(tree)
     if s.all_names is not None:
         entry['all'] = s.all_names
     entry['main'] = any(

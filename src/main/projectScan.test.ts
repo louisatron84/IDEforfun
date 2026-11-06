@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runScan } from './projectScan'
-import { buildGraph, hostOf, isTestPath, stronglyConnected, type ProjectGraph, type RawScan } from '../shared/projectGraph'
+import { buildGraph, describeUnreachable, hostOf, isTestPath, stronglyConnected, type ProjectGraph, type RawScan } from '../shared/projectGraph'
 
 /** A python on PATH, or null (then the tests that need it are skipped). */
 function findPython(): string | null {
@@ -63,6 +63,40 @@ const FILES: Record<string, string> = {
   ].join('\n'),
   'app/broken.py': 'def oops(:\n',
   'tests/test_service.py': 'from app.service import fetch_user\ndef test_it():\n    assert fetch_user(1)\n',
+  'tests/test_dead.py': [
+    'def early(x):',
+    '    return x',
+    '    print("never")',
+    'def loop():',
+    '    for i in range(3):',
+    '        continue',
+    '        i += 1',
+    'def both(x):',
+    '    if x:',
+    '        return 1',
+    '    else:',
+    '        raise ValueError(x)',
+    '    x += 1',
+    '    x += 2',
+    'def guarded():',
+    '    if False:',
+    '        print("off")',
+    '    try:',
+    '        return 1',
+    '    except ValueError:',
+    '        pass',
+    '    print("reachable: the handler falls through")',
+    '    while True:',
+    '        if guarded():',
+    '            break',
+    '    with open("x") as f:',
+    '        return f',
+    '    print("reachable: a context manager can swallow the error")',
+    'def ok(x):',
+    '    if x:',
+    '        return 1',
+    '    return 2'
+  ].join('\n'),
   '.venv/lib/skip.py': 'x = 1\n'
 }
 
@@ -84,7 +118,7 @@ describe.skipIf(!python)('project scan (real Python)', () => {
   afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
   it('finds every module (skipping virtual environments), with packages and tests marked', () => {
-    expect(graph.modules.map((m) => m.id).sort()).toEqual(['app', 'app.api', 'app.api.routes', 'app.broken', 'app.main', 'app.service', 'app.util', 'tests.test_service'])
+    expect(graph.modules.map((m) => m.id).sort()).toEqual(['app', 'app.api', 'app.api.routes', 'app.broken', 'app.main', 'app.service', 'app.util', 'tests.test_dead', 'tests.test_service'])
     expect(graph.modules.find((m) => m.id === 'app')!.isPackage).toBe(true)
     expect(graph.modules.find((m) => m.id === 'tests.test_service')!.isTest).toBe(true)
     expect(graph.modules.find((m) => m.id === 'app.main')!.isEntry).toBe(true)
@@ -124,6 +158,17 @@ describe.skipIf(!python)('project scan (real Python)', () => {
 
   it('reports functions nothing uses (not tests, not routes, not recursion)', () => {
     expect(graph.unused.map((s) => s.id).sort()).toEqual(['app.service:never_used', 'app.service:recursive'])
+  })
+
+  it('finds code that can never run (after return/raise/break/continue, branches that all stop, constant conditions)', () => {
+    expect(graph.unreachable.map((u) => `${u.module}:${u.line}-${u.endLine} ${u.func} ${u.reason}`)).toEqual([
+      'tests.test_dead:3-3 early return',
+      'tests.test_dead:7-7 loop continue',
+      'tests.test_dead:13-14 both branches',
+      'tests.test_dead:17-17 guarded constant'
+    ])
+    expect(describeUnreachable(graph.unreachable[0])).toBe('line 3, after a return')
+    expect(describeUnreachable(graph.unreachable[2])).toBe('lines 13–14, every branch above it stops')
   })
 
   it('finds routes, HTTP calls with their hosts, and environment variables', () => {

@@ -7,7 +7,7 @@
  * right side lists the findings: import cycles, possibly unused functions,
  * routes, web APIs called, environment variables.
  */
-import type { ProjectGraph } from '../../shared/projectGraph'
+import { describeUnreachable, type ProjectGraph } from '../../shared/projectGraph'
 import { layoutGraph, type Layout } from './layout'
 import { buildView, neighbourhood, type GraphViewData, type ViewNode, type ViewOptions } from './viewModel'
 import type { ApiBox } from '../../shared/boxes'
@@ -598,6 +598,8 @@ export class GraphView {
       ...this.section('Import cycles', g.cycles.map((c) => this.item(c.join(' ⇄ '), '', () => this.revealModule(c[0]), 'warn')), 'None: no modules import each other in a loop.'),
       ...this.section('Possibly unused', g.unused.map((s) => this.item(`${s.module}.${s.qual}`, `${s.kind}, line ${s.line}`, () => this.openAt(s.module, s.line - 1))),
         'Every function and class is used somewhere.'),
+      ...this.section('Code that never runs', g.unreachable.map((u) => this.item(short(u.module, u.func), describeUnreachable(u), () => this.openAt(u.module, u.line - 1))),
+        'None found.'),
       ...this.section('Web routes', g.routes.map((r) => this.item(`${r.methods.join(' ')} ${r.path}`, short(r.module, r.func), () => this.openAt(r.module, r.line - 1)))),
       ...this.section('Web APIs called', g.http.map((h) => this.item(`${h.method} ${h.url ?? '(address built at run time)'}`, `${h.library} · ${short(h.module, h.func)}`, () => this.openAt(h.module, h.line - 1)))),
       ...this.section('Environment variables', g.env.map((e) => this.item(e.name, e.uses.map((u) => short(u.module, u.func)).join(', ') + (e.uses.every((u) => u.default) ? ' · has a default' : ''),
@@ -646,7 +648,9 @@ export class GraphView {
           this.item(s.qual, `${s.kind}, line ${s.line}`, () => this.openAt(m.id, s.line - 1), g.unused.some((u) => u.id === s.id) ? 'dim' : ''))),
         ...this.section('Routes', m.routes.map((r) => this.item(`${r.methods.join(' ')} ${r.path}`, r.func, () => this.openAt(m.id, r.line - 1)))),
         ...this.section('Web APIs called', m.http.map((h) => this.item(`${h.method} ${h.url ?? '(built at run time)'}`, h.library, () => this.openAt(m.id, h.line - 1)))),
-        ...this.section('Environment variables', m.env.map((e) => this.item(e.name, `line ${e.line}`, () => this.openAt(m.id, e.line - 1))))
+        ...this.section('Environment variables', m.env.map((e) => this.item(e.name, `line ${e.line}`, () => this.openAt(m.id, e.line - 1)))),
+        ...this.section('Code that never runs', g.unreachable.filter((u) => u.module === m.id).map((u) =>
+          this.item(u.func ?? 'top level', describeUnreachable(u), () => this.openAt(m.id, u.line - 1), 'warn')))
       )
     } else if (n.kind === 'external' || n.kind === 'host') {
       out.push(...this.section(n.kind === 'host' ? 'Called from' : 'Imported by', links(nb.in)))
@@ -657,6 +661,12 @@ export class GraphView {
       }
     } else {
       if (n.unused) out.push(el('div', 'graph-side-warn', 'Nothing in the project seems to use this (it may still be used dynamically, or from outside).'))
+      const qual = n.id.slice(n.id.indexOf(':') + 1)
+      for (const u of g.unreachable.filter((x) => x.module === n.module && x.func === qual)) {
+        const warn = el('button', 'graph-side-warn graph-side-link', `Code that never runs: ${describeUnreachable(u)}`)
+        warn.addEventListener('click', () => this.openAt(u.module, u.line - 1))
+        out.push(warn)
+      }
       out.push(...this.section('Calls', links(nb.out)), ...this.section('Called by', links(nb.in)))
     }
     return out
