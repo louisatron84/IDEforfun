@@ -7,7 +7,7 @@
 import { moduleOfPath, newApiBox, normalizeBoxes, serializeBoxes, type ApiBox, type BoxesFile } from '../../shared/boxes'
 import { blockHash, generateBlock } from '../../shared/boxCode'
 import { blockState, findBlock, insertBlock, removeBlock, replaceBlock, withEol } from '../../shared/boxSync'
-import { defaultTicks, fieldTree, pickRecords, recordLists, type RecordList } from '../../shared/apiFields'
+import { csvPreview, defaultTicks, fieldTree, pickRecords, recordLists, rowsFor, type RecordList } from '../../shared/apiFields'
 import type { TestCallResult } from '../../shared/api'
 
 export type BoxState = 'unwritten' | 'ok' | 'edited' | 'missing' | 'broken' | 'detached'
@@ -28,6 +28,8 @@ export class BoxController {
   private listeners = new Set<() => void>()
   /** Run one file change at a time. */
   private queue: Promise<unknown> = Promise.resolve()
+  /** The CSV last saved for each request (path + text), so it is only written when it changes. */
+  private csvSaved = new Map<string, string>()
   selected: string | null = null
 
   constructor(private readonly files: BoxFiles) {}
@@ -109,7 +111,26 @@ export class BoxController {
       await this.save()
       this.changed()
       await this.syncCode(box)
+      await this.saveCsv(box)
     })
+  }
+
+  /** Save each request's CSV from its last test call (the same file its function writes). */
+  private async saveCsv(box: ApiBox): Promise<void> {
+    for (const r of box.requests) {
+      if (!r.test?.ok || r.test.sample === undefined || !r.ticked.length || !r.output) continue
+      const records = pickRecords(r.test.sample, r.recordsPath).records
+      const csv = csvPreview(rowsFor(records, r.ticked), r.ticked, Infinity)
+      const key = `${box.id}/${r.id}`
+      if (this.csvSaved.get(key) === `${r.output}\0${csv}`) continue
+      try {
+        await this.files.write(r.output, csv)
+        this.csvSaved.set(key, `${r.output}\0${csv}`)
+        this.files.note(`Saved ${records.length} row${records.length === 1 ? '' : 's'} to ${r.output}`)
+      } catch (err) {
+        this.files.note(`Couldn't save ${r.output}: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
   }
 
   private async syncCode(box: ApiBox): Promise<void> {

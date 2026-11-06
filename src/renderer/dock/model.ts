@@ -23,7 +23,7 @@ export function defaultArrangement(task: TaskId): DockNode {
         [sp('column', [[st('where'), 0.6], [st('infile'), 0.4]]), 0.22]
       ])
     case 'connect':
-      return sp('column', [[sp('row', [[st('files', 'outline'), 0.18], [st('graph'), 0.56], [sp('column', [[st('toolbox'), 0.28], [st('box'), 0.72]]), 0.26]]), 0.78], [st('terminal', 'problems', 'output'), 0.22]])
+      return sp('column', [[sp('row', [[st('files', 'outline'), 0.18], [st('graph'), 0.66], [st('toolbox'), 0.16]]), 0.78], [st('terminal', 'problems', 'output'), 0.22]])
     case 'debug':
       return sp('column', [[sp('row', [[st('editor'), 0.62], [st('debug'), 0.38]]), 0.75], [st('terminal', 'output', 'problems'), 0.25]])
     case 'run':

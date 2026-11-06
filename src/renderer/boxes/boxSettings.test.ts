@@ -21,6 +21,7 @@ function setup(result: TestCallResult = { ok: true, status: 200, statusText: 'OK
   const ctrl = new BoxController(io)
   const secrets: [string, string][] = []
   const live: [string, boolean][] = []
+  const opened: string[] = []
   let confirmAnswer = true
   const hooks: BoxSettingsHooks = {
     testCall: async () => result,
@@ -32,11 +33,12 @@ function setup(result: TestCallResult = { ok: true, status: 200, statusText: 'OK
     showDiff: async () => true,
     confirm: () => confirmAnswer,
     alert: () => {},
-    liveWire: (id, on) => void live.push([id, on])
+    liveWire: (id, on) => void live.push([id, on]),
+    openFile: (rel) => void opened.push(rel)
   }
   const view = new BoxSettings(ctrl, hooks)
   document.body.replaceChildren(view.body)
-  return { ctrl, view, files, saved, secrets, live, setConfirm: (v: boolean) => (confirmAnswer = v) }
+  return { ctrl, view, files, saved, secrets, live, opened, setConfirm: (v: boolean) => (confirmAnswer = v) }
 }
 
 const q = <T extends Element = HTMLElement>(sel: string) => document.querySelector(sel) as T | null
@@ -96,6 +98,17 @@ describe('Box settings', () => {
     q<HTMLInputElement>('[data-field="a"]')!.dispatchEvent(new Event('change', { bubbles: true }))
     await flush()
     expect(files.get('api/api.py')).toContain('fields = ["b.c"]')
+  })
+
+  it('after a test call, Open CSV opens the saved file', async () => {
+    const { ctrl, opened } = setup()
+    ctrl.add(null)
+    await flush()
+    expect(q('[data-action="open-csv"]')).toBeNull()
+    q<HTMLButtonElement>('[data-action="test"]')!.click()
+    await flush()
+    q<HTMLButtonElement>('[data-action="open-csv"]')!.click()
+    expect(opened).toEqual(['api_data.csv'])
   })
 
   it('a failed test call says why', async () => {

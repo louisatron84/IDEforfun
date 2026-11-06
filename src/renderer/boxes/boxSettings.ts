@@ -25,6 +25,8 @@ export interface BoxSettingsHooks {
   alert(message: string): void
   /** Light the box's wire on the Graph while a test call runs. */
   liveWire(boxId: string, on: boolean): void
+  /** Open a project file (the saved CSV). */
+  openFile(rel: string): void
 }
 
 const AUTH_LABELS: [BoxAuth['kind'], string][] = [
@@ -310,7 +312,9 @@ export class BoxSettings {
     const preview = this.preview(req)
     if (preview) s.append(preview)
 
-    s.append(this.row('Save to (CSV)', this.input('req.output', req.output, (v, b) => on((r) => (r.output = v.trim() || r.output))(b), { wide: true })))
+    const output = this.row('Save to (CSV)', this.input('req.output', req.output, (v, b) => on((r) => (r.output = v.trim() || r.output))(b), { wide: true }))
+    if (req.test?.ok && req.test.sample !== undefined && req.ticked.length) output.append(this.button(`Open ${req.output}`, 'open-csv', () => this.hooks.openFile(req.output)))
+    s.append(output)
     s.append(this.row('Function', this.input('req.fn', req.functionName ?? '', (v, b) => on((r) => (r.functionName = v.trim() || undefined))(b), { placeholder: functionNameFor(box, { ...req, functionName: undefined }) })))
     if (box.requests.length > 1) {
       s.append(this.button('Remove this request', 'remove-request', () => {

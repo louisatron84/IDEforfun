@@ -19,6 +19,8 @@ export interface GraphBoxHooks {
   list(): readonly ApiBox[]
   selected(): string | null
   select(id: string): void
+  /** A click on the graph that wasn't on a box. */
+  clear(): void
   /** A box was dropped from the Toolbox: on a module (its code goes there), or on empty canvas. */
   drop(module: string | null): void
   /** Boxes whose wire is live (a test call is running). */
@@ -395,6 +397,7 @@ export class GraphView {
         this.hooks.boxes.select(box)
         return
       }
+      this.hooks.boxes?.clear()
       this.select(nodeAt(target)?.dataset.id ?? null)
     })
     canvas.addEventListener('pointerleave', () => {

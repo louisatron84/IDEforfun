@@ -144,6 +144,30 @@ describe('BoxController', () => {
     expect(JSON.stringify(m.saved.at(-1))).not.toContain('"total"')
   })
 
+  it('a successful test call saves the CSV, and ticking fields updates it', async () => {
+    const { m, ctrl, id } = await written()
+    const req = ctrl.get(id)!.requests[0]
+    await ctrl.setTest(id, req.id, { ok: true, status: 200, ms: 1, json: RESPONSE })
+    expect(m.files.get(req.output)).toBe('a\r\n1\r\n2\r\n')
+    expect(m.notes.at(-1)).toBe(`Saved 2 rows to ${req.output}`)
+    await ctrl.update(id, (b) => (b.requests[0].ticked = ['a', 'b.c']))
+    expect(m.files.get(req.output)).toBe('a,b.c\r\n1,x\r\n2,\r\n')
+  })
+
+  it('no CSV without a successful test call or with nothing ticked', async () => {
+    const m = memory()
+    const ctrl = new BoxController(m.io)
+    const box = ctrl.add(null)
+    const req = box.requests[0]
+    await ctrl.setTest(box.id, req.id, { ok: false, ms: 1, error: 'nope' })
+    expect(m.files.has(req.output)).toBe(false)
+    await ctrl.setTest(box.id, req.id, { ok: true, ms: 1, json: RESPONSE })
+    await ctrl.update(box.id, (b) => (b.requests[0].ticked = []))
+    const before = m.files.get(req.output)
+    await ctrl.update(box.id, (b) => (b.baseUrl = 'https://x.org'))
+    expect(m.files.get(req.output)).toBe(before)
+  })
+
   it('setTest with an error keeps the old fields', async () => {
     const { ctrl, id } = await written()
     const req = ctrl.get(id)!.requests[0]
