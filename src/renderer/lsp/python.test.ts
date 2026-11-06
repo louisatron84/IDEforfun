@@ -98,6 +98,10 @@ describe('PythonLanguage', () => {
     expect(lang.diagnosticsFor('c:\\proj\\A.py').map((d) => d.source)).toEqual(['Pyright', 'Ruff'])
     expect(lang.allDiagnostics()).toHaveLength(1)
     expect(calls).toBe(2)
+    // ...except where Pyright already reports something at the same place.
+    lang.setExternalDiagnostics('ruff', 'C:\\proj\\a.py', [{ start: { line: 0, col: 4 }, end: { line: 0, col: 7 }, severity: 2, message: 'F821', source: 'Ruff' }])
+    expect(lang.diagnosticsFor('C:\\proj\\a.py').map((d) => d.source)).toEqual(['Pyright'])
+    expect(lang.allDiagnostics()[0][1]).toHaveLength(1)
     lang.clearExternalDiagnostics('ruff')
     expect(lang.diagnosticsFor('C:\\proj\\a.py')).toHaveLength(1)
   })

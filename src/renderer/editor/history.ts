@@ -56,10 +56,18 @@ export class History {
     } finally {
       this.collecting = null
     }
-    if (changes.length === 0) return cursorAfter
-
     const time = this.now()
     const prev = this.undoStack[this.undoStack.length - 1]
+    if (changes.length === 0) {
+      // Typing a ")" that's already there just steps over it: keep the word
+      // being typed in one undo step by moving its end along.
+      if (kind === 'typing' && prev && !prev.sealed && prev.kind === 'typing' &&
+        comparePositions(prev.cursorAfter, cursorBefore) === 0 && time - prev.time < MERGE_WINDOW_MS) {
+        prev.cursorAfter = cursorAfter
+        prev.time = time
+      }
+      return cursorAfter
+    }
     const canMerge =
       prev !== undefined &&
       !prev.sealed &&

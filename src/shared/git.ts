@@ -24,6 +24,8 @@ export interface RepoStatus {
   detached: boolean
   /** No commits yet. */
   initial: boolean
+  /** The current commit id (null before the first commit). */
+  head: string | null
   staged: FileChange[]
   unstaged: FileChange[]
   conflicts: FileChange[]
@@ -33,7 +35,7 @@ const KIND: Record<string, ChangeKind> = { M: 'modified', A: 'added', D: 'delete
 
 /** Parse `git status --porcelain=v2 --branch -z --untracked-files=all`. */
 export function parseStatusV2(out: string): RepoStatus {
-  const s: RepoStatus = { branch: null, upstream: null, ahead: 0, behind: 0, detached: false, initial: false, staged: [], unstaged: [], conflicts: [] }
+  const s: RepoStatus = { branch: null, upstream: null, ahead: 0, behind: 0, detached: false, initial: false, head: null, staged: [], unstaged: [], conflicts: [] }
   const parts = out.split('\0')
   for (let i = 0; i < parts.length; i++) {
     const p = parts[i]
@@ -44,7 +46,10 @@ export function parseStatusV2(out: string): RepoStatus {
       if (key === 'branch.head') {
         if (val === '(detached)') s.detached = true
         else s.branch = val
-      } else if (key === 'branch.oid' && val === '(initial)') s.initial = true
+      } else if (key === 'branch.oid') {
+        if (val === '(initial)') s.initial = true
+        else s.head = val
+      }
       else if (key === 'branch.upstream') s.upstream = val
       else if (key === 'branch.ab') {
         const m = /^\+(\d+) -(\d+)$/.exec(val)

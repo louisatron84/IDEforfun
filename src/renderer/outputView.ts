@@ -111,6 +111,7 @@ export class OutputView {
     this.shownLines = 0
     this.trimmedLines = 0
     this.trimNote.hidden = true
+    this.trimNote.textContent = ''
     this.log.replaceChildren(this.trimNote)
   }
 

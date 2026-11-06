@@ -449,7 +449,7 @@ export class PythonLanguage {
   diagnosticsFor(path: string): Diagnostic[] {
     const k = key(path)
     const own = this.diagnostics.get(k)?.list ?? []
-    const extra = [...this.external.values()].flatMap((m) => m.get(k)?.list ?? [])
+    const extra = withoutDuplicates(own, [...this.external.values()].flatMap((m) => m.get(k)?.list ?? []))
     return extra.length ? [...own, ...extra] : own
   }
 
@@ -460,7 +460,7 @@ export class PythonLanguage {
     for (const m of this.external.values()) {
       for (const [k, d] of m) {
         const cur = all.get(k)
-        if (cur) cur.list.push(...d.list)
+        if (cur) cur.list.push(...withoutDuplicates(this.diagnostics.get(k)?.list ?? [], d.list))
         else all.set(k, { path: d.path, list: [...d.list] })
       }
     }
@@ -484,6 +484,16 @@ export class PythonLanguage {
   protected get lspClient(): LspClient {
     return this.client
   }
+}
+
+/**
+ * Another tool's diagnostics minus those Pyright already reports at the same
+ * place (e.g. Ruff's F821 "undefined name" next to Pyright's own error).
+ */
+function withoutDuplicates(own: readonly Diagnostic[], extra: readonly Diagnostic[]): Diagnostic[] {
+  if (!own.length) return [...extra]
+  const at = new Set(own.filter((d) => d.severity <= 3).map((d) => `${d.start.line}:${d.start.col}`))
+  return extra.filter((d) => !at.has(`${d.start.line}:${d.start.col}`))
 }
 
 /** LSP documentation is a string or { kind, value }. */

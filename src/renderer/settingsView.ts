@@ -31,13 +31,13 @@ export class SettingsView {
     this.overlay.addEventListener('mousedown', (e) => {
       if (e.target === this.overlay) this.close() // click outside the dialog
     })
-    this.dialog.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        e.stopPropagation()
-        this.close()
-      }
-    })
+    // Escape closes it wherever focus is (it can end up outside the dialog, e.g. after a click).
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !this.isOpen || e.defaultPrevented) return
+      e.preventDefault()
+      e.stopPropagation()
+      this.close()
+    }, { capture: true })
     this.render()
   }
 
@@ -53,6 +53,8 @@ export class SettingsView {
 
   /** Say which settings the project's .ideforfun/settings.json overrides (null = none). */
   setProjectNote(note: string | null): void {
+    // Re-rendering would move focus out of the dialog, so only when the note really changes.
+    if (note === this.projectNote) return
     this.projectNote = note
     if (this.isOpen) this.render()
   }

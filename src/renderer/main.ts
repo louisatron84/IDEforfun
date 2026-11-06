@@ -273,7 +273,7 @@ let pausedAt: { path: string; line: number } | null = null
 let lastDebugSpec: LaunchSpec | null = null
 
 const debugView = new DebugView({
-  continue: () => void session?.continue(),
+  continue: () => continueDebugging(),
   stepOver: () => void session?.stepOver(),
   stepInto: () => void session?.stepInto(),
   stepOut: () => void session?.stepOut(),
@@ -462,10 +462,12 @@ async function startDebugging(given?: LaunchSpec): Promise<void> {
       breakpoints: breakpoints.all(),
       exceptionFilters,
       runInTerminal: settings.debugInTerminal
-        ? (a) => {
-            panel.show('terminal')
+        ? async (a) => {
             const name = (spec.program ?? spec.module ?? 'program').split(/[\\/]/).pop()
-            return terminal.runProgram(`Debug: ${name}`, a.args, a.cwd || cwd, a.env ?? {})
+            // Start it first: showing an empty terminal panel would open a plain shell too.
+            const pid = await terminal.runProgram(`Debug: ${name}`, a.args, a.cwd || cwd, a.env ?? {})
+            panel.show('terminal')
+            return pid
           }
         : undefined
     })
@@ -495,6 +497,13 @@ async function showFrame(frame: StackFrame): Promise<void> {
 
 async function stopDebugging(): Promise<void> {
   await session?.stop()
+}
+
+/** F5 while paused. In terminal mode the program may be waiting for input there next, so show it. */
+function continueDebugging(): void {
+  if (!session) return
+  void session.continue()
+  if (settings.debugInTerminal) panel.show('terminal')
 }
 
 async function restartDebugging(): Promise<void> {
@@ -1252,6 +1261,7 @@ async function openFolderPath(folder: string): Promise<void> {
   try {
     if (!workspace.closeAll()) return
     rootFolder = folder
+    lastRepoSignature = null
     folderName.textContent = folder
     folderName.classList.remove('muted')
     void window.api.recentAdd(folder).catch(() => {})
@@ -1666,7 +1676,7 @@ commands.register({
   id: 'run.smart', title: 'Run (or Debug if there are breakpoints) / Continue', keys: 'F5',
   when: () => canLaunch() || debugPaused(),
   run: () => {
-    if (debugPaused()) return void session!.continue()
+    if (debugPaused()) return continueDebugging()
     if (debugging()) return // starting or running: nothing to do
     if (breakpoints.count > 0) return void startDebugging()
     void runCurrentFile()
@@ -1789,6 +1799,9 @@ commands.register({
 // ---------- git status in the file tree ----------
 
 let gitBusy = false
+/** What the repository looked like at the last check (null = not checked yet in this folder). */
+let lastRepoSignature: string | null = null
+
 async function refreshGit(): Promise<void> {
   if (!rootFolder || gitBusy) return
   gitBusy = true
@@ -1798,6 +1811,11 @@ async function refreshGit(): Promise<void> {
     if (rootFolder !== folder) return
     tree.setGitStatus(status)
     const hadRepo = gitView.status !== null
+    // Commits, merges, pulls or checkouts done outside the IDE (e.g. in the terminal) change
+    // files on disk: reload the open files that have no unsaved edits.
+    const signature = repo ? JSON.stringify([repo.head, repo.branch, repo.staged, repo.unstaged, repo.conflicts]) : ''
+    if (lastRepoSignature !== null && signature !== lastRepoSignature) void reloadCleanDocs()
+    lastRepoSignature = signature
     gitView.setStatus(repo)
     if (repo && !hadRepo) refreshBlameSoon(0)
     const branch = $('sb-branch')
