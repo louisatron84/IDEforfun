@@ -48,7 +48,10 @@ import { CodeTools } from './codeTools'
 import { GitView } from './gitView'
 import { DiffView } from './diffView'
 import { GraphView } from './graph/graphView'
-import { buildGraph } from '../shared/projectGraph'
+import { buildGraph, type ProjectGraph } from '../shared/projectGraph'
+import { WhereView } from './panels/whereView'
+import { InFileView } from './panels/inFileView'
+import { moduleForPath } from './panels/whereModel'
 import { HistoryView } from './historyView'
 import { conflictNear, findConflicts, resolveConflict, type Conflict, type Resolution } from '../shared/conflicts'
 import { timeAgo, type BlameLine } from '../shared/history'
@@ -454,6 +457,8 @@ async function saveAllDirty(report: (message: string) => void): Promise<boolean>
     try {
       await workspace.save(doc)
       languages.didSave(doc)
+      if (/\.pyi?$/i.test(doc.path)) projectChangedSoon()
+    if (/\.pyi?$/i.test(doc.path)) projectChangedSoon()
     } catch (err) {
       report(`couldn't save ${doc.name} (${String(err)})`)
       return false
@@ -1362,6 +1367,7 @@ workspace.subscribe(() => {
   updateWelcome()
   refreshOutlineSoon(workspace.active === outlineDoc ? 600 : 50)
   if (gitView.status) refreshBlameSoon(blame?.doc === workspace.active ? 1500 : 150)
+  refreshFilePanels()
   syncGroups()
   workspace.groups.forEach((g, i) => {
     tabBars[i].render()
@@ -1483,6 +1489,8 @@ async function openFolderPath(folder: string): Promise<void> {
     await loadRunFile(folder)
     await tree.setRoot(folder)
     graphView.reset()
+    projectGraph = null
+    projectGraphFolder = null
     workspace.notifyChanged()
     void refreshGit()
     startLanguageServers()
@@ -2114,12 +2122,87 @@ $('groups').append(diffView.el)
 
 // ---------- Project Graph (how the project fits together) ----------
 
-const graphView = new GraphView({
-  scan: async () => {
-    if (!rootFolder) return { error: 'Open a folder first.' }
-    const res = await window.api.scanProject(rootFolder, settings.pythonPath || undefined).catch((err) => ({ error: String(err), scan: undefined }))
-    return res.scan ? { graph: buildGraph(res.scan) } : { error: res.error ?? 'no result' }
+// One analysis of the project, shared by the Graph, Where you are and In this file panels.
+let projectGraph: ProjectGraph | null = null
+let projectGraphFolder: string | null = null
+let projectScan: Promise<{ graph?: ProjectGraph; error?: string }> | null = null
+function scanProjectGraph(): Promise<{ graph?: ProjectGraph; error?: string }> {
+  if (!rootFolder) return Promise.resolve({ error: 'Open a folder first.' })
+  if (projectScan) return projectScan
+  const folder = rootFolder
+  projectScan = window.api.scanProject(folder, settings.pythonPath || undefined)
+    .catch((err) => ({ error: String(err), scan: undefined }))
+    .then((res) => {
+      projectScan = null
+      if (rootFolder !== folder) return { error: 'The folder changed.' }
+      if (!res.scan) return { error: res.error ?? 'no result' }
+      projectGraph = buildGraph(res.scan)
+      projectGraphFolder = folder
+      refreshFilePanels()
+      return { graph: projectGraph }
+    })
+  return projectScan
+}
+let rescanTimer: number | undefined
+/** A Python file was saved: analyse again soon, if a panel showing the analysis is open. */
+function projectChangedSoon(): void {
+  window.clearTimeout(rescanTimer)
+  rescanTimer = window.setTimeout(() => {
+    if (tasks.isShown('where') || tasks.isShown('infile') || tasks.isShown('graph')) void scanProjectGraph().then(() => { if (tasks.isShown('graph')) void graphView.refresh() })
+  }, 1500)
+}
+
+const whereView = new WhereView({
+  open: (module) => {
+    const m = projectGraph?.modules.find((x) => x.id === module)
+    if (m && rootFolder) void openFile(projectPath(m.path))
   },
+  reveal: (module) => {
+    tasks.reveal('graph')
+    graphView.revealModule(module)
+  }
+})
+const inFileView = new InFileView((line) => {
+  editor.goTo(line)
+  editor.focus()
+})
+dock.register({ id: 'where', title: 'Where you are', body: whereView.body, onShow: () => showFilePanels() })
+dock.register({ id: 'infile', title: 'In this file', body: inFileView.body, onShow: () => showFilePanels() })
+
+/** An absolute path for a project-relative one. */
+function projectPath(rel: string): string {
+  const folder = rootFolder ?? ''
+  const sep = folder.includes('\\') ? '\\' : '/'
+  return folder.replace(/[\\/]+$/, '') + sep + rel.split('/').join(sep)
+}
+
+/** The panels became visible: analyse the project first if needed. */
+function showFilePanels(): void {
+  if (rootFolder && projectGraphFolder !== rootFolder) void scanProjectGraph()
+  refreshFilePanels()
+}
+
+/** Update Where you are and In this file for the active file. */
+function refreshFilePanels(): void {
+  if (!tasks.isShown('where') && !tasks.isShown('infile')) return
+  const doc = workspace.active
+  let module: string | null = null
+  let message = 'Open a Python file to see where it fits.'
+  if (!rootFolder) message = 'Open a folder first.'
+  else if (doc && /\.pyi?$/i.test(doc.path)) {
+    if (!projectGraph || projectGraphFolder !== rootFolder) message = 'Analysing the project…'
+    else if (!isInside(doc.path, rootFolder)) message = 'This file is outside the project.'
+    else {
+      module = moduleForPath(projectGraph, doc.path.slice(rootFolder.length).replace(/^[\\/]+/, ''))
+      if (!module) message = 'This file was not part of the last analysis (save it to update).'
+    }
+  }
+  whereView.set(module ? projectGraph : null, module, message)
+  inFileView.set(module ? projectGraph : null, module, message)
+}
+
+const graphView = new GraphView({
+  scan: () => scanProjectGraph(),
   openModule: (rel, line) => {
     if (!rootFolder) return
     const sep = rootFolder.includes('\\') ? '\\' : '/'

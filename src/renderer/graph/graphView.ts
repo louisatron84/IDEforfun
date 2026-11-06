@@ -472,7 +472,8 @@ export class GraphView {
     ]
   }
 
-  private revealModule(module: string): void {
+  /** Show a module: the Modules view, selected and centred. */
+  revealModule(module: string): void {
     if (this.opts.mode !== 'modules' || !this.data.nodes.some((n) => n.id === module)) {
       this.setOptions({ mode: 'modules', focus: null, query: '', showTests: this.opts.showTests || !!this.graph?.modules.find((m) => m.id === module)?.isTest })
       this.search.value = ''
