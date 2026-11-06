@@ -3,7 +3,7 @@
  *  - which interpreter it uses (status bar 🐍; pick another, or create a .venv)
  *  - its packages (install, upgrade, uninstall, freeze to requirements.txt)
  *  - packages that requirements.txt / pyproject.toml ask for but aren't installed
- * The chosen interpreter is saved in the project's .ideforfun/settings.json.
+ * The chosen interpreter is saved in the project's .forge/settings.json.
  * pip and venv run in the Output panel, so you can see what they do.
  */
 import type { InterpreterInfo } from '../shared/api'

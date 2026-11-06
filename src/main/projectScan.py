@@ -13,7 +13,7 @@ import sys
 SKIP_DIRS = {
     '.git', '.hg', '.svn', '__pycache__', 'node_modules', '.venv', 'venv', 'env', '.env',
     '.tox', '.nox', '.mypy_cache', '.pytest_cache', '.ruff_cache', 'build', 'dist',
-    'site-packages', '.ideforfun', '.idea', '.vscode', '.eggs',
+    'site-packages', '.ideforfun', '.forge', '.idea', '.vscode', '.eggs',
 }
 MAX_FILES = 3000
 MAX_BYTES = 2_000_000

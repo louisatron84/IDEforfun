@@ -22,6 +22,7 @@ import { gitStatus } from './git'
 import * as gitOps from './gitOps'
 import { LanguageServers, resolvePythonForAnalysis } from './languageServer'
 import { scanProject } from './projectScan'
+import { prepareProjectDir } from './projectDir'
 import type { FindOptions } from '../shared/regex'
 import { PythonRunner } from './python'
 import { Terminals } from './terminals'
@@ -197,6 +198,7 @@ ipcMain.handle('fs:rename', (_event, path: string, newName: string) => renameEnt
 ipcMain.handle('fs:trash', (_event, path: string) => shell.trashItem(path))
 ipcMain.handle('fs:delete', (_event, path: string) => rm(path, { recursive: true }))
 ipcMain.handle('fs:listFiles', (_event, root: string) => listFiles(root))
+ipcMain.handle('project:prepare', (_event, root: string) => prepareProjectDir(root))
 ipcMain.handle('graph:scan', (_event, root: string, python?: string) => scanProject(root, python))
 ipcMain.handle('lsp:start', (event, id: string) => {
   languageServers.start(id, event.sender)

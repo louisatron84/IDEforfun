@@ -51,7 +51,7 @@ export class SettingsView {
     this.render()
   }
 
-  /** Say which settings the project's .ideforfun/settings.json overrides (null = none). */
+  /** Say which settings the project's .forge/settings.json overrides (null = none). */
   setProjectNote(note: string | null): void {
     // Re-rendering would move focus out of the dialog, so only when the note really changes.
     if (note === this.projectNote) return

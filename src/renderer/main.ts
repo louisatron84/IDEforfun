@@ -1208,7 +1208,7 @@ commands.register({ id: 'panel.references', title: 'Show References', run: () =>
 let settings: Settings = DEFAULT_SETTINGS
 /** Your own settings (settings.json), as shown in the Settings dialog. */
 let userSettings: Settings = DEFAULT_SETTINGS
-/** What the open project's .ideforfun/settings.json overrides. */
+/** What the open project's .forge/settings.json overrides. */
 let projectSettings: ProjectSettings = {}
 let projectSettingsPath: string | null = null
 
@@ -1250,9 +1250,9 @@ function applyEffective(restartLsp = true): void {
   const keys = Object.keys(projectSettings)
   settingsView.setProjectNote(
     keys.length
-      ? `This project's .ideforfun/settings.json sets: ${keys.map((k) => SETTING_NAMES[k] ?? k).join(', ')}. ` +
+      ? `This project's .forge/settings.json sets: ${keys.map((k) => SETTING_NAMES[k] ?? k).join(', ')}. ` +
         'Those rows show your own setting; the project\'s value is used while it is open.'
-      : rootFolder ? 'A project can set tabSize, pythonPath, shell, formatter, formatOnSave and lintWithRuff in .ideforfun/settings.json (Project Settings below).' : null
+      : rootFolder ? 'A project can set tabSize, pythonPath, shell, formatter, formatOnSave and lintWithRuff in .forge/settings.json (Project Settings below).' : null
   )
 }
 
@@ -1270,7 +1270,7 @@ const settingsView = new SettingsView(settings, (s) => {
   void window.api.saveSettings(s)
 })
 
-/** Read <project>/.ideforfun/settings.json (a missing file means no overrides). */
+/** Read <project>/.forge/settings.json (a missing file means no overrides). */
 async function loadProjectSettings(folder: string, restartLsp = true): Promise<void> {
   let res
   try {
@@ -1405,6 +1405,10 @@ async function openFolderPath(folder: string): Promise<void> {
     folderName.textContent = folder
     folderName.classList.remove('muted')
     void window.api.recentAdd(folder).catch(() => {})
+    // Project files live in .forge/ (older projects have .forge/: moved here first).
+    const moved = await window.api.prepareProjectDir(folder).catch(() => 'none' as const)
+    if (moved === 'migrated') statusNote('Moved project settings from .ideforfun/ to .forge/')
+    else if (moved === 'copied') statusNote("Copied project settings to .forge/ (the old .ideforfun/ folder couldn't be moved)")
     await loadProjectSettings(folder, false)
     runConfigName = null
     lastTask = null
@@ -1685,7 +1689,7 @@ async function runCurrentFile(): Promise<void> {
   editor.focus()
 }
 
-// ---------- run configurations and tasks (.ideforfun/run.json) ----------
+// ---------- run configurations and tasks (.forge/run.json) ----------
 
 let runFile: RunFile = { configurations: [], tasks: [] }
 let runFilePath: string | null = null
@@ -1754,7 +1758,7 @@ function pickRunConfig(): void {
       hint: c.name === runConfigName ? '✓' : undefined,
       run: () => setRunConfig(c.name)
     })),
-    { label: runFile.configurations.length ? 'Edit run configurations…' : 'Add a run configuration…', detail: '.ideforfun/run.json', run: () => void editRunFile() }
+    { label: runFile.configurations.length ? 'Edit run configurations…' : 'Add a run configuration…', detail: '.forge/run.json', run: () => void editRunFile() }
   ]
   palette.choose('Run configuration for F5 / Ctrl+F5', items)
 }
@@ -1777,9 +1781,9 @@ function runTask(task: Task): void {
 function pickTask(): void {
   const items = [
     ...runFile.tasks.map((t) => ({ label: t.name, detail: t.command, run: () => runTask(t) })),
-    { label: runFile.tasks.length ? 'Edit tasks…' : 'Add a task…', detail: '.ideforfun/run.json', run: () => void editRunFile() }
+    { label: runFile.tasks.length ? 'Edit tasks…' : 'Add a task…', detail: '.forge/run.json', run: () => void editRunFile() }
   ]
-  palette.choose(runFile.tasks.length ? 'Run a task (in a new terminal)' : 'No tasks yet: add some to .ideforfun/run.json', items)
+  palette.choose(runFile.tasks.length ? 'Run a task (in a new terminal)' : 'No tasks yet: add some to .forge/run.json', items)
 }
 
 /** What to do when a tool run (pip, venv) ends, by run id. */

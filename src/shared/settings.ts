@@ -65,11 +65,14 @@ export function normalizeSettings(raw: unknown): Settings {
   return s
 }
 
-/** Settings a project can override in <project>/.ideforfun/settings.json. */
+/** Settings a project can override in <project>/.forge/settings.json. */
 export const PROJECT_SETTING_KEYS = ['tabSize', 'pythonPath', 'shell', 'formatter', 'formatOnSave', 'lintWithRuff'] as const
 export type ProjectSettings = Partial<Pick<Settings, (typeof PROJECT_SETTING_KEYS)[number]>>
 
-export const PROJECT_SETTINGS_DIR = '.ideforfun'
+/** The project's own Forge files (settings.json, run.json…). */
+export const PROJECT_DIR = '.forge'
+/** Where they lived before the rename to Forge (moved on first open, see src/main/projectDir.ts). */
+export const LEGACY_PROJECT_DIR = '.ideforfun'
 export const PROJECT_SETTINGS_FILE = 'settings.json'
 
 /** Only the valid project-level values from a project settings file; anything else is ignored. */

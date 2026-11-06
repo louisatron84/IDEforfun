@@ -201,6 +201,11 @@ export interface IdeApi {
 
   /** Every file under a folder (for quick open), skipping .git, node_modules, etc. */
   listFiles(root: string): Promise<{ path: string; rel: string }[]>
+  /**
+   * Get <project>/.forge ready: a legacy .ideforfun folder is renamed ('migrated'),
+   * or copied when it can't be ('copied'); 'both' = both exist (.forge is used).
+   */
+  prepareProjectDir(root: string): Promise<'none' | 'migrated' | 'copied' | 'both'>
   /** Analyse every Python file of a project (for the Project Graph); `python`: the configured interpreter. */
   scanProject(root: string, python?: string): Promise<{ scan?: RawScan; error?: string }>
 
@@ -265,14 +270,14 @@ export interface IdeApi {
   /** The project's saved tabs/layout, or null the first time it's opened. */
   workspaceState(root: string): Promise<WorkspaceState | null>
   saveWorkspaceState(root: string, state: WorkspaceState): void
-  /** <project>/.ideforfun/settings.json */
+  /** <project>/.forge/settings.json */
   projectSettings(root: string): Promise<{ settings: ProjectSettings; path: string; exists: boolean; error?: string }>
   /** Create the project settings file if needed; returns its path. */
   ensureProjectSettings(root: string, initial: ProjectSettings): Promise<string>
-  /** Another file in <project>/.ideforfun (e.g. run.json): its JSON, or why it can't be read. */
+  /** Another file in <project>/.forge (e.g. run.json): its JSON, or why it can't be read. */
   readProjectFile(root: string, name: string): Promise<{ value: unknown; path: string; exists: boolean; error?: string }>
   ensureProjectFile(root: string, name: string, initial: unknown): Promise<string>
-  /** Set (or with undefined, remove) values in the project's .ideforfun/settings.json, keeping the rest. */
+  /** Set (or with undefined, remove) values in the project's .forge/settings.json, keeping the rest. */
   updateProjectSettings(root: string, patch: Record<string, unknown>): Promise<void>
 
   /** Interpreters found in the project (venvs) and on this machine. */
