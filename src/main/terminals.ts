@@ -88,7 +88,7 @@ export class Terminals {
 
   private spawn(sender: WebContents, file: string, args: string[], cwd: string | null, cols: number, rows: number, extraEnv: Record<string, string | null>): { id: number; pid: number } {
     const id = this.nextId++
-    const env: Record<string, string> = { ...(process.env as Record<string, string>), TERM_PROGRAM: 'IDEforfun' }
+    const env: Record<string, string> = { ...(process.env as Record<string, string>), TERM_PROGRAM: 'Forge' }
     for (const [k, v] of Object.entries(extraEnv)) {
       if (v === null) delete env[k]
       else env[k] = String(v)

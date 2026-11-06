@@ -140,7 +140,7 @@ export class LspServer {
     this.ready = (async () => {
       const result = await this.client.request<{ capabilities: Record<string, any> }>('initialize', {
         processId: null,
-        clientInfo: { name: 'IDEforfun' },
+        clientInfo: { name: 'Forge' },
         rootUri,
         workspaceFolders: [{ uri: rootUri, name: rootPath.split(/[\\/]/).pop() }],
         capabilities: {

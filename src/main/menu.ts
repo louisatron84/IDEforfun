@@ -226,13 +226,13 @@ export function buildMenu(state: MenuState = { keys: {}, recent: [] }): Menu {
         cmd('Welcome', 'help.welcome'),
         cmd('All Commands and Shortcuts', 'palette.commands', 'CmdOrCtrl+Shift+P'),
         {
-          label: 'About IDEforfun',
+          label: 'About Forge',
           click: () => {
             const win = BrowserWindow.getFocusedWindow()
             const opts = {
               type: 'info' as const,
-              title: 'About IDEforfun',
-              message: `IDEforfun ${app.getVersion()}`,
+              title: 'About Forge',
+              message: `Forge ${app.getVersion()}`,
               detail: `A hobby IDE for Python, with a hand-written editor.\n\nElectron ${process.versions.electron} · Node ${process.versions.node} · Chromium ${process.versions.chrome}`
             }
             void (win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts))

@@ -1324,7 +1324,7 @@ workspace.subscribe(() => {
   scheduleStatus()
   showDiagnostics()
   const folder = rootFolder?.split(/[\\/]/).pop()
-  document.title = [doc ? (doc.dirty ? '● ' : '') + doc.name : null, folder, 'IDEforfun']
+  document.title = [doc ? (doc.dirty ? '● ' : '') + doc.name : null, folder, 'Forge']
     .filter(Boolean).join(' — ')
 })
 
@@ -1548,7 +1548,7 @@ async function offerRestore(folder: string): Promise<void> {
   const rel = (p: string) => p.slice(folder.length).replace(/^[\\/]+/, '')
   const list = found.slice(0, 8).map((b) => `  • ${rel(b.path)}`).join('\n') + (found.length > 8 ? `\n  …and ${found.length - 8} more` : '')
   const restore = confirm(
-    `IDEforfun didn't close properly last time, and ${found.length} file${found.length > 1 ? 's had' : ' had'} unsaved changes:\n\n${list}\n\n` +
+    `Forge didn't close properly last time, and ${found.length} file${found.length > 1 ? 's had' : ' had'} unsaved changes:\n\n${list}\n\n` +
     'Restore those changes? (They open as unsaved; Ctrl+Z goes back to the file on disk.) Cancel throws them away.'
   )
   if (!restore) {

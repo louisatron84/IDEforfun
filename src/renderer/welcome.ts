@@ -77,7 +77,7 @@ export class WelcomePage {
     const head = document.createElement('div')
     head.className = 'welcome-head'
     const title = document.createElement('h1')
-    title.textContent = 'IDEforfun'
+    title.textContent = 'Forge'
     const sub = document.createElement('p')
     sub.textContent = folder ? `Working in ${folderName(folder)}` : 'A hand-written IDE for Python'
     head.append(title, sub)

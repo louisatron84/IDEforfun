@@ -155,7 +155,7 @@ export class DebugSession {
     }
     await this.initialize(inTerminal)
     const launch = this.client.request('launch', {
-      name: 'IDEforfun', type: 'python', request: 'launch',
+      name: 'Forge', type: 'python', request: 'launch',
       ...(opts.module ? { module: opts.module } : { program: opts.program }),
       args: opts.args ?? [], cwd: opts.cwd,
       // In a terminal the program gets a real keyboard (input() works); its output shows there.
@@ -177,7 +177,7 @@ export class DebugSession {
 
   private async initialize(inTerminal: boolean): Promise<void> {
     const caps = await this.client.request('initialize', {
-      clientID: 'ideforfun', clientName: 'IDEforfun', adapterID: 'debugpy', locale: 'en',
+      clientID: 'ideforfun', clientName: 'Forge', adapterID: 'debugpy', locale: 'en',
       pathFormat: 'path', linesStartAt1: true, columnsStartAt1: true,
       supportsVariableType: true, supportsRunInTerminalRequest: inTerminal
     })
