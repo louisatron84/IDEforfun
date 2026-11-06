@@ -13,7 +13,7 @@ import { buildView, neighbourhood, type GraphViewData, type ViewNode, type ViewO
 import type { ApiBox } from '../../shared/boxes'
 import { boxBounds, drawBoxLayer, panToShow, placeBoxes, type PlacedBox } from './boxLayer'
 import { BOX_DRAG_TYPE } from '../boxes/toolbox'
-import type { RunFrame, RunView } from './liveRun'
+import type { NetSpark, RunFrame, RunView } from './liveRun'
 
 /** Connect boxes shown on the graph. */
 export interface GraphBoxHooks {
@@ -405,6 +405,32 @@ export class GraphView {
     }
   }
 
+  /** A web request finished: a spark from the code to the API (green ok, red failed), and a ring where it lands. */
+  showNet(s: NetSpark): void {
+    if (!this.layout) return
+    const centre = (r: { x: number; y: number; width: number; height: number } | undefined) => (r ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null)
+    const a = centre(this.layout.nodes.get(s.from))
+    if (!a) return
+    const b = s.to === null ? null : 'node' in s.to ? centre(this.layout.nodes.get(s.to.node)) : centre(this.placedBoxes.get(s.to.box))
+    const cls = s.ok ? 'net-ok' : 'net-failed'
+    const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+    const ring = (p: { x: number; y: number }, delay: number) => {
+      const c = svg('circle', { cx: p.x, cy: p.y, r: 6 }, `net-ring ${cls}`)
+      setTimeout(() => {
+        this.world.append(c) // above the nodes and boxes
+        setTimeout(() => c.remove(), 700)
+      }, delay)
+    }
+    if (!b || reducedMotion) return ring(b ?? a, 0)
+    const spark = svg('circle', { r: 4 }, `net-spark ${cls}`)
+    const move = svg('animateMotion', { dur: '0.45s', fill: 'freeze', path: `M${a.x},${a.y} L${b.x},${b.y}`, begin: 'indefinite' })
+    spark.append(move)
+    this.sparkLayer.append(spark)
+    ;(move as SVGAnimationElement).beginElement?.()
+    setTimeout(() => spark.remove(), 500)
+    ring(b, 420)
+  }
+
   /** The traced run ended: the glow fades and the status line comes back. */
   endRun(): void {
     this.fade(this.runGlow, 1000)
@@ -560,6 +586,19 @@ export class GraphView {
     const n = this.data.nodes.find((x) => x.id === id)
     const m = n?.module ? this.graph?.modules.find((x) => x.id === n.module) : undefined
     if (n && m) this.hooks.openModule(m.path, n.line ?? 0)
+  }
+
+  /** Open the code for a traced id (`module:qual` or `module:<module>`); false if the graph doesn't know it yet. */
+  openTraced(id: string): boolean {
+    const g = this.graph
+    if (!g) return false
+    const isModule = id.startsWith('module:')
+    const module = isModule ? id.slice(7) : id.slice(0, id.indexOf(':'))
+    const m = g.modules.find((x) => x.id === module)
+    if (!m) return false
+    const s = isModule ? undefined : m.symbols.find((x) => x.id === id)
+    this.hooks.openModule(m.path, s ? s.line - 1 : 0)
+    return true
   }
 
   private openAt(module: string, line: number): void {

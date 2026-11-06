@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { newApiBox } from '../../shared/boxes'
-import { parseTrace, planFrame, type RunView } from './liveRun'
+import { parseTrace, planFrame, planNetSpark, type RunView } from './liveRun'
+import type { NetRecord } from '../../shared/network'
 
 describe('parseTrace', () => {
   it('ticks, end, and junk', () => {
@@ -65,5 +66,37 @@ describe('planFrame', () => {
     expect(planFrame({ at: 'app.api:github_users', calls: [] }, calls, [box]).boxes).toEqual([box.id])
     expect(planFrame({ at: 'main:start', calls: [['main:start', 'app.api:github_users', 1]] }, calls, [box]).boxes).toEqual([box.id])
     expect(planFrame({ at: 'main:start', calls: [] }, calls, [box]).boxes).toEqual([])
+  })
+})
+
+describe('planNetSpark', () => {
+  const rec = (over: Partial<NetRecord>): NetRecord => ({
+    id: 1, kind: 'http', lib: 'requests', method: 'GET', url: 'https://api.github.com/users', host: 'api.github.com', status: 200, error: null,
+    start: 0, ms: 10, func: 'app.api:fetch', reqHeaders: [], respHeaders: [], reqBody: null, respBody: null, size: null, ...over
+  })
+  const modules: RunView = { mode: 'modules', nodes: new Set(['app.api', 'host:api.github.com']), edges: new Set(['app.api→host:api.github.com']) }
+  const calls: RunView = { mode: 'calls', nodes: new Set(['app.api:fetch']), edges: new Set() }
+
+  it('Modules view: from the module to the web API node, green or red', () => {
+    expect(planNetSpark(rec({}), modules, [])).toEqual({ from: 'app.api', to: { node: 'host:api.github.com' }, ok: true })
+    expect(planNetSpark(rec({ status: 500 }), modules, [])!.ok).toBe(false)
+    expect(planNetSpark(rec({ status: null, error: 'Timeout' }), modules, [])!.ok).toBe(false)
+  })
+
+  it('goes to an API box for that host beside the module, if there is one', () => {
+    const box = newApiBox([], 'GitHub')
+    box.baseUrl = 'https://API.github.com'
+    box.attach = { module: 'app.api' }
+    expect(planNetSpark(rec({}), modules, [box])!.to).toEqual({ box: box.id })
+  })
+
+  it('Calls view: from the function; just a flash when the host is not drawn', () => {
+    expect(planNetSpark(rec({}), calls, [])).toEqual({ from: 'app.api:fetch', to: null, ok: true })
+  })
+
+  it('nothing for sockets, code outside the project, or code not on screen', () => {
+    expect(planNetSpark(rec({ kind: 'socket' }), modules, [])).toBeNull()
+    expect(planNetSpark(rec({ func: null }), modules, [])).toBeNull()
+    expect(planNetSpark(rec({ func: 'other:f' }), modules, [])).toBeNull()
   })
 })

@@ -7,6 +7,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { execFileSync, spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createServer as createHttpServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { openTraceServer, traceCommand, traceEnv } from './runTrace'
 
 function findPython(): string | null {
@@ -47,7 +49,93 @@ const FILES: Record<string, string> = {
     '    print("total", start())'
   ].join('\n'),
   'fail.py': ['def boom():', '    raise ValueError("bad")', '', 'boom()'].join('\n'),
-  'exit3.py': 'import sys\nsys.exit(3)\n'
+  'exit3.py': 'import sys\nsys.exit(3)\n',
+  'net.py': [
+    'import json, socket, sys, urllib.request, urllib.error',
+    'port = int(sys.argv[1])',
+    'base = "http://127.0.0.1:%d" % port',
+    '',
+    'def fetch_users():',
+    '    req = urllib.request.Request(base + "/users?page=2&api_key=SECRET1", headers={"Authorization": "Bearer SECRET2"})',
+    '    with urllib.request.urlopen(req) as r:',
+    '        return json.loads(r.read())',
+    '',
+    'def login():',
+    '    body = json.dumps({"name": "ann", "password": "SECRET3"}).encode()',
+    '    req = urllib.request.Request(base + "/login", data=body, headers={"Content-Type": "application/json"})',
+    '    return urllib.request.urlopen(req).status',
+    '',
+    'def missing():',
+    '    try:',
+    '        urllib.request.urlopen(base + "/nope")',
+    '    except urllib.error.HTTPError as e:',
+    '        return e.code',
+    '',
+    'def refused():',
+    '    try:',
+    '        urllib.request.urlopen("http://127.0.0.1:1/x", timeout=2)',
+    '    except OSError:',
+    '        return "refused"',
+    '',
+    'def raw():',
+    '    s = socket.create_connection(("127.0.0.1", port))',
+    '    s.close()',
+    '',
+    'print(len(fetch_users()), login(), missing(), refused())',
+    'raw()'
+  ].join('\n'),
+  'libs.py': [
+    'import asyncio, sys',
+    'import requests, httpx, aiohttp',
+    'base = "http://127.0.0.1:%s" % sys.argv[1]',
+    '',
+    'def with_requests():',
+    '    return requests.get(base + "/users", headers={"X-Api-Key": "SECRET5"}).status_code',
+    '',
+    'def with_httpx():',
+    '    return httpx.get(base + "/users").status_code',
+    '',
+    'async def with_httpx_async():',
+    '    async with httpx.AsyncClient() as c:',
+    '        return (await c.get(base + "/nope")).status_code',
+    '',
+    'async def with_aiohttp():',
+    '    async with aiohttp.ClientSession() as s:',
+    '        async with s.get(base + "/users") as r:',
+    '            await r.read()',
+    '            return r.status',
+    '',
+    'print(with_requests(), with_httpx(), asyncio.run(with_httpx_async()), asyncio.run(with_aiohttp()))'
+  ].join('\n')
+}
+
+/** A small web server for the network tests: /users (JSON), /login (201), anything else 404. */
+function testServer() {
+  return createHttpServer((req, res) => {
+    req.resume()
+    req.on('end', () => {
+      if (req.url?.startsWith('/users')) {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': 'sid=SECRET4' })
+        res.end(JSON.stringify([{ id: 1 }, { id: 2 }]))
+      } else if (req.url === '/login') {
+        res.writeHead(201, { 'Content-Type': 'text/plain' })
+        res.end('ok')
+      } else {
+        res.writeHead(404)
+        res.end('not here')
+      }
+    })
+  })
+}
+
+function hasModules(...names: string[]): boolean {
+  if (!python) return false
+  try {
+    execFileSync(python, ['-c', names.map((n) => `import ${n}`).join(';')], { stdio: 'ignore', timeout: 30000 })
+    return true
+  } catch {
+    return false
+  }
 }
 
 let root = ''
@@ -109,6 +197,64 @@ describe.skipIf(!python)('run tracer (real Python)', () => {
     const r = await run(['-m', 'pkg.b'])
     expect(r.code).toBe(0)
     expect(r.stdout).toBe('b as main 8\n')
+  })
+
+  it.skipIf(!hasModules('requests', 'httpx', 'aiohttp'))('reports requests made with requests, httpx (sync and async) and aiohttp', async () => {
+    const server = testServer()
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+    const port = (server.address() as AddressInfo).port
+    try {
+      const r = await run([join(root, 'libs.py')], [String(port)])
+      expect(r.stderr).toBe('')
+      expect(r.stdout).toBe('200 200 404 200\n')
+      type Rec = { id: number; kind: string; lib: string; method: string; url: string; status: number | null; func: string | null; respBody: string | null }
+      const recs = new Map<number, Rec>()
+      for (const m of r.messages as { t: string; r?: Rec }[]) if (m.t === 'net') recs.set(m.r!.id, m.r!)
+      const all = [...recs.values()].sort((a, b) => a.id - b.id)
+      expect(all.map((x) => `${x.kind} ${x.lib} ${x.method} ${x.url.replace(String(port), 'PORT')} ${x.status} ${x.func}`)).toEqual([
+        'http requests GET http://127.0.0.1:PORT/users 200 libs:with_requests',
+        'http httpx GET http://127.0.0.1:PORT/users 200 libs:with_httpx',
+        'http httpx GET http://127.0.0.1:PORT/nope 404 libs:with_httpx_async',
+        'http aiohttp GET http://127.0.0.1:PORT/users 200 libs:with_aiohttp'
+      ])
+      expect(all[1].respBody).toBe('[{"id":1},{"id":2}]')
+      expect(all[3].respBody).toBe('[{"id":1},{"id":2}]')
+      expect(JSON.stringify(r.messages)).not.toMatch(/SECRET/)
+    } finally {
+      server.close()
+    }
+  }, 30000)
+
+  it('reports each web request and connection, with secrets masked', async () => {
+    const server = testServer()
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+    const port = (server.address() as AddressInfo).port
+    try {
+      const r = await run([join(root, 'net.py')], [String(port)])
+      expect(r.stderr).toBe('')
+      expect(r.stdout).toBe('2 201 404 refused\n')
+      type Rec = { id: number; kind: string; lib: string; method: string; url: string; host: string; status: number | null; error: string | null; ms: number | null; func: string | null; reqHeaders: [string, string][]; respHeaders: [string, string][]; reqBody: string | null; respBody: string | null }
+      // Records are re-sent as they fill in (status, then body): keep the last of each.
+      const recs = new Map<number, Rec>()
+      for (const m of r.messages as { t: string; r?: Rec }[]) if (m.t === 'net') recs.set(m.r!.id, m.r!)
+      const all = [...recs.values()].sort((a, b) => a.id - b.id)
+      expect(all.map((x) => `${x.kind} ${x.method} ${x.url} ${x.status ?? (x.error ? 'error' : '')} ${x.func}`)).toEqual([
+        `http GET http://127.0.0.1:${port}/users?page=2&api_key=•••• 200 net:fetch_users`,
+        `http POST http://127.0.0.1:${port}/login 201 net:login`,
+        `http GET http://127.0.0.1:${port}/nope 404 net:missing`,
+        'http GET http://127.0.0.1:1/x error net:refused',
+        `socket CONNECT 127.0.0.1:${port}  net:raw`
+      ])
+      expect(all[0].lib).toBe('urllib')
+      expect(all[0].reqHeaders).toContainEqual(['Authorization', '••••'])
+      expect(all[0].respHeaders).toContainEqual(['Set-Cookie', '••••'])
+      expect(all[0].respBody).toBe('[{"id":1},{"id":2}]')
+      expect(all[0].ms).toBeGreaterThanOrEqual(0)
+      expect(all[1].reqBody).toBe('{"name": "ann", "password": "••••"}')
+      expect(JSON.stringify(r.messages)).not.toMatch(/SECRET/)
+    } finally {
+      server.close()
+    }
   })
 
   it('no connection: the program still runs, untraced', async () => {

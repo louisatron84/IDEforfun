@@ -57,7 +57,9 @@ import { BoxSettings } from './boxes/boxSettings'
 import { Toolbox } from './boxes/toolbox'
 import { lineDiff as codeLineDiff, showCodeDialog } from './boxes/codeDialog'
 import { serializeBoxes } from '../shared/boxes'
-import { parseTrace, planFrame } from './graph/liveRun'
+import { parseTrace, planFrame, planNetSpark } from './graph/liveRun'
+import { NetworkView } from './networkView'
+import { NetLog, parseNet, stateOf } from '../shared/network'
 import { HistoryView } from './historyView'
 import { conflictNear, findConflicts, resolveConflict, type Conflict, type Resolution } from '../shared/conflicts'
 import { timeAgo, type BlameLine } from '../shared/history'
@@ -1773,7 +1775,8 @@ async function runCurrentFile(): Promise<void> {
   // Auto-save before running, so Python sees what's in the editor.
   if (!(await saveAllDirty((m) => output.error(`Run cancelled: ${m}`)))) return
   // With the Graph in view (and the setting on), the run shows where it's at on it.
-  const trace = settings.showRunsOnGraph && tasks.isShown('graph')
+  // With the Network panel in view, the run reports its web requests there too.
+  const trace = (settings.showRunsOnGraph && tasks.isShown('graph')) || tasks.isShown('network')
   await window.api.runPython({ ...spec, root: rootFolder ?? spec.cwd, python: settings.pythonPath || undefined, trace })
   editor.focus()
 }
@@ -1882,8 +1885,28 @@ let lastExit: { runId: number; code: number | null } | null = null
 // ---------- live run feedback (a traced run's updates) ----------
 /** Boxes whose function is running (lit like during a Test call). */
 const runBoxes = new Set<string>()
+/** Requests already sparked on the Graph (a record is re-sent as its body arrives). */
+const sparkedNet = new Set<number>()
 window.api.onRunTrace((e) => {
   if (e.runId < lastRunId) return
+  if ((e.message as { t?: unknown } | null)?.t === 'hello') {
+    netLog.begin(e.runId)
+    sparkedNet.clear()
+    networkView.setRunning(true)
+    return
+  }
+  const net = parseNet(e.message)
+  if (net) {
+    if (netLog.runId !== e.runId) return
+    netLog.upsert(net)
+    networkView.update()
+    if (stateOf(net) !== 'pending' && !sparkedNet.has(net.id) && settings.showRunsOnGraph && tasks.isShown('graph')) {
+      sparkedNet.add(net.id)
+      const spark = planNetSpark(net, graphView.runView(), boxes.boxes)
+      if (spark) graphView.showNet(spark)
+    }
+    return
+  }
   const tick = parseTrace(e.message)
   if (tick === 'end') return endRunOnGraph()
   if (!tick) return
@@ -1898,6 +1921,7 @@ window.api.onRunTrace((e) => {
 })
 function endRunOnGraph(): void {
   graphView.endRun()
+  networkView.setRunning(false)
   if (runBoxes.size) {
     runBoxes.clear()
     graphView.redrawBoxes()
@@ -2376,6 +2400,26 @@ async function loadBoxes(folder: string): Promise<void> {
   boxes.load(res?.exists && !res.error ? res.value : null)
   void boxSettings.refreshEnv()
 }
+
+// ---------- Network panel: the web requests a traced run makes ----------
+const netLog = new NetLog()
+const networkView = new NetworkView(netLog, {
+  openFunc: (func) => {
+    if (graphView.openTraced(func)) return
+    // The Graph hasn't scanned yet: open the module's file by its name.
+    const module = func.startsWith('module:') ? func.slice(7) : func.slice(0, func.indexOf(':'))
+    if (!rootFolder) return
+    const sep = rootFolder.includes('\\') ? '\\' : '/'
+    tasks.switchTo('code')
+    void openFile(rootFolder.replace(/[\\/]+$/, '') + sep + module.split('.').join(sep) + '.py', 0)
+  },
+  clear: () => {
+    netLog.clear()
+    networkView.update()
+  }
+})
+panel.addView('network', 'Network', networkView.body, networkView.actions)
+commands.register({ id: 'panel.network', title: 'Show Network (web requests while running)', run: () => panel.show('network') })
 
 const graphView = new GraphView({
   scan: () => scanProjectGraph(),

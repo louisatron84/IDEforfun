@@ -133,17 +133,17 @@ Visualisations are interactive representations of real code, not a separate prog
 - [x] Identify unused functions and potentially unreachable code where statically determinable (v0.41: possibly unused functions/classes listed and struck through; v0.46: "Code that never runs" in the Graph findings, on modules and on functions: after return / raise / break / continue, after an if/else or try whose branches all stop, and under `if False:`)
 
 ### 5.2 Live network visualisation
-- [ ] Runtime instrumentation for `requests`, `httpx` and `aiohttp`
-- [ ] Capture socket-level connections where appropriate
-- [ ] Stream runtime events to the IDE
-- [ ] Animated network graph
-- [ ] Display HTTP method, URL, status and response time
-- [ ] Click a connection to inspect request/response details
-- [ ] Request history and filtering
-- [ ] Group requests by host and originating function
-- [ ] Identify failed requests and slow endpoints
-- [ ] Timeline showing when requests occurred
-- [ ] Compare network activity between runs
+- [x] Runtime instrumentation for `requests`, `httpx` and `aiohttp` (v0.46: the run tracer hooks http.client (urllib, requests/urllib3), httpx (sync and async) and aiohttp; secrets masked before they leave the program)
+- [x] Capture socket-level connections where appropriate (v0.46: other TCP connections (databases, websockets...) as CONNECT host:port)
+- [x] Stream runtime events to the IDE (v0.46: net records over the trace socket, re-sent as they fill in)
+- [x] Animated network graph (v0.46: a spark from the code to the web API node or API box, green ok / red failed)
+- [x] Display HTTP method, URL, status and response time (v0.46: Network panel)
+- [x] Click a connection to inspect request/response details (v0.46: headers and the first 4 KB of each body)
+- [x] Request history and filtering (v0.46: this run and the last; filter by text, failed or slow)
+- [x] Group requests by host and originating function (v0.46)
+- [x] Identify failed requests and slow endpoints (v0.46: red, and slow (1 s+) marked; Failed / Slow filters)
+- [x] Timeline showing when requests occurred (v0.46: bars on lanes above the list)
+- [x] Compare network activity between runs (v0.46: endpoint by endpoint: new, gone, failing, slower, faster, more / fewer calls)
 
 ### 5.3 Visual API integration
 - [x] Drag from a file/function to an unconnected API (v0.44: drag the API box from the Toolbox onto a module)

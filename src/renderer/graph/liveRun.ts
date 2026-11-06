@@ -5,6 +5,8 @@
  */
 import type { ApiBox } from '../../shared/boxes'
 import { requestFunctions } from '../../shared/boxCode'
+import { hostOf } from '../../shared/projectGraph'
+import { stateOf, type NetRecord } from '../../shared/network'
 
 export interface TraceTick {
   /** The project function the program is in now (`module:qual`, or `module:<module>` for top-level code). */
@@ -69,4 +71,24 @@ export function planFrame(tick: TraceTick, view: RunView, boxes: readonly ApiBox
   if (tick.at) active.add(tick.at)
   const lit = boxes.filter((b) => b.attach && [...requestFunctions(b).values()].some((fn) => active.has(`${b.attach!.module}:${fn}`))).map((b) => b.id)
   return { glow, sparks, boxes: lit }
+}
+
+/** A web request on the Graph: a spark from the code that made it to the API it reached. */
+export interface NetSpark {
+  from: string
+  /** The web API node or API box it went to; null when neither is on screen (the source just flashes). */
+  to: { node: string } | { box: string } | null
+  ok: boolean
+}
+
+export function planNetSpark(r: NetRecord, view: RunView, boxes: readonly ApiBox[]): NetSpark | null {
+  if (!r.func || r.kind !== 'http') return null
+  const module = moduleOfId(r.func)
+  const from = view.mode === 'calls' ? r.func : module
+  if (!view.nodes.has(from)) return null
+  const ok = stateOf(r) !== 'failed'
+  const box = boxes.find((b) => b.attach?.module === module && hostOf(b.baseUrl) === r.host.toLowerCase())
+  if (box) return { from, to: { box: box.id }, ok }
+  const host = `host:${r.host.toLowerCase()}`
+  return { from, to: view.nodes.has(host) ? { node: host } : null, ok }
 }
