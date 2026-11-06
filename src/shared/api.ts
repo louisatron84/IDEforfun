@@ -203,9 +203,10 @@ export interface IdeApi {
   listFiles(root: string): Promise<{ path: string; rel: string }[]>
   /**
    * Get <project>/.forge ready: a legacy .ideforfun folder is renamed ('migrated'),
-   * or copied when it can't be ('copied'); 'both' = both exist (.forge is used).
+   * or copied when it can't be ('copied'); 'both' = both exist (.forge is used);
+   * 'error' = neither worked (nothing changed).
    */
-  prepareProjectDir(root: string): Promise<'none' | 'migrated' | 'copied' | 'both'>
+  prepareProjectDir(root: string): Promise<'none' | 'migrated' | 'copied' | 'both' | 'error'>
   /** Analyse every Python file of a project (for the Project Graph); `python`: the configured interpreter. */
   scanProject(root: string, python?: string): Promise<{ scan?: RawScan; error?: string }>
 

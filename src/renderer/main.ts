@@ -1412,10 +1412,11 @@ async function openFolderPath(folder: string): Promise<void> {
     folderName.textContent = folder
     folderName.classList.remove('muted')
     void window.api.recentAdd(folder).catch(() => {})
-    // Project files live in .forge/ (older projects have .forge/: moved here first).
-    const moved = await window.api.prepareProjectDir(folder).catch(() => 'none' as const)
+    // Project files live in .forge/ (older projects have .ideforfun/: moved here first).
+    const moved = await window.api.prepareProjectDir(folder).catch(() => 'error' as const)
     if (moved === 'migrated') statusNote('Moved project settings from .ideforfun/ to .forge/')
     else if (moved === 'copied') statusNote("Copied project settings to .forge/ (the old .ideforfun/ folder couldn't be moved)")
+    else if (moved === 'error') alert("This project's settings are in .ideforfun/, but Forge couldn't move or copy them to .forge/ (a file may be in use). They aren't used this time: close other programs using the folder and open it again.")
     await loadProjectSettings(folder, false)
     runConfigName = null
     lastTask = null

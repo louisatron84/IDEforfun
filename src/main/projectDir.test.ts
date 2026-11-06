@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { prepareProjectDir } from './projectDir'
@@ -48,4 +48,23 @@ describe('prepareProjectDir', () => {
     expect(existsSync(join(root, '.forge', 'run.json'))).toBe(true)
     expect(existsSync(join(root, '.ideforfun', 'run.json'))).toBe(true)
   })
+
+  it('reports an error and leaves no half-copied .forge when the copy fails too', async () => {
+    put('.ideforfun/settings.json', '{}')
+    put('.ideforfun/run.json', '{}')
+    const fail = async () => { throw Object.assign(new Error('busy'), { code: 'EBUSY' }) }
+    const res = await prepareProjectDir(root, {
+      rename: fail,
+      cp: async (from, to) => {
+        mkdirSync(to, { recursive: true })
+        writeFileSync(join(to, 'settings.json'), '{}') // got partway
+        await fail()
+      }
+    })
+    expect(res).toBe('error')
+    expect(existsSync(join(root, '.forge'))).toBe(false)
+    expect(readdirSync(root).sort()).toEqual(['.ideforfun'])
+    expect(existsSync(join(root, '.ideforfun', 'run.json'))).toBe(true)
+  })
 })
+
