@@ -281,7 +281,8 @@ export class DebugSession {
   }
 
   /** Run an expression in the paused frame (Debug Console). */
-  async evaluate(expression: string, frameId?: number, context: 'repl' | 'hover' | 'watch' = 'repl'): Promise<{ result: string; ref: number }> {
+  /** 'clipboard' gives the whole value (the others may shorten long ones). */
+  async evaluate(expression: string, frameId?: number, context: 'repl' | 'hover' | 'watch' | 'clipboard' = 'repl'): Promise<{ result: string; ref: number }> {
     const res = await this.client.request('evaluate', { expression, frameId, context })
     return { result: res.result ?? '', ref: res.variablesReference ?? 0 }
   }

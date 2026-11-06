@@ -32,7 +32,7 @@ import { pyright } from './lsp/pyright'
 import { ProblemsView } from './problemsView'
 import { Tooltip } from './tooltip'
 import { BreakpointStore, breakpointStyle } from './debug/breakpoints'
-import { DebugSession, type ChildConfig, type ExceptionFilter, type PauseInfo, type StackFrame } from './debug/session'
+import { DebugSession, type ChildConfig, type ExceptionFilter, type PauseInfo, type StackFrame, type Variable } from './debug/session'
 import { DebugView } from './debug/debugView'
 import { Completion } from './completion'
 import { hoverSections } from './lsp/markdown'
@@ -59,6 +59,11 @@ import { lineDiff as codeLineDiff, showCodeDialog } from './boxes/codeDialog'
 import { serializeBoxes } from '../shared/boxes'
 import { parseTrace, planFrame, planNetSpark } from './graph/liveRun'
 import { NetworkView } from './networkView'
+import { DebugTrail, frameNode } from './graph/debugTrail'
+import { GROUP_ROWS, historyView as debugHistoryView, valueCard } from './graph/debugCards'
+import { drawObjectGraph } from './graph/objectGraph'
+import { objectGraphExpression, parseObjectGraph } from '../shared/objectGraph'
+import { funcLabel } from '../shared/network'
 import { NetLog, parseNet, stateOf } from '../shared/network'
 import { HistoryView } from './historyView'
 import { conflictNear, findConflicts, resolveConflict, type Conflict, type Resolution } from '../shared/conflicts'
@@ -533,6 +538,7 @@ async function startDebugging(given?: LaunchSpec): Promise<void> {
   lastDebugSpec = spec
 
   processes = []
+  debugTrail = new DebugTrail()
   const s = addDebugProcess(0, (spec.program ?? spec.module ?? 'program').split(/[\\/]/).pop() ?? 'program')
   rootSession = s
   session = s
@@ -573,6 +579,7 @@ function addDebugProcess(id: number, name: string): DebugSession {
       renderProcesses()
       if (session !== s) return
       debugView.setState(state)
+      if (state === 'running') graphView.debugRunning()
       if (state === 'running' && pausedAt) {
         pausedAt = null
         updateLineMarkers()
@@ -632,6 +639,7 @@ async function debugProcessEnded(s: DebugSession, code: number | null): Promise<
   }
   // The program ended: stop its child processes too, then the adapter.
   tasks.endDebug()
+  graphView.endDebug()
   const children = processes.filter((x) => x !== p)
   processes = []
   session = s
@@ -672,6 +680,64 @@ async function onPaused(info: PauseInfo): Promise<void> {
   panel.show('debug')
   const frame = debugView.currentFrame
   if (frame) await showFrame(frame)
+  void showPauseOnGraph(info)
+}
+
+// ---------- the Graph while debugging (5.5) ----------
+/** This debug session's pauses: the stacks, the calls seen, each pause's variables. */
+let debugTrail = new DebugTrail()
+
+/** Record a pause, and show it on the Graph: the stack, new calls, and the paused function's variables beside it. */
+async function showPauseOnGraph(info: PauseInfo): Promise<void> {
+  const s = session
+  const g = graphView.projectGraph
+  const top = info.frames[0]
+  if (!s || !g || !rootFolder || !top) return
+  const stack = info.frames.map((f) => frameNode(f, g, rootFolder!))
+  let vars: Variable[] = []
+  try {
+    const scopes = await s.scopes(top.id)
+    const locals = scopes.find((x) => /local/i.test(x.name)) ?? scopes[0]
+    if (locals) vars = await s.variables(locals.ref)
+  } catch {
+    // running again already
+  }
+  if (s.state !== 'paused') return
+  const stop = debugTrail.addStop({
+    reason: info.reason,
+    stack,
+    vars: Object.fromEntries(vars.filter((v) => !GROUP_ROWS.has(v.name)).map((v) => [v.name, v.value]))
+  })
+  if (!tasks.isShown('graph')) return
+  const at = stop.stack[0] ?? null
+  const label = at ? funcLabel(at) : top.name
+  const card = at
+    ? valueCard({
+        title: `${label} · pause #${stop.n}`,
+        vars,
+        expand: (ref) => s.variables(ref),
+        actions: [
+          { label: 'Objects', title: 'How the objects in its variables point to each other', run: () => void showObjects(s, top.id, label) },
+          { label: 'History', title: 'Its variables at each pause, and compare two pauses', run: () => graphView.reveal(graphView.runView().mode === 'calls' ? at : at.startsWith('module:') ? at.slice(7) : at.slice(0, at.indexOf(':'))) }
+        ]
+      })
+    : null
+  graphView.showDebug({ at, stack: stop.stack, newEdges: stop.newEdges, card })
+}
+
+/** Object relationships: evaluate Forge's helper in the paused frame and draw what it finds. */
+async function showObjects(s: DebugSession, frameId: number, label: string): Promise<void> {
+  let text = ''
+  try {
+    text = (await s.evaluate(objectGraphExpression(), frameId, 'clipboard')).result
+  } catch (err) {
+    graphView.showOverlay(`Objects in ${label}`, document.createTextNode(`Couldn't look at the objects: ${err instanceof Error ? err.message : String(err)}`))
+    return
+  }
+  const og = parseObjectGraph(text)
+  if (!og) return graphView.showOverlay(`Objects in ${label}`, document.createTextNode(`Couldn't read the objects (${text.slice(0, 200)})`))
+  if (!og.nodes.length) return graphView.showOverlay(`Objects in ${label}`, document.createTextNode('Its variables only hold simple values (numbers, text...), no objects to draw.'))
+  graphView.showOverlay(`Objects in ${label} (variables on the left; arrows are references)`, drawObjectGraph(og))
 }
 
 /** Open a stack frame's file at its line and mark it as the paused line. */
@@ -2423,6 +2489,7 @@ commands.register({ id: 'panel.network', title: 'Show Network (web requests whil
 
 const graphView = new GraphView({
   scan: () => scanProjectGraph(),
+  debugHistory: (node) => debugHistoryView(debugTrail, node),
   boxes: {
     list: () => boxes.boxes,
     selected: () => boxes.selected,

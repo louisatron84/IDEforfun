@@ -1676,3 +1676,49 @@ button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 .change-failing .net-change, .change-gone .net-change, .change-slower .net-change { color: var(--err); }
 .change-new .net-change, .change-more .net-change, .change-fewer .net-change { color: var(--info); }
 .change-faster .net-change, .change-fixed .net-change { color: var(--ok); }
+
+/* ---------- Graph while debugging: paused function, its stack, variables card ---------- */
+.gnode.debug-at rect:first-of-type { stroke: var(--heat-1); stroke-width: 3; filter: drop-shadow(0 0 8px var(--heat-3)); }
+.gnode.debug-stack rect:first-of-type { stroke: var(--heat-3); stroke-width: 2; stroke-dasharray: 5 3; }
+.gedge.debug-edge, path.debug-edge { stroke: var(--heat-2); stroke-width: 2.5; }
+:root[data-theme="plain"] .gnode.debug-at rect:first-of-type { stroke: var(--fg); filter: none; }
+:root[data-theme="plain"] .gnode.debug-stack rect:first-of-type, :root[data-theme="plain"] path.debug-edge { stroke: var(--fg); }
+.graph-debug-card { position: absolute; z-index: 3; width: 290px; max-height: 60%; overflow: auto; background: var(--bg-panel); border: 1px solid var(--line-strong); border-radius: var(--radius); box-shadow: var(--shadow); font-size: 12px; cursor: default; }
+.graph-debug-card-head { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-bottom: 1px solid var(--border); font-weight: 600; position: sticky; top: 0; background: var(--bg-panel); }
+.graph-debug-card-head > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-debug-card-action { background: var(--raised); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius); padding: 1px 6px; font: inherit; font-weight: normal; cursor: pointer; }
+.graph-debug-card-action:hover { background: var(--bg-hover); }
+.graph-debug-vars { padding: 4px 0; }
+.graph-debug-var-row { display: flex; gap: 4px; align-items: baseline; padding: 1px 8px; font-family: var(--font-code); }
+.graph-debug-twisty { width: 14px; background: none; border: 0; padding: 0; color: var(--fg-muted); cursor: pointer; font: inherit; }
+.graph-debug-twisty:disabled { cursor: default; }
+.graph-debug-name { color: var(--accent); white-space: nowrap; }
+.graph-debug-eq { color: var(--fg-muted); }
+.graph-debug-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.graph-debug-empty { padding: 2px 10px; color: var(--fg-muted); }
+.graph-debug-note { color: var(--fg-muted); padding: 2px 0 6px; }
+.graph-debug-history { padding: 4px 12px 8px; font-size: 12px; }
+.graph-debug-history table { border-collapse: collapse; width: 100%; font-family: var(--font-code); }
+.graph-debug-history th { text-align: left; color: var(--fg-muted); font-weight: 600; padding: 2px 4px; border-bottom: 1px solid var(--border); }
+.graph-debug-history td { padding: 2px 4px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-debug-history td.changed { background: var(--highlight); color: var(--fg); font-weight: 600; }
+.graph-debug-compare { margin-top: 8px; }
+.graph-debug-compare-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 4px; }
+.graph-debug-compare select { background: var(--bg-panel); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius); font: inherit; max-width: 100%; }
+.graph-debug-diff-row { display: flex; gap: 6px; padding: 1px 0; font-family: var(--font-code); }
+.graph-debug-diff-row.changed .graph-debug-name { color: var(--warn); }
+.graph-debug-diff-row.added .graph-debug-name { color: var(--ok); }
+.graph-debug-diff-row.removed .graph-debug-name { color: var(--err); }
+
+/* A panel over the graph canvas: object relationships, recursion trees. */
+.graph-overlay { position: absolute; inset: 16px; z-index: 4; display: flex; flex-direction: column; background: var(--bg-panel); border: 1px solid var(--line-strong); border-radius: var(--radius); box-shadow: var(--shadow); cursor: default; }
+.graph-overlay-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--border); font-weight: 600; }
+.graph-overlay-body { flex: 1; overflow: auto; padding: 10px; }
+.object-graph, .recursion-tree { display: block; max-width: 100%; height: auto; font-family: var(--font-code); font-size: 11px; }
+.obj-node rect { fill: var(--raised); stroke: var(--line-strong); }
+.obj-var rect { fill: var(--bg-active); stroke: var(--accent); }
+.obj-var text, .obj-type { fill: var(--fg); font-weight: 600; }
+.obj-field { fill: var(--fg-muted); }
+.obj-wire { fill: none; stroke: var(--fg-muted); stroke-width: 1.3; }
+.obj-arrowhead { fill: var(--fg-muted); }
+.obj-label { fill: var(--accent); font-size: 10px; }
