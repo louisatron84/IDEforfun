@@ -1,0 +1,206 @@
+/*
+ * Forge colour tokens: the only place colours are defined (styles.css uses var(--…)).
+ * Molten is the default; Plain is the black-and-white high-contrast theme.
+ * Both blocks must define the same tokens (checked by src/main/theme.test.ts).
+ * Spec: docs/superpowers/specs/2026-11-06-forge-design.md (Part 1).
+ */
+
+/* ---------- Molten (default) ---------- */
+:root {
+  color-scheme: dark;
+
+  /* type and shape */
+  --font-ui: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-code: 'Cascadia Code', Consolas, 'Courier New', monospace;
+  --code-size: 14px;
+  --line-height: 20px;
+  --radius: 0;
+  --grid: #ff6a1a0d;
+
+  /* surfaces */
+  --bg: #120c0a;
+  --bg-panel: #170e0b;
+  --raised: #1d120e;
+  --bg-hover: #24150f;
+  --bg-active: #3a2017;
+  --border: #3a2017;
+  --line-strong: #5a3322;
+  --overlay: #00000073;
+  --shadow: #00000080;
+
+  /* text */
+  --fg: #f3e2d4;
+  --fg-muted: #a08576;
+  --accent: #ffb02e;
+  --on-accent: #1a0904;
+  --link: #ffc857;
+
+  /* heat: only for what's active, running or connected */
+  --heat-1: #ffcf5c;
+  --heat-2: #ffb02e;
+  --heat-3: #ff6a1a;
+  --heat-4: #e8431d;
+  --on-heat: #1a0904;
+
+  /* status */
+  --err: #ff5a4e;
+  --warn: #ffb02e;
+  --ok: #9fcf7a;
+  --info: #7cc4e8;
+  --sev-1: #ff5a4e;
+  --sev-2: #ffb02e;
+  --sev-3: #7cc4e8;
+
+  /* editor */
+  --selection: #5a2a14;
+  --selection-unfocused: #2e1a12;
+  --match: #ffb02e4d;
+  --highlight: #ffffff1a;
+  --highlight-strong: #ffffff40;
+  --shade: #ffffff12;
+  --shade-strong: #ffffff26;
+  --breakpoint: #ff5a4e;
+  --bp-ring: #ffffff33;
+  --exec-line: #ffb02e26;
+  --exec-arrow: #ffcf5c;
+  --minimap-view: #ffffff1a;
+
+  /* git, diffs, merge conflicts */
+  --git-modified: #ffc857;
+  --git-added: #9fcf7a;
+  --git-deleted: #ff5a4e;
+  --git-conflict: #ff5a4e;
+  --diff-add: #9fcf7a26;
+  --diff-del: #ff5a4e29;
+  --conflict-current: #9fcf7a24;
+  --conflict-incoming: #7cc4e829;
+
+  /* history: branch labels and graph lanes */
+  --ref-bg: #7cc4e833;
+  --ref-border: #7cc4e880;
+  --ref-head-bg: #9fcf7a40;
+  --ref-head-border: #9fcf7a99;
+  --ref-tag-bg: #ffb02e33;
+  --ref-tag-border: #ffb02e80;
+  --lane-1: #ffb02e;
+  --lane-2: #7cc4e8;
+  --lane-3: #9fcf7a;
+  --lane-4: #ff6a3d;
+  --lane-5: #c79bf2;
+  --lane-6: #f2c879;
+  --lane-7: #4fd1c5;
+  --lane-8: #e88aa8;
+
+  /* project graph */
+  --graph-out: #ffb02e;
+  --graph-in: #7cc4e8;
+
+  /* syntax */
+  --tok-keyword: #ff6a3d;
+  --tok-constant: #ff8f5a;
+  --tok-builtin: #e0b48a;
+  --tok-self: #d98a6a;
+  --tok-function: #ffc857;
+  --tok-class: #ffd27a;
+  --tok-call: #f5c98a;
+  --tok-decorator: #d9a35f;
+  --tok-string: #e8a87c;
+  --tok-number: #f0a36b;
+  --tok-comment: #a0806f;
+  --tok-property: #ffc857;
+}
+
+/* ---------- Plain: black and white, high contrast ---------- */
+:root[data-theme="plain"] {
+  color-scheme: dark;
+
+  --font-ui: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-code: 'Cascadia Code', Consolas, 'Courier New', monospace;
+  --code-size: 14px;
+  --line-height: 20px;
+  --radius: 0;
+  --grid: transparent;
+
+  --bg: #000000;
+  --bg-panel: #000000;
+  --raised: #0d0d0d;
+  --bg-hover: #1f1f1f;
+  --bg-active: #333333;
+  --border: #8a8a8a;
+  --line-strong: #ffffff;
+  --overlay: #000000a6;
+  --shadow: #000000;
+
+  --fg: #ffffff;
+  --fg-muted: #c8c8c8;
+  --accent: #ffffff;
+  --on-accent: #000000;
+  --link: #ffffff;
+
+  --heat-1: #ffffff;
+  --heat-2: #ffffff;
+  --heat-3: #ffffff;
+  --heat-4: #ffffff;
+  --on-heat: #000000;
+
+  --err: #ff6b6b;
+  --warn: #ffd75e;
+  --ok: #8fe388;
+  --info: #8cc8ff;
+  --sev-1: #ff6b6b;
+  --sev-2: #ffd75e;
+  --sev-3: #8cc8ff;
+
+  --selection: #264f78;
+  --selection-unfocused: #333333;
+  --match: #ffffff40;
+  --highlight: #ffffff26;
+  --highlight-strong: #ffffff59;
+  --shade: #ffffff14;
+  --shade-strong: #ffffff29;
+  --breakpoint: #ff6b6b;
+  --bp-ring: #ffffff55;
+  --exec-line: #ffffff1f;
+  --exec-arrow: #ffffff;
+  --minimap-view: #ffffff1f;
+
+  --git-modified: #ffd75e;
+  --git-added: #8fe388;
+  --git-deleted: #ff6b6b;
+  --git-conflict: #ff6b6b;
+  --diff-add: #8fe38826;
+  --diff-del: #ff6b6b29;
+  --conflict-current: #8fe38824;
+  --conflict-incoming: #8cc8ff29;
+
+  --ref-bg: #ffffff1a;
+  --ref-border: #ffffff80;
+  --ref-head-bg: #ffffff33;
+  --ref-head-border: #ffffff;
+  --ref-tag-bg: #ffffff1a;
+  --ref-tag-border: #ffffff80;
+  --lane-1: #ffffff;
+  --lane-2: #8cc8ff;
+  --lane-3: #8fe388;
+  --lane-4: #ffd75e;
+  --lane-5: #ff9e9e;
+  --lane-6: #d0b3ff;
+  --lane-7: #9ee8e0;
+  --lane-8: #ffb3d1;
+
+  --graph-out: #ffffff;
+  --graph-in: #8cc8ff;
+
+  --tok-keyword: #ffffff;
+  --tok-constant: #ffffff;
+  --tok-builtin: #e0e0e0;
+  --tok-self: #e0e0e0;
+  --tok-function: #ffffff;
+  --tok-class: #ffffff;
+  --tok-call: #f0f0f0;
+  --tok-decorator: #d0d0d0;
+  --tok-string: #c8c8c8;
+  --tok-number: #e0e0e0;
+  --tok-comment: #9a9a9a;
+  --tok-property: #ffffff;
+}

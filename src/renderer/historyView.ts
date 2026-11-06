@@ -18,8 +18,19 @@ export interface HistoryHooks {
 const PAGE = 300
 const LANE = 14
 const ROW = 24
-const COLORS = ['#3b8eea', '#e5a50a', '#2fb170', '#d6487e', '#9b6dd6', '#13a6b8', '#e2734a', '#7aa02a']
-const color = (col: number) => COLORS[col % COLORS.length]
+/** Lane colours come from the theme (--lane-1 … --lane-8 in theme.css). */
+const LANES = 8
+let laneCache: { theme: string | undefined; colours: string[] } | null = null
+/** Read once per theme (getComputedStyle is too slow to call for every row). */
+function laneColours(): string[] {
+  const theme = document.documentElement.dataset.theme
+  if (laneCache?.theme !== theme) {
+    const css = getComputedStyle(document.documentElement)
+    laneCache = { theme, colours: Array.from({ length: LANES }, (_, i) => css.getPropertyValue(`--lane-${i + 1}`).trim() || 'gray') }
+  }
+  return laneCache!.colours
+}
+const color = (col: number) => laneColours()[col % LANES]
 
 export class HistoryView {
   readonly body: HTMLDivElement
