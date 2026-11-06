@@ -970,7 +970,7 @@ body { display: flex; flex-direction: column; }
   width: 10px;
   height: 10px;
   margin-top: -5px;
-  border-radius: var(--radius);
+  border-radius: 50%;
 }
 .editor .gutter-lines > div:hover::before { background: var(--breakpoint); opacity: 0.35; }
 .editor .gutter-lines > div.bp::before { background: var(--breakpoint); opacity: 1; }
@@ -1356,7 +1356,7 @@ button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 .graph-note[hidden] { display: none; }
 
 .gnode { cursor: pointer; transition: opacity 0.12s; }
-.gnode rect:first-of-type { fill: var(--bg-panel); stroke: var(--border); stroke-width: 1; }
+.gnode rect:first-of-type { fill: var(--raised); stroke: var(--line-strong); stroke-width: 1; }
 .gnode .glabel { fill: var(--fg); font: 600 12px var(--font-code); }
 .gnode .gdetail { fill: var(--fg-muted); font: 11px var(--font-ui); }
 .gnode.k-external rect:first-of-type, .gnode.k-host rect:first-of-type { fill: var(--bg); stroke-dasharray: 4 3; }
@@ -1443,11 +1443,13 @@ button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 /* Graph nodes: square; the selected one gets a hot border and a hard offset shadow. */
 .gnode.selected rect:first-of-type, .graph-svg.hl .gnode.focus rect:first-of-type { stroke: var(--heat-2); stroke-width: 2; }
 .gnode.selected { filter: drop-shadow(3px 3px 0 var(--ember-shadow)); }
-.gnode.cyc rect:first-of-type, .gedge.cyc { stroke: var(--heat-4); }
-.arrow.cyc, .gnode.err .glabel { fill: var(--heat-4); }
+.gnode.cyc rect:first-of-type, .gedge.cyc { stroke: var(--err); }
+.arrow.cyc, .gnode.err .glabel { fill: var(--err); }
 
 /* Calm when asked: no movement at all. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
 
+/* Angled buttons clip their outline away: draw keyboard focus inside the shape instead. */
+#toolbar button:focus-visible, .git-primary:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--fg); }

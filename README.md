@@ -100,7 +100,7 @@ the app's data folder, which you can also edit by hand ("Edit Keyboard Shortcuts
   folder open makes a new project folder and opens it. Turn it off with the tick box at the bottom.
 - The last project reopens at startup with its tabs, split, cursor positions, terminals
   and bottom panel (turn this off in Settings). Each project remembers its own layout.
-- A project can override some settings in `.ideforfun/settings.json`
+- A project can override some settings in `.forge/settings.json` (projects from before the rename have `.ideforfun/`; Forge moves it on first open)
   (File → Preferences → Project Settings):
 
 ```json
@@ -137,7 +137,7 @@ the app's data folder, which you can also edit by hand ("Edit Keyboard Shortcuts
   file, or one test (▶ on its row, or "Run Test at Cursor"). Failures show their message;
   click to jump to the failing line, ▸ for the full traceback. Uses pytest when it's
   installed (offers to install it), otherwise unittest.
-- Run configurations and tasks live in `.ideforfun/run.json` (Run → Edit Run Configurations).
+- Run configurations and tasks live in `.forge/run.json` (Run → Edit Run Configurations).
   Click **▶** in the status bar (or Run → Select Run Configuration) to choose what F5 /
   Ctrl+F5 run; "Current file" is the default. Configurations work for debugging too.
   Tasks are shell commands, each run in its own terminal (Ctrl+Shift+B).
@@ -165,7 +165,7 @@ the app's data folder, which you can also edit by hand ("Edit Keyboard Shortcuts
   - `workspace.ts` + `tabBar.ts`: open files and tabs
   - `keymap.ts`: every command and shortcut, registered once (the palette lists them)
   - `findBar.ts`, `panel.ts`, `outputView.ts`, `terminalView.ts`, `settingsView.ts`, `palette.ts`, `fuzzy.ts`
-- `styles.css`: all colors are CSS variables (dark + light themes), ready for a redesign
+- `theme.css`: every colour, as tokens for the Molten (default) and Plain themes; `styles.css` only uses `var(--…)` (guard tests in `src/main/theme.test.ts`)
 
 ## Third-party code
 Everything above is hand-written except three pieces: the integrated terminal uses

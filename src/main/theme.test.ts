@@ -115,3 +115,31 @@ describe('Smithy schematic shapes', () => {
     expect(read('src/renderer/index.html')).toMatch(/<header id="toolbar">\s*<span class="wordmark">Forge<\/span>/)
   })
 })
+
+describe('review fixes', () => {
+  const rules = cssRules(styles)
+  /** The body of the last rule whose selector list contains `selector` (later rules win). */
+  const last = (selector: string) => [...rules].reverse().find((r) => r.selector.split(',').map((x) => x.trim()).includes(selector))?.body ?? ''
+
+  it('graph nodes stand out from the canvas: raised fill, strong outline', () => {
+    expect(last('.gnode rect:first-of-type')).toMatch(/fill: var\(--raised\)/)
+    expect(last('.gnode rect:first-of-type')).toMatch(/stroke: var\(--line-strong\)/)
+    expect(contrast(molten['--line-strong'], molten['--bg'])).toBeGreaterThanOrEqual(1.5)
+  })
+
+  it('angled buttons show keyboard focus inside their clip', () => {
+    for (const sel of ['#toolbar button:focus-visible', '.git-primary:focus-visible']) expect(last(sel), sel).toMatch(/box-shadow: inset 0 0 0 2px var\(--fg\)/)
+  })
+
+  it('graph errors and import cycles use the error colour (not heat, which is white in Plain)', () => {
+    expect(last('.gnode.err .glabel')).toMatch(/fill: var\(--err\)/)
+    expect(last('.arrow.cyc')).toMatch(/fill: var\(--err\)/)
+    expect(last('.gedge.cyc')).toMatch(/stroke: var\(--err\)/)
+    expect(plain['--err']).not.toBe(plain['--fg'])
+  })
+
+  it('breakpoints stay round dots', () => {
+    expect(last('.editor .gutter-lines > div::before')).toMatch(/border-radius: 50%/)
+  })
+})
+
