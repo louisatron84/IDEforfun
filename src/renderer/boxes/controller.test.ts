@@ -6,13 +6,17 @@ function memory(initial: Record<string, string> = {}) {
   const files = new Map(Object.entries(initial))
   const notes: string[] = []
   const saved: BoxesFile[] = []
+  const unsaved = new Set<string>()
   const io: BoxFiles = {
     read: async (rel) => files.get(rel) ?? null,
-    write: async (rel, text) => void files.set(rel, text),
+    write: async (rel, text) => {
+      files.set(rel, text)
+      return unsaved.has(rel) ? 'unsaved' : 'saved'
+    },
     saveBoxes: async (file) => void saved.push(JSON.parse(JSON.stringify(file))),
     note: (m) => void notes.push(m)
   }
-  return { files, notes, saved, io }
+  return { files, notes, saved, io, unsaved }
 }
 
 const RESPONSE = { items: [{ a: 1, b: { c: 'x' } }, { a: 2 }], total: 2 }
@@ -166,6 +170,50 @@ describe('BoxController', () => {
     const before = m.files.get(req.output)
     await ctrl.update(box.id, (b) => (b.baseUrl = 'https://x.org'))
     expect(m.files.get(req.output)).toBe(before)
+  })
+
+  it('a different response replaces ticks that no longer exist', async () => {
+    const { ctrl, id } = await written()
+    const req = ctrl.get(id)!.requests[0]
+    await ctrl.setTest(id, req.id, { ok: true, ms: 1, json: RESPONSE })
+    await ctrl.update(id, (b) => (b.requests[0].ticked = ['a', 'b.c']))
+    await ctrl.setTest(id, req.id, { ok: true, ms: 1, json: [{ a: 5, z: 1 }] })
+    expect(ctrl.get(id)!.requests[0].ticked).toEqual(['a'])
+    await ctrl.setTest(id, req.id, { ok: true, ms: 1, json: [{ x: 1, y: { q: 2 } }] })
+    expect(ctrl.get(id)!.requests[0].ticked).toEqual(['x'])
+  })
+
+  it('an HTTP error says its status, whatever the body is', async () => {
+    const { ctrl, id } = await written()
+    const req = ctrl.get(id)!.requests[0]
+    await ctrl.setTest(id, req.id, { ok: false, status: 404, statusText: 'Not Found', ms: 1, text: '<html>nope</html>' })
+    expect(ctrl.get(id)!.requests[0].test!.error).toBe('404 Not Found')
+    await ctrl.setTest(id, req.id, { ok: true, status: 200, statusText: 'OK', ms: 1, text: '<html>hi</html>' })
+    expect(ctrl.get(id)!.requests[0].test!.error).toBe("The response isn't JSON, so there are no fields to pick.")
+  })
+
+  it('a file with other unsaved edits: the note says the change is not saved', async () => {
+    const { m, ctrl, id } = await written()
+    m.unsaved.add('api/github.py')
+    await ctrl.update(id, (b) => (b.requests[0].name = 'users'))
+    expect(m.notes.at(-1)).toBe('Updated api/github.py from the GitHub box (not saved: the file has other unsaved edits)')
+  })
+
+  it('the block as Forge wrote it one change earlier still counts as Forge\'s (the newer one was never saved)', async () => {
+    const { m, ctrl, id } = await written()
+    const older = m.files.get('api/github.py')!
+    await ctrl.update(id, (b) => (b.requests[0].name = 'users'))
+    m.files.set('api/github.py', older)
+    expect(await ctrl.state(id)).toBe('ok')
+    await ctrl.update(id, (b) => (b.requests[0].name = 'people'))
+    expect(m.files.get('api/github.py')).toContain('def github_people(')
+  })
+
+  it('idle waits for changes still being applied', async () => {
+    const { ctrl, id } = await written()
+    void ctrl.update(id, (b) => (b.requests[0].testArgs = { x: '1' }))
+    await ctrl.idle()
+    expect(ctrl.get(id)!.requests[0].testArgs).toEqual({ x: '1' })
   })
 
   it('setTest with an error keeps the old fields', async () => {

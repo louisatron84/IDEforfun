@@ -17,6 +17,19 @@ beforeAll(async () => {
   writeFileSync(join(root, '.env'), 'FORGE_TEST_TOKEN=from-dotenv\n')
   server = createServer((req, res) => {
     lastAuth = req.headers.authorization
+    const port = (server.address() as AddressInfo).port
+    if (req.url === '/hop') {
+      res.statusCode = 302
+      res.setHeader('Location', `http://127.0.0.1:${port}/users`)
+      res.end()
+      return
+    }
+    if (req.url === '/away') {
+      res.statusCode = 302
+      res.setHeader('Location', `http://localhost:${port}/users`)
+      res.end()
+      return
+    }
     if (req.url === '/users') {
       res.setHeader('Content-Type', 'application/json')
       res.end(JSON.stringify([{ login: 'ann' }, { login: 'bo' }]))
@@ -60,6 +73,21 @@ describe('test call', () => {
   it('text that is not JSON', async () => {
     const b = box('/text')
     expect(await testCall(root, b, b.requests[0].id)).toMatchObject({ ok: true, text: 'hello there' })
+  })
+
+  it('a malformed URL is a friendly error', async () => {
+    const b = box('https://exa mple.com/x')
+    b.baseUrl = ''
+    expect((await testCall(root, b, b.requests[0].id)).error).toBe("That URL isn't valid: https://exa mple.com/x")
+  })
+
+  it('redirects: followed on the same site, refused to another site (the key is not sent there)', async () => {
+    const b = box('/hop')
+    expect(await testCall(root, b, b.requests[0].id)).toMatchObject({ ok: true, status: 200 })
+    const c = box('/away')
+    const r = await testCall(root, c, c.requests[0].id)
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/redirected to localhost/)
   })
 
   it('too big', async () => {

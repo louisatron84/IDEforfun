@@ -81,6 +81,8 @@ export interface ApiBox {
   requests: ApiRequest[]
   /** Hash of the code block as Forge last wrote it (null: not written yet). */
   hash: string | null
+  /** The hash before that: the newest block may not have been saved (the file had other unsaved edits). */
+  prevHash?: string | null
   /** "Keep my edits": the box no longer updates its code. */
   detached: boolean
 }
@@ -252,6 +254,7 @@ export function normalizeBoxes(raw: unknown): ApiBox[] {
     }
     box.attach = isObj(item.attach) && typeof item.attach.module === 'string' ? { module: item.attach.module } : null
     box.hash = typeof item.hash === 'string' ? item.hash : null
+    if (typeof item.prevHash === 'string') box.prevHash = item.prevHash
     box.detached = item.detached === true
     if (Array.isArray(item.requests)) {
       box.requests = []
@@ -270,7 +273,14 @@ export function serializeBoxes(boxes: readonly ApiBox[]): BoxesFile {
       ...b,
       requests: b.requests.map((r) => {
         if (!r.test) return { ...r }
-        const { sample: _sample, ...test } = r.test
+        // Only how the last test call went: nothing from the response (it could end up in git).
+        const { ok, at, status, statusText, count, ms, error } = r.test
+        const test: TestSummary = { ok, at }
+        if (status !== undefined) test.status = status
+        if (statusText !== undefined) test.statusText = statusText
+        if (count !== undefined) test.count = count
+        if (ms !== undefined) test.ms = ms
+        if (error !== undefined) test.error = error
         return { ...r, test }
       })
     }))

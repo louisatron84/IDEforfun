@@ -38,6 +38,8 @@ export class DockView {
   private readonly store: HTMLDivElement
   private current: DockNode | null = null
   private visible = new Set<string>()
+  /** Last scroll position of everything scrolled inside the dock. */
+  private readonly scrolls = new Map<Element, { top: number; left: number }>()
   private _editing = false
 
   constructor(private readonly container: HTMLElement, private readonly hooks: DockHooks) {
@@ -46,6 +48,10 @@ export class DockView {
     this.store.hidden = true
     container.classList.add('dock')
     container.append(this.rootEl, this.store)
+    container.addEventListener('scroll', (e) => {
+      const t = e.target
+      if (t instanceof Element) this.scrolls.set(t, { top: t.scrollTop, left: t.scrollLeft })
+    }, true)
   }
 
   register(def: PanelDef): void {
@@ -106,6 +112,13 @@ export class DockView {
       }
     }
     this.rootEl.replaceChildren(this.node(root))
+    // Moving an element out of the page loses its scroll position: put it back.
+    for (const [elem, pos] of this.scrolls) {
+      if (!elem.isConnected) continue
+      if (elem.scrollTop !== pos.top) elem.scrollTop = pos.top
+      if (elem.scrollLeft !== pos.left) elem.scrollLeft = pos.left
+    }
+    for (const elem of [...this.scrolls.keys()]) if (!elem.isConnected) this.scrolls.delete(elem)
     for (const id of this.visible) if (!before.has(id)) this.panels.get(id)?.onShow?.()
   }
 
@@ -119,7 +132,8 @@ export class DockView {
     n.children.forEach((c, i) => {
       if (i > 0) box.append(this.divider(n, i - 1, box))
       const cell = el('dock-cell')
-      cell.style.flex = `${n.sizes[i]} 1 0`
+      // A collapsed stack (the drawer after Ctrl+J) is only its tab strip: the rest of the split gets the space.
+      cell.style.flex = c.kind === 'stack' && c.collapsed ? '0 0 auto' : `${n.sizes[i]} 1 0`
       cell.append(this.node(c))
       box.append(cell)
     })

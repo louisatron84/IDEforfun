@@ -8,6 +8,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import type { ShellProfile, TerminalEvent } from '../shared/api'
+import { isAppShortcut } from './terminalKeys'
 
 function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
@@ -81,6 +82,7 @@ class TerminalSession {
         return false
       }
       if (ctrl && key === 'v') return false // let the browser fire a paste event, which xterm handles
+      if (isAppShortcut(e)) return false // Forge's own shortcuts (switch task...), not the shell's
       return true
     })
   }

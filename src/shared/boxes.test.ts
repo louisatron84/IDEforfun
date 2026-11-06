@@ -94,10 +94,16 @@ describe('boxes.json', () => {
   it('serializeBoxes round-trips and leaves out response samples', () => {
     const box = newApiBox([], 'GitHub')
     box.auth = { kind: 'bearer', env: 'GITHUB_TOKEN' }
-    box.requests[0].test = { ok: true, at: 1, status: 200, count: 1, ms: 5, fields: [], sample: [{ secret: 'x' }] }
+    box.requests[0].test = {
+      ok: true, at: 1, status: 200, count: 1, ms: 5, sample: [{ secret: 'x' }],
+      fields: [{ path: ['email'], name: 'email', kind: 'value', sample: 'ann@private.example', children: [] }]
+    }
     const file = serializeBoxes([box])
     expect(file.version).toBe(1)
     expect(JSON.stringify(file)).not.toContain('secret')
+    // Nothing from the response is saved (it could end up in git): a new test call brings the fields back.
+    expect(JSON.stringify(file)).not.toContain('ann@private.example')
+    expect(file.boxes[0].requests[0].test!.fields).toBeUndefined()
     const back = normalizeBoxes(JSON.parse(JSON.stringify(file)))
     expect(back[0].auth).toEqual({ kind: 'bearer', env: 'GITHUB_TOKEN' })
     expect(back[0].requests[0].test).toMatchObject({ ok: true, status: 200 })

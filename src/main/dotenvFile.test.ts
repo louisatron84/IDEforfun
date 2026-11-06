@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, statSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { addEnvToGitignore, envNames, gitignoreHasEnv, processEnv, readDotEnv, setDotEnvValue } from './dotenvFile'
@@ -22,6 +22,11 @@ describe('.env file', () => {
     expect(readFileSync(join(root, '.env'), 'utf8')).toBe('# mine\r\nA=1\r\nEMPTY=\r\nGITHUB_TOKEN=abc\r\n')
     expect(await readDotEnv(root)).toEqual({ A: '1', EMPTY: '', GITHUB_TOKEN: 'abc' })
     expect(await envNames(root)).toEqual(['A', 'GITHUB_TOKEN'])
+  })
+
+  it.skipIf(process.platform === 'win32')('a new .env is readable only by you', async () => {
+    await setDotEnvValue(root, 'K', 'v')
+    expect(statSync(join(root, '.env')).mode & 0o777).toBe(0o600)
   })
 
   it('rejects bad names', async () => {

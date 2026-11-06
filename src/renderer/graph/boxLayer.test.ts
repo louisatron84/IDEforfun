@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { newApiBox, newRequest, type ApiBox } from '../../shared/boxes'
 import type { Layout } from './layout'
-import { boxAnchor, boxSummary, drawBoxLayer, placeBoxes } from './boxLayer'
+import { boxAnchor, boxBounds, boxSummary, boxTitle, drawBoxLayer, panToShow, placeBoxes } from './boxLayer'
 
 function gh(): ApiBox {
   const box = newApiBox([], 'GitHub')
@@ -47,6 +47,66 @@ describe('where boxes go', () => {
     expect(pb.y).toBeGreaterThanOrEqual(pa.y + pa.height + 8)
     expect(pc.x).toBeGreaterThan(300)
     expect(pc.anchor).toBeNull()
+  })
+})
+
+describe('boxes never overlap', () => {
+  const overlap = (a: { x: number; y: number; width: number; height: number }, b: typeof a) =>
+    a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
+
+  it('an unattached box goes right of attached ones, not on top of them', () => {
+    const a = gh()
+    const b = { ...gh(), id: 'b', attach: null }
+    const wide: Layout = { nodes: new Map([['app.api', { x: 200, y: 0, width: 100, height: 40, layer: 1 }]]), width: 300, height: 40 }
+    const placed = placeBoxes(wide, [a, b], 'modules', new Set(['app.api']))
+    expect(overlap(placed.get(a.id)!, placed.get('b')!)).toBe(false)
+  })
+
+  it('boxes of neighbouring nodes are pushed down instead of overlapping', () => {
+    const near: Layout = {
+      nodes: new Map([
+        ['m1', { x: 0, y: 0, width: 100, height: 40, layer: 0 }],
+        ['m2', { x: 0, y: 50, width: 100, height: 40, layer: 0 }]
+      ]),
+      width: 100, height: 90
+    }
+    const a = { ...gh(), attach: { module: 'm1' } }
+    const b = { ...gh(), id: 'b', attach: { module: 'm2' } }
+    b.requests = [...b.requests, { ...b.requests[0], id: 'r2' }, { ...b.requests[0], id: 'r3' }]
+    a.requests = [...a.requests, { ...a.requests[0], id: 'r2' }, { ...a.requests[0], id: 'r3' }]
+    const placed = placeBoxes(near, [a, b], 'modules', new Set(['m1', 'm2']))
+    expect(overlap(placed.get(a.id)!, placed.get('b')!)).toBe(false)
+    expect(placed.get('b')!.anchor).toBe('m2')
+  })
+
+  it('boxBounds covers the graph and every box (for Fit)', () => {
+    const c = { ...gh(), id: 'c', attach: null }
+    const placed = placeBoxes(layout, [c], 'modules', new Set())
+    const p = placed.get('c')!
+    expect(boxBounds(layout, placed)).toEqual({ width: p.x + p.width, height: Math.max(layout.height, p.y + p.height) })
+  })
+
+  it('panToShow moves the view just enough to show a box', () => {
+    const view = { x: 0, y: 0, k: 1 }
+    expect(panToShow(view, { x: 10, y: 10, width: 50, height: 20 }, { width: 400, height: 300 })).toEqual(view)
+    const moved = panToShow(view, { x: 600, y: 10, width: 100, height: 20 }, { width: 400, height: 300 })
+    expect(moved.k).toBe(1)
+    expect(600 + moved.x).toBeGreaterThanOrEqual(0)
+    expect(700 + moved.x).toBeLessThanOrEqual(400)
+  })
+})
+
+describe('box labels', () => {
+  it('the title does not repeat API', () => {
+    expect(boxTitle({ ...gh(), name: 'API' })).toBe('API')
+    expect(boxTitle({ ...gh(), name: 'My api' })).toBe('My api')
+    expect(boxTitle(gh())).toBe('GitHub · API')
+  })
+
+  it('ticked fields after a restart (no field list yet)', () => {
+    const box = gh()
+    const req = { ...box.requests[0], ticked: ['a', 'b'], test: { ok: true, at: 1 } }
+    expect(boxSummary(box, req)).toBe('GET api.github.com/users → users.csv · 2 fields')
   })
 })
 

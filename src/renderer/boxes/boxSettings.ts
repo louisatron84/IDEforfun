@@ -475,9 +475,15 @@ export class BoxSettings {
   }
 
   private async runTest(boxId: string, requestId: string): Promise<void> {
-    const box = this.ctrl.get(boxId)
-    if (!box || this.testing.has(requestId)) return
+    if (this.testing.has(requestId)) return
     this.testing.add(requestId)
+    // A field left just now (by clicking this button) is still being committed.
+    await this.ctrl.idle()
+    const box = this.ctrl.get(boxId)
+    if (!box) {
+      this.testing.delete(requestId)
+      return
+    }
     this.hooks.liveWire(boxId, true)
     this.render()
     try {

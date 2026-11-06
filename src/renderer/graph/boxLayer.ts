@@ -51,8 +51,13 @@ export function boxSummary(box: ApiBox, req: ApiRequest): string {
   if (where && !/^https?:\/\//i.test(where) && box.baseUrl.trim()) where = box.baseUrl.trim().replace(/\/+$/, '') + '/' + where.replace(/^\/+/, '')
   where = where.replace(/^https?:\/\//i, '') || '(no URL yet)'
   const fields = req.test?.fields
-  const tail = fields?.length ? `${req.ticked.length} of ${leafCount(fields)} fields` : 'not tested'
+  const tail = fields?.length ? `${req.ticked.length} of ${leafCount(fields)} fields` : req.ticked.length ? `${req.ticked.length} field${req.ticked.length === 1 ? '' : 's'}` : 'not tested'
   return `${req.method} ${where} → ${req.output} · ${tail}`
+}
+
+/** The box's title on the Graph (no "API · API"). */
+export function boxTitle(box: ApiBox): string {
+  return /\bapi\b/i.test(box.name) ? box.name : `${box.name} · API`
 }
 
 function size(box: ApiBox): { width: number; height: number } {
@@ -60,20 +65,66 @@ function size(box: ApiBox): { width: number; height: number } {
   return { width: Math.round(Math.max(220, Math.min(460, longest * CHAR + 34))), height: HEAD + LINE * box.requests.length + 6 }
 }
 
+type Rect = { x: number; y: number; width: number; height: number }
+const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height + GAP_Y && b.y < a.y + a.height + GAP_Y
+
+/**
+ * Boxes beside their nodes, pushed down where they would overlap another box;
+ * boxes with no node on the graph in a column right of everything else.
+ */
 export function placeBoxes(layout: Layout, boxes: readonly ApiBox[], mode: 'modules' | 'calls', nodeIds: ReadonlySet<string>): Map<string, PlacedBox> {
   const out = new Map<string, PlacedBox>()
-  const nextY = new Map<string | null, number>()
-  for (const box of boxes) {
-    const anchor = boxAnchor(box, mode, nodeIds)
-    const node = anchor ? layout.nodes.get(anchor) : undefined
-    const key = node ? anchor : null
+  const placed: Rect[] = []
+  const loose: ApiBox[] = []
+  const anchored = boxes
+    .map((box) => ({ box, anchor: boxAnchor(box, mode, nodeIds) }))
+    .map((x) => ({ ...x, node: x.anchor ? layout.nodes.get(x.anchor) : undefined }))
+  // Top to bottom, so pushing down keeps the order of the nodes.
+  const order = anchored.filter((x) => x.node).sort((a, b) => a.node!.y - b.node!.y || a.node!.x - b.node!.x)
+  for (const { box, anchor, node } of order) {
     const { width, height } = size(box)
-    const x = node ? node.x + node.width + GAP_X : layout.width + 60
-    const y = nextY.get(key) ?? (node ? node.y : 0)
-    out.set(box.id, { x, y, width, height, anchor: node ? anchor : null })
-    nextY.set(key, y + height + GAP_Y)
+    const r: Rect = { x: node!.x + node!.width + GAP_X, y: node!.y, width, height }
+    for (let hit = placed.find((p) => overlaps(r, p)); hit; hit = placed.find((p) => overlaps(r, p))) r.y = hit.y + hit.height + GAP_Y
+    placed.push(r)
+    out.set(box.id, { ...r, anchor })
   }
-  return out
+  for (const x of anchored) if (!x.node) loose.push(x.box)
+  const right = Math.max(layout.width, ...placed.map((p) => p.x + p.width))
+  let y = 0
+  for (const box of loose) {
+    const { width, height } = size(box)
+    out.set(box.id, { x: right + 60, y, width, height, anchor: null })
+    y += height + GAP_Y
+  }
+  // Keep the caller's order for drawing.
+  return new Map(boxes.filter((b) => out.has(b.id)).map((b) => [b.id, out.get(b.id)!]))
+}
+
+/** The size of the graph with its boxes (for Fit). */
+export function boxBounds(layout: Layout, placed: ReadonlyMap<string, PlacedBox>): { width: number; height: number } {
+  let width = layout.width
+  let height = layout.height
+  for (const p of placed.values()) {
+    width = Math.max(width, p.x + p.width)
+    height = Math.max(height, p.y + p.height)
+  }
+  return { width, height }
+}
+
+/** Pan (keeping the zoom) just enough that `rect` (graph coordinates) is in view. */
+export function panToShow(view: { x: number; y: number; k: number }, rect: Rect, viewport: { width: number; height: number }, pad = 24): { x: number; y: number; k: number } {
+  const next = { ...view }
+  const fit = (pos: number, size: number, offset: number, room: number): number => {
+    const a = pos * view.k + offset
+    const b = (pos + size) * view.k + offset
+    // Already fully visible: don't move.
+    if (a >= 0 && b <= room) return offset
+    if (b - a > room - pad * 2 || a < 0) return offset + (pad - a)
+    return offset - (b - (room - pad))
+  }
+  next.x = fit(rect.x, rect.width, view.x, viewport.width)
+  next.y = fit(rect.y, rect.height, view.y, viewport.height)
+  return next
 }
 
 function status(req: ApiRequest): 'untested' | 'ok' | 'fail' {
@@ -113,7 +164,7 @@ export function drawBoxLayer(
     g.setAttribute('data-box', box.id)
     g.append(svg('rect', { width: p.width, height: p.height }, 'gbox-frame'))
     const title = svg('text', { x: 10, y: 17 }, 'gbox-title')
-    title.textContent = `${box.name} · API`
+    title.textContent = boxTitle(box)
     g.append(title)
     box.requests.forEach((req, i) => {
       const line = svg('g', { transform: `translate(0,${HEAD + i * LINE})` }, 'gbox-line')

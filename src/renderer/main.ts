@@ -469,7 +469,6 @@ async function saveAllDirty(report: (message: string) => void): Promise<boolean>
       await workspace.save(doc)
       languages.didSave(doc)
       if (/\.pyi?$/i.test(doc.path)) projectChangedSoon()
-    if (/\.pyi?$/i.test(doc.path)) projectChangedSoon()
     } catch (err) {
       report(`couldn't save ${doc.name} (${String(err)})`)
       return false
@@ -513,6 +512,8 @@ async function startDebugging(given?: LaunchSpec): Promise<void> {
     if (!ok) {
       debugView.error(`Debugging needs debugpy. Install it with:\n  "${prep.python}" -m pip install debugpy`)
       debugView.setState('idle')
+      tasks.endDebug()
+      statusNote('Debugging cancelled: it needs debugpy (pip install debugpy)')
       return
     }
     debugView.output('console', 'Installing debugpy (pip install debugpy)…\n')
@@ -1438,6 +1439,7 @@ async function saveActive(): Promise<boolean> {
   try {
     await workspace.save(doc)
     languages.didSave(doc)
+    if (/\.pyi?$/i.test(doc.path)) projectChangedSoon()
     if (shortcuts.path && samePath(doc.path, shortcuts.path)) void shortcuts.load()
     if (rootFolder && projectSettingsPath && samePath(doc.path, projectSettingsPath)) void loadProjectSettings(rootFolder)
     if (rootFolder && runFilePath && samePath(doc.path, runFilePath)) void loadRunFile(rootFolder)
@@ -2138,6 +2140,8 @@ $('groups').append(diffView.el)
 let projectGraph: ProjectGraph | null = null
 let projectGraphFolder: string | null = null
 let projectScan: Promise<{ graph?: ProjectGraph; error?: string }> | null = null
+/** The folder whose last analysis failed (not retried automatically). */
+let scanFailedFor: string | null = null
 function scanProjectGraph(): Promise<{ graph?: ProjectGraph; error?: string }> {
   if (!rootFolder) return Promise.resolve({ error: 'Open a folder first.' })
   if (projectScan) return projectScan
@@ -2147,7 +2151,13 @@ function scanProjectGraph(): Promise<{ graph?: ProjectGraph; error?: string }> {
     .then((res) => {
       projectScan = null
       if (rootFolder !== folder) return { error: 'The folder changed.' }
-      if (!res.scan) return { error: res.error ?? 'no result' }
+      if (!res.scan) {
+        // Not retried on its own (the Graph's ⟳ or a save tries again).
+        scanFailedFor = folder
+        refreshFilePanels()
+        return { error: res.error ?? 'no result' }
+      }
+      scanFailedFor = null
       projectGraph = buildGraph(res.scan)
       projectGraphFolder = folder
       refreshFilePanels()
@@ -2160,6 +2170,7 @@ let rescanTimer: number | undefined
 function projectChangedSoon(): void {
   window.clearTimeout(rescanTimer)
   rescanTimer = window.setTimeout(() => {
+    scanFailedFor = null
     if (tasks.isShown('where') || tasks.isShown('infile') || tasks.isShown('graph')) void scanProjectGraph().then(() => { if (tasks.isShown('graph')) void graphView.refresh() })
   }, 1500)
 }
@@ -2197,12 +2208,13 @@ function showFilePanels(): void {
 /** Update Where you are and In this file for the active file. */
 function refreshFilePanels(): void {
   if (!tasks.isShown('where') && !tasks.isShown('infile')) return
+  if (rootFolder && projectGraphFolder !== rootFolder && !projectScan && scanFailedFor !== rootFolder) void scanProjectGraph()
   const doc = workspace.active
   let module: string | null = null
   let message = 'Open a Python file to see where it fits.'
   if (!rootFolder) message = 'Open a folder first.'
   else if (doc && /\.pyi?$/i.test(doc.path)) {
-    if (!projectGraph || projectGraphFolder !== rootFolder) message = 'Analysing the project…'
+    if (!projectGraph || projectGraphFolder !== rootFolder) message = scanFailedFor === rootFolder ? "Couldn't analyse the project (see the Graph in Connect for why)." : 'Analysing the project…'
     else if (!isInside(doc.path, rootFolder)) message = 'This file is outside the project.'
     else {
       module = moduleForPath(projectGraph, doc.path.slice(rootFolder.length).replace(/^[\\/]+/, ''))
@@ -2256,11 +2268,13 @@ const boxFiles: BoxFiles = {
       const hadEdits = open.dirty
       applyEditsToDoc(open, [textChange(open.buffer.getLines().join('\n'), text.replace(/\r\n/g, '\n'))])
       workspace.notifyChanged()
-      if (hadEdits) statusNote(`${rel} has unsaved edits: the box's change is in the editor, not saved yet`)
-      else {
+      if (!hadEdits) {
         await workspace.save(open)
         languages.didSave(open)
       }
+      void refreshGit()
+      if (/\.pyi?$/i.test(rel)) projectChangedSoon()
+      return hadEdits ? 'unsaved' : 'saved'
     } else {
       const res = await window.api.readTextFile(path).catch(() => null)
       await window.api.writeTextFile(path, text, res && res.kind === 'text' ? res.encoding : 'utf8')
@@ -2269,6 +2283,7 @@ const boxFiles: BoxFiles = {
     }
     void refreshGit()
     if (/\.pyi?$/i.test(rel)) projectChangedSoon()
+    return 'saved'
   },
   saveBoxes: async (file) => {
     if (rootFolder) await window.api.writeProjectFile(rootFolder, 'boxes.json', file)
@@ -2283,6 +2298,7 @@ function addBox(module: string | null): void {
     alert('Open a folder first.')
     return
   }
+  tasks.reveal('graph')
   const m = module ? projectGraph?.modules.find((x) => x.id === module) : undefined
   if (m) boxes.add({ module: m.id }, { file: m.path, mode: 'append' })
   else boxes.add(null)
@@ -2316,7 +2332,10 @@ const boxSettings = new BoxSettings(boxes, {
     graphView.redrawBoxes()
   }
 })
-boxes.onChange(() => graphView.redrawBoxes())
+boxes.onChange(() => {
+  graphView.redrawBoxes()
+  if (!boxes.selected && !dock.editing) closeIdleBoxSettings()
+})
 dock.register({ id: 'toolbox', title: 'Toolbox', body: toolbox.body })
 dock.register({ id: 'box', title: 'Box settings', body: boxSettings.body, onShow: () => void boxSettings.refreshEnv() })
 
