@@ -10,12 +10,27 @@
 import type { ProjectGraph } from '../../shared/projectGraph'
 import { layoutGraph, type Layout } from './layout'
 import { buildView, neighbourhood, type GraphViewData, type ViewNode, type ViewOptions } from './viewModel'
+import type { ApiBox } from '../../shared/boxes'
+import { drawBoxLayer, placeBoxes } from './boxLayer'
+import { BOX_DRAG_TYPE } from '../boxes/toolbox'
+
+/** Connect boxes shown on the graph. */
+export interface GraphBoxHooks {
+  list(): readonly ApiBox[]
+  selected(): string | null
+  select(id: string): void
+  /** A box was dropped from the Toolbox: on a module (its code goes there), or on empty canvas. */
+  drop(module: string | null): void
+  /** Boxes whose wire is live (a test call is running). */
+  live(): ReadonlySet<string>
+}
 
 export interface GraphHooks {
   /** Analyse the project (again). */
   scan(): Promise<{ graph?: ProjectGraph; error?: string }>
   /** Open a module's file (relative path) at a 0-based line. */
   openModule(path: string, line: number): void
+  boxes?: GraphBoxHooks
 }
 
 const SVG = 'http://www.w3.org/2000/svg'
@@ -62,6 +77,7 @@ export class GraphView {
   private layout: Layout | null = null
   private nodeEls = new Map<string, SVGGElement>()
   private edgeEls: { from: string; to: string; el: SVGPathElement }[] = []
+  private boxLayer: SVGGElement | null = null
   private selected: string | null = null
   private hovered: string | null = null
   /** Pan and zoom. */
@@ -132,6 +148,9 @@ export class GraphView {
       m.append(svg('path', { d: 'M0,1 L9,5 L0,9 z' }, cls))
       defs.append(m)
     }
+    const heat = svg('linearGradient', { id: 'g-heat', x1: 0, y1: 0, x2: 1, y2: 0 })
+    heat.append(svg('stop', { offset: '0%' }, 'heat-stop-a'), svg('stop', { offset: '100%' }, 'heat-stop-b'))
+    defs.append(heat)
     this.world = svg('g')
     this.svgEl.append(defs, this.world)
     this.note = el('div', 'graph-note')
@@ -259,6 +278,22 @@ export class GraphView {
       this.nodeEls.set(n.id, g)
     }
     this.world.replaceChildren(edgeLayer, nodeLayer)
+    this.boxLayer = null
+    this.redrawBoxes()
+  }
+
+  /** Draw the Connect boxes again (they changed, or a test call started or ended). */
+  redrawBoxes(): void {
+    const hooks = this.hooks.boxes
+    if (!hooks || !this.layout) return
+    const boxes = hooks.list()
+    const ids = new Set(this.data.nodes.map((n) => n.id))
+    const placed = placeBoxes(this.layout, boxes, this.opts.mode, ids)
+    const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+    const layer = drawBoxLayer(this.layout, placed, boxes, { selected: hooks.selected(), live: hooks.live(), reducedMotion })
+    if (this.boxLayer) this.boxLayer.replaceWith(layer)
+    else this.world.append(layer)
+    this.boxLayer = layer
   }
 
   private nodeClass(n: ViewNode): string {
@@ -353,8 +388,13 @@ export class GraphView {
       drag = null
       canvas.classList.remove('panning')
       if (wasDrag) return
-      // A click (not a drag): select the node under the pointer, or nothing.
+      // A click (not a drag): select the box or node under the pointer, or nothing.
       const target = document.elementFromPoint(e.clientX, e.clientY)
+      const box = (target as Element | null)?.closest?.('.gbox')?.getAttribute('data-box')
+      if (box && this.hooks.boxes) {
+        this.hooks.boxes.select(box)
+        return
+      }
       this.select(nodeAt(target)?.dataset.id ?? null)
     })
     canvas.addEventListener('pointerleave', () => {
@@ -362,6 +402,19 @@ export class GraphView {
         this.hovered = null
         this.applyHighlight()
       }
+    })
+    // A box dragged from the Toolbox: onto a module (its code goes in that file) or empty canvas.
+    canvas.addEventListener('dragover', (e) => {
+      if (!this.hooks.boxes || !e.dataTransfer?.types.includes(BOX_DRAG_TYPE)) return
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'copy'
+    })
+    canvas.addEventListener('drop', (e) => {
+      if (!this.hooks.boxes || !e.dataTransfer?.types.includes(BOX_DRAG_TYPE)) return
+      e.preventDefault()
+      const id = nodeAt(document.elementFromPoint(e.clientX, e.clientY))?.dataset.id
+      const node = id ? this.data.nodes.find((n) => n.id === id) : undefined
+      this.hooks.boxes.drop(node?.module ?? null)
     })
     canvas.addEventListener('dblclick', (e) => {
       const id = nodeAt(document.elementFromPoint(e.clientX, e.clientY))?.dataset.id
