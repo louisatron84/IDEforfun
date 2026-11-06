@@ -91,7 +91,7 @@ Debugger improvements:
 - [x] Watch expressions (v0.37: Watch section, re-evaluated on every pause, expandable)
 - [x] Option to pause on every raised exception, not just uncaught ones (v0.37: Breakpoints section checkboxes, Run menu)
 - [x] Breakpoint management panel (and keep breakpoints between sessions) (v0.37: Breakpoints section; saved per project with watches)
-- [ ] Debug multiple processes (v0.37: threads are listed and selectable; child processes (multiprocessing) still to do)
+- [x] Debug multiple processes (v0.37: threads are listed and selectable; v0.40: child processes (multiprocessing, subprocess running Python) are attached automatically, with a Processes list; breakpoints work in them and whichever process pauses comes to the front)
 
 ## Tier 4: Visual identity and workspace
 

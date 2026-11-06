@@ -21,7 +21,7 @@ import { pyright } from './lsp/pyright'
 import { ProblemsView } from './problemsView'
 import { Tooltip } from './tooltip'
 import { BreakpointStore, breakpointStyle } from './debug/breakpoints'
-import { DebugSession, type ExceptionFilter, type PauseInfo, type StackFrame } from './debug/session'
+import { DebugSession, type ChildConfig, type ExceptionFilter, type PauseInfo, type StackFrame } from './debug/session'
 import { DebugView } from './debug/debugView'
 import { Completion } from './completion'
 import { hoverSections } from './lsp/markdown'
@@ -268,7 +268,21 @@ panel.addView('terminal', 'Terminal', terminal.body, terminal.actions, () => ter
 const breakpoints = new BreakpointStore()
 /** Docs whose edits we watch so their breakpoints move with the code. */
 const watchedDocs = new WeakSet<Doc>()
+/** One debugged process: the program (connection 0) or a child process it started. */
+interface DebugProcess {
+  /** The adapter connection it talks over. */
+  id: number
+  name: string
+  session: DebugSession
+  /** Where it's paused (to show again when switching back to it). */
+  lastPause: PauseInfo | null
+}
+let processes: DebugProcess[] = []
+/** The program's session: when it ends, debugging ends (with every child process). */
+let rootSession: DebugSession | null = null
+/** The process shown in the Debug panel: stepping, variables, hover values and the console apply to it. */
 let session: DebugSession | null = null
+const processOf = (s: DebugSession) => processes.find((p) => p.session === s)
 /** Where the paused program is (shown with a ▶ in the gutter and a highlighted line). */
 let pausedAt: { path: string; line: number } | null = null
 /** What the last debug session ran (for Restart). */
@@ -290,6 +304,10 @@ const debugView = new DebugView({
   },
   openLink: (path, line) => void openFile(path, line - 1),
   selectThread: (id) => session ? session.stackTrace(id) : Promise.reject(new Error('Not debugging')),
+  selectProcess: (id) => {
+    const p = processes.find((x) => x.id === id)
+    if (p) showProcess(p)
+  },
   watch: (expr, frameId) => session ? session.evaluate(expr, frameId, 'watch') : Promise.reject(new Error('Not debugging')),
   watchesChanged: (list) => {
     watches = list
@@ -305,7 +323,7 @@ const debugView = new DebugView({
   exceptionFilters: () => ({ offered: offeredExceptionFilters, on: exceptionFilters }),
   setExceptionFilter: (filter, on) => {
     exceptionFilters = on ? [...new Set([...exceptionFilters, filter])] : exceptionFilters.filter((f) => f !== filter)
-    void session?.setExceptionFilters(exceptionFilters).catch(() => {})
+    for (const p of processes) void p.session.setExceptionFilters(exceptionFilters).catch(() => {})
     saveStateSoon()
     debugView.renderBreakpoints()
   },
@@ -339,8 +357,8 @@ breakpoints.subscribe((path) => {
   updateLineMarkers()
   debugView.renderBreakpoints()
   saveStateSoon()
-  // Breakpoints changed while debugging: tell debugpy right away.
-  void session?.setBreakpoints(path, breakpoints.breakpointsFor(path)).catch(() => {})
+  // Breakpoints changed while debugging: tell debugpy right away (in every process).
+  for (const p of processes) void p.session.setBreakpoints(path, breakpoints.breakpointsFor(path)).catch(() => {})
 })
 
 /** Condition, hit count, log message, on/off for the breakpoint on a line (creating one if needed). */
@@ -364,7 +382,7 @@ function toggleBreakpoint(line = editor.getCursor().line): void {
   if (doc) breakpoints.toggle(doc.path, line)
 }
 
-const debugging = () => session?.active === true
+const debugging = () => rootSession?.active === true
 const debugPaused = () => session?.state === 'paused'
 
 /** Save every changed file (programs read them from disk). Returns false if one couldn't be saved. */
@@ -383,7 +401,7 @@ async function saveAllDirty(report: (message: string) => void): Promise<boolean>
 
 async function startDebugging(given?: LaunchSpec): Promise<void> {
   const resolved = given ?? launchSpec()
-  if (session?.active) await stopDebugging()
+  if (rootSession?.active) await stopDebugging()
   panel.show('debug')
   if ('error' in resolved) {
     debugView.begin('')
@@ -430,31 +448,9 @@ async function startDebugging(given?: LaunchSpec): Promise<void> {
   debugView.started(prep.python)
   lastDebugSpec = spec
 
-  const s: DebugSession = new DebugSession({
-    send: (m) => window.api.debugSend(m),
-    onState: (state) => {
-      if (session !== s) return
-      debugView.setState(state)
-      if (state === 'running' && pausedAt) {
-        pausedAt = null
-        updateLineMarkers()
-      }
-    },
-    onOutput: (category, text) => {
-      if (session === s) debugView.output(category, text)
-    },
-    onPaused: (info) => {
-      if (session === s) void onPaused(info)
-    },
-    onEnded: (code) => {
-      if (session !== s) return
-      pausedAt = null
-      updateLineMarkers()
-      debugView.setState('idle')
-      debugView.ended(code)
-      void window.api.debugStop()
-    }
-  })
+  processes = []
+  const s = addDebugProcess(0, (spec.program ?? spec.module ?? 'program').split(/[\\/]/).pop() ?? 'program')
+  rootSession = s
   session = s
   await window.api.debugStart(prep.python, cwd)
   try {
@@ -476,10 +472,114 @@ async function startDebugging(given?: LaunchSpec): Promise<void> {
     offeredExceptionFilters = s.exceptionFilters
     debugView.renderBreakpoints()
   } catch (err) {
-    if (session !== s || !s.active) return
+    if (rootSession !== s || !s.active) return
     debugView.error(`Couldn't start debugging: ${err instanceof Error ? err.message : String(err)}`)
     await s.stop()
   }
+}
+
+/** A session for the program (connection 0) or one of its child processes. */
+function addDebugProcess(id: number, name: string): DebugSession {
+  const s: DebugSession = new DebugSession({
+    send: (m) => window.api.debugSend(id, m),
+    onState: (state) => {
+      const p = processOf(s)
+      if (!p) return
+      if (state !== 'paused') p.lastPause = null
+      renderProcesses()
+      if (session !== s) return
+      debugView.setState(state)
+      if (state === 'running' && pausedAt) {
+        pausedAt = null
+        updateLineMarkers()
+      }
+    },
+    onOutput: (category, text) => {
+      if (processOf(s)) debugView.output(category, text)
+    },
+    onPaused: (info) => {
+      const p = processOf(s)
+      if (!p) return
+      p.lastPause = info
+      // Whichever process stops comes to the front.
+      showProcess(p)
+    },
+    onEnded: (code) => void debugProcessEnded(s, code),
+    onChildProcess: (config) => void attachChildProcess(config)
+  })
+  processes.push({ id, name, session: s, lastPause: null })
+  renderProcesses()
+  return s
+}
+
+/** The program started a child process (multiprocessing, subprocess): debug it too. */
+async function attachChildProcess(config: ChildConfig): Promise<void> {
+  if (!rootSession?.active) return
+  const name = config.subProcessId ? `Process ${config.subProcessId}` : String(config.name ?? 'Child process')
+  let id: number
+  try {
+    id = await window.api.debugConnect(config.connect.host, config.connect.port)
+  } catch (err) {
+    debugView.error(`Couldn't attach to ${name}: ${err instanceof Error ? err.message : String(err)}`)
+    return
+  }
+  if (!rootSession?.active) return
+  const s = addDebugProcess(id, name)
+  debugView.output('console', `${name} started: debugging it too\n`)
+  try {
+    await s.attach(config, { breakpoints: breakpoints.all(), exceptionFilters })
+  } catch (err) {
+    if (!processOf(s) || !s.active) return
+    debugView.error(`Couldn't attach to ${name}: ${err instanceof Error ? err.message : String(err)}`)
+    await s.stop()
+  }
+}
+
+async function debugProcessEnded(s: DebugSession, code: number | null): Promise<void> {
+  const p = processOf(s)
+  if (!p) return
+  if (s !== rootSession) {
+    processes = processes.filter((x) => x !== p)
+    debugView.output('console', `${p.name} ended${code === null ? '' : ` (exit code ${code})`}\n`)
+    const root = processes.find((x) => x.session === rootSession)
+    if (session === s && root) showProcess(root)
+    else renderProcesses()
+    return
+  }
+  // The program ended: stop its child processes too, then the adapter.
+  const children = processes.filter((x) => x !== p)
+  processes = []
+  session = s
+  renderProcesses()
+  pausedAt = null
+  updateLineMarkers()
+  debugView.setState('idle')
+  debugView.ended(code)
+  await Promise.all(children.map((c) => c.session.stop().catch(() => {})))
+  if (rootSession === s) void window.api.debugStop()
+}
+
+/** Show a process in the Debug panel (its pause, call stack and variables). */
+function showProcess(p: DebugProcess): void {
+  session = p.session
+  debugView.setState(p.session.state)
+  renderProcesses()
+  if (p.lastPause && p.session.state === 'paused') {
+    void onPaused(p.lastPause)
+  } else {
+    debugView.clearPaused()
+    if (pausedAt) {
+      pausedAt = null
+      updateLineMarkers()
+    }
+  }
+}
+
+function renderProcesses(): void {
+  debugView.setProcesses(
+    processes.map((p) => ({ id: p.id, name: p.id === 0 ? `${p.name} (program)` : p.name, state: p.session.state })),
+    processes.find((p) => p.session === session)?.id ?? null
+  )
 }
 
 async function onPaused(info: PauseInfo): Promise<void> {
@@ -498,7 +598,7 @@ async function showFrame(frame: StackFrame): Promise<void> {
 }
 
 async function stopDebugging(): Promise<void> {
-  await session?.stop()
+  await rootSession?.stop()
 }
 
 /** F5 while paused. In terminal mode the program may be waiting for input there next, so show it. */
@@ -514,11 +614,12 @@ async function restartDebugging(): Promise<void> {
   if (spec) await startDebugging(spec)
 }
 
-window.api.onDebugMessage((m) => session?.handleMessage(m))
-window.api.onDebugExit((info) => {
-  if (!session?.active) return
+window.api.onDebugMessage((id, m) => processes.find((p) => p.id === id)?.session.handleMessage(m))
+window.api.onDebugExit((id, info) => {
+  const p = processes.find((x) => x.id === id)
+  if (!p?.session.active) return
   if (info.error) debugView.error(info.error)
-  session.adapterExited()
+  p.session.adapterExited()
 })
 
 // ---------- Language servers (Pyright for Python; more can run side by side) ----------
@@ -1749,7 +1850,7 @@ commands.register({
   run: () => {
     const on = !exceptionFilters.includes('raised')
     exceptionFilters = on ? [...exceptionFilters, 'raised'] : exceptionFilters.filter((f) => f !== 'raised')
-    void session?.setExceptionFilters(exceptionFilters).catch(() => {})
+    for (const p of processes) void p.session.setExceptionFilters(exceptionFilters).catch(() => {})
     statusNote(on ? 'The debugger now pauses wherever an exception is raised.' : 'The debugger pauses only on uncaught exceptions.')
     saveStateSoon()
     debugView.renderBreakpoints()
@@ -2447,7 +2548,7 @@ function updateStatus(): void {
   const who = lineBlame()
   set('sb-blame', who.length > 70 ? who.slice(0, 69) + '…' : who)
   $('sb-blame').title = who ? `${who}\nClick for this file's history` : ''
-  set('sb-debug', session?.state === 'paused' ? '🐞 Paused' : session?.active ? '🐞 Debugging' : '')
+  set('sb-debug', processes.some((p) => p.session.state === 'paused') ? '🐞 Paused' : rootSession?.active ? '🐞 Debugging' : '')
   set('sb-run', rootFolder ? `▶ ${runConfigName ?? 'Current file'}` : '')
   set('sb-python', pyEnv.statusText)
   set('sb-deps', pyEnv.missingText)

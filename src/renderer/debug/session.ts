@@ -6,6 +6,12 @@
  * DAP startup order (debugpy):
  *   initialize → launch (answered later) → "initialized" event →
  *   setBreakpoints per file → setExceptionBreakpoints → configurationDone → launch answered
+ *
+ * Child processes: when the program starts one (multiprocessing, subprocess),
+ * debugpy sends a `debugpyAttach` event (or, newer versions, a `startDebugging`
+ * request) with a configuration. The IDE opens another connection to the
+ * adapter and runs a second DebugSession with attach(config): the same
+ * startup, with `attach` instead of `launch`.
  */
 import { DapClient, type DapEvent } from './dapClient'
 import type { Breakpoint } from './breakpoints'
@@ -57,18 +63,39 @@ export interface SessionHooks {
   onOutput(category: 'stdout' | 'stderr' | 'console', text: string): void
   onPaused(info: PauseInfo): void
   onEnded(exitCode: number | null): void
+  /** The program started a child process to debug: attach to it with this configuration. */
+  onChildProcess?(config: ChildConfig): void
 }
 
-export interface LaunchOptions {
+/** debugpy's configuration for attaching to a child process. */
+export interface ChildConfig {
+  connect: { host: string; port: number }
+  subProcessId?: number
+  name?: string
+  [key: string]: unknown
+}
+
+/** A valid child configuration, or null. */
+export function childConfig(raw: unknown): ChildConfig | null {
+  const c = raw as ChildConfig | null
+  if (!c || typeof c !== 'object' || !c.connect || typeof c.connect.host !== 'string' || typeof c.connect.port !== 'number') return null
+  return c
+}
+
+/** Breakpoints and exception settings sent during startup (launch and attach). */
+export interface SessionSetup {
+  breakpoints: { path: string; breakpoints: readonly Breakpoint[] }[]
+  /** Which exception settings to turn on (filter ids); undefined = "uncaught" if offered. */
+  exceptionFilters?: string[]
+}
+
+export interface LaunchOptions extends SessionSetup {
   /** The script to debug, or null to debug `module` (python -m). */
   program: string | null
   module?: string | null
   args?: string[]
   env?: Record<string, string>
   cwd: string
-  breakpoints: { path: string; breakpoints: readonly Breakpoint[] }[]
-  /** Which exception settings to turn on (filter ids); undefined = "uncaught" if offered. */
-  exceptionFilters?: string[]
   /** Run the program in a terminal (so input() works) instead of the Debug console. */
   runInTerminal?: RunInTerminal
 }
@@ -94,6 +121,13 @@ export class DebugSession {
       })
     })
     this.client.onEvent((e) => void this.onEvent(e))
+    // Newer debugpy asks for child processes with a request instead of the event.
+    this.client.onRequest('startDebugging', (a: { configuration?: unknown }) => {
+      const config = childConfig(a?.configuration)
+      if (!config) throw new Error('No configuration to attach with')
+      this.hooks.onChildProcess?.(config)
+      return {}
+    })
   }
 
   get state(): DebugState {
@@ -119,12 +153,7 @@ export class DebugSession {
         return processId ? { processId } : {}
       })
     }
-    const caps = await this.client.request('initialize', {
-      clientID: 'ideforfun', clientName: 'IDEforfun', adapterID: 'debugpy', locale: 'en',
-      pathFormat: 'path', linesStartAt1: true, columnsStartAt1: true,
-      supportsVariableType: true, supportsRunInTerminalRequest: inTerminal
-    })
-    this.exceptionFilters = (caps?.exceptionBreakpointFilters ?? []).map((f: any) => ({ filter: String(f.filter), label: String(f.label ?? f.filter), default: !!f.default }))
+    await this.initialize(inTerminal)
     const launch = this.client.request('launch', {
       name: 'IDEforfun', type: 'python', request: 'launch',
       ...(opts.module ? { module: opts.module } : { program: opts.program }),
@@ -132,19 +161,42 @@ export class DebugSession {
       // In a terminal the program gets a real keyboard (input() works); its output shows there.
       console: inTerminal ? 'integratedTerminal' : 'internalConsole', redirectOutput: !inTerminal,
       justMyCode: true, showReturnValue: true,
+      // Follow child processes (multiprocessing, subprocess running python): see onChildProcess.
+      subProcess: true,
       env: { PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1', ...opts.env }
     })
-    launch.catch(() => {}) // awaited below; avoid an "unhandled" warning if it fails early
-    await Promise.race([this.initialized, launch])
+    await this.configure(launch, opts)
+  }
 
-    for (const f of opts.breakpoints) await this.sendBreakpoints(f.path, f.breakpoints)
+  /** Debug a child process of the program (a configuration from onChildProcess), on its own connection. */
+  async attach(config: ChildConfig, setup: SessionSetup): Promise<void> {
+    this.setState('starting')
+    await this.initialize(false)
+    await this.configure(this.client.request('attach', config), setup)
+  }
+
+  private async initialize(inTerminal: boolean): Promise<void> {
+    const caps = await this.client.request('initialize', {
+      clientID: 'ideforfun', clientName: 'IDEforfun', adapterID: 'debugpy', locale: 'en',
+      pathFormat: 'path', linesStartAt1: true, columnsStartAt1: true,
+      supportsVariableType: true, supportsRunInTerminalRequest: inTerminal
+    })
+    this.exceptionFilters = (caps?.exceptionBreakpointFilters ?? []).map((f: any) => ({ filter: String(f.filter), label: String(f.label ?? f.filter), default: !!f.default }))
+  }
+
+  /** After launch/attach was sent: breakpoints, exception settings, configurationDone, then its answer. */
+  private async configure(request: Promise<unknown>, setup: SessionSetup): Promise<void> {
+    request.catch(() => {}) // awaited below; avoid an "unhandled" warning if it fails early
+    await Promise.race([this.initialized, request])
+
+    for (const f of setup.breakpoints) await this.sendBreakpoints(f.path, f.breakpoints)
     // By default pause where an exception would crash the program, so you can look around.
     const offered = new Set(this.exceptionFilters.map((f) => f.filter))
-    const filters = (opts.exceptionFilters ?? ['uncaught']).filter((f) => offered.has(f))
+    const filters = (setup.exceptionFilters ?? ['uncaught']).filter((f) => offered.has(f))
     await this.client.request('setExceptionBreakpoints', { filters })
     await this.client.request('configurationDone')
     this.configured = true
-    await launch
+    await request
     if (this._state === 'starting') this.setState('running')
   }
 
@@ -276,6 +328,11 @@ export class DebugSession {
       case 'terminated':
         this.end()
         break
+      case 'debugpyAttach': {
+        const config = childConfig(e.body)
+        if (config) this.hooks.onChildProcess?.(config)
+        break
+      }
     }
   }
 

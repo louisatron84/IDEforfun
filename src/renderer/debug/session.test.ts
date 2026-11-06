@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DebugSession, type PauseInfo } from './session'
+import { DebugSession, type ChildConfig, type PauseInfo } from './session'
 
 /** A fake debugpy: answers requests from a table and records the order. */
 function setup(answers: Record<string, (args: any) => any> = {}) {
@@ -8,6 +8,8 @@ function setup(answers: Record<string, (args: any) => any> = {}) {
   const output: string[] = []
   const paused: PauseInfo[] = []
   const ended: (number | null)[] = []
+  const children: ChildConfig[] = []
+  const sent: any[] = []
   let session!: DebugSession
   let launchSeq = 0
   const reply = (msg: any, body: any) =>
@@ -15,16 +17,17 @@ function setup(answers: Record<string, (args: any) => any> = {}) {
   const event = (name: string, body?: any) => queueMicrotask(() => session.handleMessage({ type: 'event', event: name, body }))
   session = new DebugSession({
     send: (msg: any) => {
+      sent.push(msg)
       if (msg.type !== 'request') return
       commands.push(msg.command)
-      if (msg.command === 'launch') {
+      if (msg.command === 'launch' || msg.command === 'attach') {
         launchSeq = msg.seq
         event('initialized') // debugpy answers launch only after configurationDone
         return
       }
       if (msg.command === 'configurationDone') {
         reply(msg, {})
-        queueMicrotask(() => session.handleMessage({ type: 'response', request_seq: launchSeq, command: 'launch', success: true }))
+        queueMicrotask(() => session.handleMessage({ type: 'response', request_seq: launchSeq, command: commands.includes('attach') ? 'attach' : 'launch', success: true }))
         return
       }
       const fn = answers[msg.command]
@@ -33,9 +36,10 @@ function setup(answers: Record<string, (args: any) => any> = {}) {
     onState: (s) => states.push(s),
     onOutput: (c, t) => output.push(`${c}:${t}`),
     onPaused: (p) => paused.push(p),
-    onEnded: (code) => ended.push(code)
+    onEnded: (code) => ended.push(code),
+    onChildProcess: (c) => children.push(c)
   })
-  return { session, commands, states, output, paused, ended, event }
+  return { session, commands, states, output, paused, ended, event, children, sent }
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 0))
@@ -103,5 +107,41 @@ describe('DebugSession', () => {
     const before = t.commands.length
     await t.session.continue()
     expect(t.commands.length).toBe(before)
+  })
+
+  it('follows child processes: launch asks for subProcess, and debugpyAttach is reported', async () => {
+    const t = setup()
+    let launchArgs: any
+    const orig = t.sent
+    await t.session.start({ program: '/p/main.py', cwd: '/p', breakpoints: [] })
+    launchArgs = orig.find((m) => m.command === 'launch').arguments
+    expect(launchArgs.subProcess).toBe(true)
+    t.event('debugpyAttach', { name: 'Subprocess 4242', request: 'attach', subProcessId: 4242, connect: { host: '127.0.0.1', port: 5678 } })
+    t.event('debugpyAttach', { name: 'broken' }) // no address: ignored
+    await flush()
+    expect(t.children).toEqual([{ name: 'Subprocess 4242', request: 'attach', subProcessId: 4242, connect: { host: '127.0.0.1', port: 5678 } }])
+  })
+
+  it('also answers the newer startDebugging request', async () => {
+    const t = setup()
+    await t.session.start({ program: '/p/main.py', cwd: '/p', breakpoints: [] })
+    t.session.handleMessage({ type: 'request', seq: 900, command: 'startDebugging', arguments: { request: 'attach', configuration: { subProcessId: 7, connect: { host: '127.0.0.1', port: 1234 } } } })
+    t.session.handleMessage({ type: 'request', seq: 901, command: 'startDebugging', arguments: { request: 'attach', configuration: {} } })
+    await flush()
+    expect(t.children.map((c) => c.subProcessId)).toEqual([7])
+    const answers = t.sent.filter((m) => m.type === 'response')
+    expect(answers.map((a) => [a.request_seq, a.success])).toEqual([[900, true], [901, false]])
+  })
+
+  it('attaches to a child with the same startup (breakpoints, exceptions) as a launch', async () => {
+    const bpArgs: any[] = []
+    const t = setup({ setBreakpoints: (a) => { bpArgs.push(a); return { breakpoints: [] } } })
+    const config = { subProcessId: 7, connect: { host: '127.0.0.1', port: 1234 }, justMyCode: true }
+    await t.session.attach(config, { breakpoints: [{ path: '/p/worker.py', breakpoints: [{ line: 1, enabled: true }] }], exceptionFilters: ['raised'] })
+    expect(t.commands).toEqual(['initialize', 'attach', 'setBreakpoints', 'setExceptionBreakpoints', 'configurationDone'])
+    expect(t.sent.find((m) => m.command === 'attach').arguments).toEqual(config)
+    expect(t.sent.find((m) => m.command === 'setExceptionBreakpoints').arguments).toEqual({ filters: ['raised'] })
+    expect(bpArgs[0].source).toEqual({ path: '/p/worker.py' })
+    expect(t.states).toEqual(['starting', 'running'])
   })
 })

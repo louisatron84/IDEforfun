@@ -189,10 +189,14 @@ export interface IdeApi {
   debugInstall(python: string): Promise<{ ok: boolean; output: string }>
   /** Start the debugpy adapter; then talk to it with debugSend / onDebugMessage (DAP). */
   debugStart(python: string, cwd: string): Promise<void>
-  debugSend(message: unknown): void
+  /** Send to a debugger connection: 0 is the program, others are its child processes (see debugConnect). */
+  debugSend(connection: number, message: unknown): void
+  /** Attach to a child process: open another connection to the adapter (a local port it gave). */
+  debugConnect(host: string, port: number): Promise<number>
   debugStop(): Promise<void>
-  onDebugMessage(listener: (message: unknown) => void): () => void
-  onDebugExit(listener: (info: { code: number | null; error?: string }) => void): () => void
+  onDebugMessage(listener: (connection: number, message: unknown) => void): () => void
+  /** Connection 0 closed: the adapter exited. Others: that child's connection closed. */
+  onDebugExit(listener: (connection: number, info: { code: number | null; error?: string }) => void): () => void
 
   /** Every file under a folder (for quick open), skipping .git, node_modules, etc. */
   listFiles(root: string): Promise<{ path: string; rel: string }[]>

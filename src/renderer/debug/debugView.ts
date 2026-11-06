@@ -22,6 +22,8 @@ export interface DebugViewHooks {
   openLink(path: string, line: number): void
   /** Show another thread's call stack. */
   selectThread(threadId: number): Promise<StackFrame[]>
+  /** Show another process (the program or one of its child processes). */
+  selectProcess(id: number): void
   /** Evaluate a watch expression in the selected frame. */
   watch(expression: string, frameId: number | undefined): Promise<{ result: string; ref: number }>
   watchesChanged(watches: string[]): void
@@ -62,11 +64,15 @@ export class DebugView {
   private watches: string[] = []
   private threads: { id: number; name: string }[] = []
   private threadId: number | null = null
+  private readonly procList: HTMLDivElement
 
   constructor(private readonly hooks: DebugViewHooks) {
     this.body = div('debug-view')
     const side = div('debug-side')
     this.status = div('debug-status')
+    // The program and its child processes (shown when there is more than one).
+    this.procList = div('debug-procs')
+    this.procList.hidden = true
     const stackHead = div('debug-heading')
     stackHead.textContent = 'Call Stack'
     this.stackList = div('debug-stack')
@@ -103,7 +109,7 @@ export class DebugView {
       mini('☑', 'Switch all breakpoints on', () => hooks.setAllBreakpoints(true)),
       mini('✕', 'Remove all breakpoints', () => hooks.removeAllBreakpoints()))
     this.bpList = div('debug-bps')
-    side.append(this.status, stackHead, this.stackList, varHead, this.varTree, watchHead, this.watchList, bpHead, this.bpList)
+    side.append(this.status, this.procList, stackHead, this.stackList, varHead, this.varTree, watchHead, this.watchList, bpHead, this.bpList)
 
     const consoleEl = div('debug-console')
     this.log = div('output-log debug-log')
@@ -186,6 +192,30 @@ export class DebugView {
 
   error(message: string): void {
     this.append(message.endsWith('\n') ? message : message + '\n', 'stderr')
+  }
+
+  /**
+   * The program and its child processes. The shown one is what the call
+   * stack, variables, stepping and the console apply to.
+   */
+  setProcesses(list: { id: number; name: string; state: DebugState }[], shown: number | null): void {
+    this.procList.hidden = list.length < 2
+    if (this.procList.hidden) return this.procList.replaceChildren()
+    const label: Record<DebugState, string> = { idle: 'ended', starting: 'starting', running: 'running', paused: 'paused' }
+    this.procList.replaceChildren(...list.map((p) => {
+      const row = div('debug-proc' + (p.id === shown ? ' selected' : '') + (p.state === 'paused' ? ' paused' : ''))
+      const name = document.createElement('span')
+      name.textContent = `${p.id === shown ? '▾' : '▸'} ${p.name}`
+      const state = document.createElement('span')
+      state.className = 'debug-proc-state'
+      state.textContent = label[p.state]
+      row.append(name, state)
+      row.title = p.id === shown ? 'Shown below (stepping and the console apply to it)' : 'Show this process'
+      row.addEventListener('click', () => {
+        if (p.id !== shown) this.hooks.selectProcess(p.id)
+      })
+      return row
+    }))
   }
 
   // ---------- paused: call stack + variables ----------

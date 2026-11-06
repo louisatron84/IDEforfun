@@ -254,7 +254,8 @@ ipcMain.handle('debug:prepare', async (_event, cwd: string, configured?: string)
 })
 ipcMain.handle('debug:install', (_event, python: string) => installDebugpy(python))
 ipcMain.handle('debug:start', (event, python: string, cwd: string) => debugAdapter.start(event.sender, python, cwd))
-ipcMain.on('debug:send', (_event, message: unknown) => debugAdapter.send(message))
+ipcMain.on('debug:send', (_event, id: number, message: unknown) => debugAdapter.send(id, message))
+ipcMain.handle('debug:connect', (_event, host: string, port: number) => debugAdapter.connect(host, port))
 ipcMain.handle('debug:stop', () => debugAdapter.stop())
 
 ipcMain.handle('term:create', (event, cwd: string | null, cols: number, rows: number, profileId?: string) =>

@@ -1391,3 +1391,9 @@ button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 .debug-thread { padding: 2px 8px; font-size: 12px; color: var(--fg-muted); cursor: pointer; }
 .debug-thread.selected { color: var(--fg); font-weight: 600; }
 .debug-thread:hover { background: var(--bg-hover); }
+.debug-procs { border-bottom: 1px solid var(--border); padding: 2px 0; }
+.debug-proc { display: flex; justify-content: space-between; gap: 8px; padding: 2px 8px; font-size: 12px; color: var(--fg-muted); cursor: pointer; }
+.debug-proc.selected { color: var(--fg); font-weight: 600; }
+.debug-proc.paused .debug-proc-state { color: var(--warning, #e5c07b); }
+.debug-proc:hover { background: var(--bg-hover); }
+.debug-proc-state { font-weight: normal; opacity: 0.8; }
