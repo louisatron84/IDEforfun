@@ -10,8 +10,8 @@
   color-scheme: dark;
 
   /* type and shape */
-  --font-ui: system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-code: 'Cascadia Code', Consolas, 'Courier New', monospace;
+  --font-ui: 'Space Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-code: 'JetBrains Mono', 'Cascadia Code', Consolas, 'Courier New', monospace;
   --code-size: 14px;
   --line-height: 20px;
   --radius: 0;
@@ -114,8 +114,8 @@
 :root[data-theme="plain"] {
   color-scheme: dark;
 
-  --font-ui: system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-code: 'Cascadia Code', Consolas, 'Courier New', monospace;
+  --font-ui: 'Space Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-code: 'JetBrains Mono', 'Cascadia Code', Consolas, 'Courier New', monospace;
   --code-size: 14px;
   --line-height: 20px;
   --radius: 0;

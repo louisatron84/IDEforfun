@@ -1,3 +1,10 @@
+// Forge's fonts, bundled so they work offline (Space Grotesk for the interface, JetBrains Mono for code).
+import '@fontsource/space-grotesk/400.css'
+import '@fontsource/space-grotesk/500.css'
+import '@fontsource/space-grotesk/600.css'
+import '@fontsource/space-grotesk/700.css'
+import '@fontsource/jetbrains-mono/400.css'
+import '@fontsource/jetbrains-mono/700.css'
 import { FileTree } from './fileTree'
 import { Editor, type EditorOptions } from './editor/editor'
 import type { Doc } from './editor/document'
@@ -2720,6 +2727,13 @@ void window.api.getSettings().then(async (s) => {
   settingsView.set(s)
   applyEffective()
   updateWelcome()
+  // The editors measured their characters before the code font may have loaded: measure again once it has.
+  void Promise.all([document.fonts.load('14px "JetBrains Mono"'), document.fonts.load('13px "Space Grotesk"')])
+    .catch(() => [])
+    .then(() => {
+      for (const ed of editors) ed.refreshLayout(settings.tabSize)
+      terminal.applyTheme(settings.fontSize)
+    })
   // Reopen the last project (with its tabs), unless that's turned off or it's gone.
   if (s.reopenLastProject && !rootFolder) {
     try {

@@ -70,3 +70,17 @@ describe('Forge colour tokens', () => {
     expect(styles.replace(/\/\*[\s\S]*?\*\//g, '').match(/#[0-9a-fA-F]{3,8}\b|rgba?\(/g) ?? []).toEqual([])
   })
 })
+
+describe('Forge fonts', () => {
+  it('Space Grotesk for the interface and JetBrains Mono for code, in both themes', () => {
+    for (const t of [molten, plain]) {
+      expect(t['--font-ui']).toMatch(/^'Space Grotesk'/)
+      expect(t['--font-code']).toMatch(/^'JetBrains Mono'/)
+    }
+  })
+
+  it('are bundled with pinned versions', () => {
+    const deps = JSON.parse(read('package.json')).dependencies as Record<string, string>
+    for (const name of ['@fontsource/space-grotesk', '@fontsource/jetbrains-mono']) expect(deps[name]).toMatch(/^\d+\.\d+\.\d+$/)
+  })
+})

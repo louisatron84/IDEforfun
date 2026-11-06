@@ -149,6 +149,7 @@ class TerminalSession {
 
   applyTheme(fontSize: number): void {
     this.term.options.fontSize = fontSize
+    this.term.options.fontFamily = cssVar('--font-code')
     this.term.options.theme = theme()
     this.layout()
   }
