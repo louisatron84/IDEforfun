@@ -90,4 +90,31 @@ describe('DockView', () => {
     const root = hooks.changed.mock.calls[0][0] as SplitNode
     expect(root.sizes.reduce((a, b) => a + b, 0)).toBeCloseTo(1)
   })
+
+  it('in edit mode, dragging a tab onto the right half of a stack drops it there', () => {
+    const { container, view, hooks } = setup()
+    view.render(defaultArrangement('code'))
+    view.editing = true
+    const editorStack = container.querySelector('.dock-tab[data-panel="editor"]')!.closest('.dock-stack') as HTMLElement
+    editorStack.getBoundingClientRect = () => ({ left: 0, top: 0, width: 100, height: 100, right: 100, bottom: 100, x: 0, y: 0, toJSON: () => ({}) })
+    const tab = container.querySelector('.dock-tab[data-panel="problems"]') as HTMLElement
+    tab.dispatchEvent(new PointerEvent('pointerdown', { clientX: 5, clientY: 5, bubbles: true }))
+    editorStack.dispatchEvent(new PointerEvent('pointermove', { clientX: 90, clientY: 50, bubbles: true }))
+    expect(editorStack.querySelector('.dock-drop.zone-right')).not.toBeNull()
+    window.dispatchEvent(new PointerEvent('pointerup', { clientX: 90, clientY: 50 }))
+    expect(hooks.drop).toHaveBeenCalledWith('problems', editorStack.dataset.stack, 'right')
+    expect(container.querySelector('.dock-drop')).toBeNull()
+  })
+
+  it('outside edit mode, tabs do not start drags', () => {
+    const { container, view, hooks } = setup()
+    view.render(defaultArrangement('code'))
+    const editorStack = container.querySelector('.dock-tab[data-panel="editor"]')!.closest('.dock-stack') as HTMLElement
+    const tab = container.querySelector('.dock-tab[data-panel="problems"]') as HTMLElement
+    tab.dispatchEvent(new PointerEvent('pointerdown', { clientX: 5, clientY: 5, bubbles: true }))
+    editorStack.dispatchEvent(new PointerEvent('pointermove', { clientX: 90, clientY: 50, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointerup', { clientX: 90, clientY: 50 }))
+    expect(hooks.drop).not.toHaveBeenCalled()
+  })
 })
+

@@ -137,6 +137,7 @@ export function buildMenu(state: MenuState = { keys: {}, recent: [] }): Menu {
         cmd('Connect', 'task.connect', 'CmdOrCtrl+Alt+2'),
         cmd('Debug', 'task.debug', 'CmdOrCtrl+Alt+3'),
         cmd('Run', 'task.run', 'CmdOrCtrl+Alt+4'),
+        cmd('Edit Layout', 'view.editLayout'),
         cmd('Reset Layout of This Task', 'view.resetLayout'),
         cmd('References', 'panel.references'),
         cmd('Problems', 'panel.problems', 'CmdOrCtrl+Shift+M'),

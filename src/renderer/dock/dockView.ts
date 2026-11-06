@@ -5,7 +5,7 @@
  * their state; a panel that isn't shown has `hidden = true`, which existing
  * code relies on. Panels not placed at all wait in a hidden store.
  */
-import { activate, findStack, resize, setCollapsed, type DockNode, type SplitNode, type StackNode, type Zone } from './model'
+import { activate, findStack, resize, setCollapsed, zoneAt, type DockNode, type SplitNode, type StackNode, type Zone } from './model'
 
 export interface PanelDef {
   id: string
@@ -71,6 +71,10 @@ export class DockView {
     this._editing = on
     this.container.classList.toggle('editing-layout', on)
     if (this.current) this.render(this.current)
+  }
+
+  titleOf(id: string): string {
+    return this.panels.get(id)?.title ?? id
   }
 
   setTitle(id: string, title: string): void {
@@ -151,6 +155,7 @@ export class DockView {
         tab.append(close)
       }
       tab.addEventListener('click', () => this.onTabClick(n, id))
+      tab.addEventListener('pointerdown', (e) => this.startDrag(e, id))
       p.tab = tab
       tabs.append(tab)
       body.append(p.body)
@@ -213,6 +218,36 @@ export class DockView {
       window.addEventListener('pointerup', up)
     })
     return d
+  }
+
+  // ---------- Edit Layout mode: drag a tab onto a stack ----------
+
+  private startDrag(e: PointerEvent, panel: string): void {
+    if (!this._editing || e.button > 0) return
+    let target: { stack: HTMLElement; zone: Zone } | null = null
+    const marker = el('dock-drop')
+    const move = (ev: PointerEvent) => {
+      const stack = (ev.target as Element | null)?.closest?.('.dock-stack') as HTMLElement | null
+      if (!stack || !this.rootEl.contains(stack)) {
+        target = null
+        marker.remove()
+        return
+      }
+      const zone = zoneAt(stack.getBoundingClientRect(), ev.clientX, ev.clientY)
+      target = { stack, zone }
+      marker.className = `dock-drop zone-${zone}`
+      if (marker.parentElement !== stack) stack.append(marker)
+    }
+    const up = () => {
+      document.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      this.container.classList.remove('dragging-panel')
+      marker.remove()
+      if (target?.stack.dataset.stack) this.hooks.drop(panel, target.stack.dataset.stack, target.zone)
+    }
+    this.container.classList.add('dragging-panel')
+    document.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
   }
 
   /** The stack element a panel is in (for drop targets). */

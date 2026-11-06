@@ -18,6 +18,7 @@ import { FindBar } from './findBar'
 import { DockView } from './dock/dockView'
 import { TaskController } from './dock/tasks'
 import { createPanelFacade } from './dock/facade'
+import { EditBar } from './dock/editBar'
 import { TASKS, type TaskId } from '../shared/layouts'
 import { OutputView } from './outputView'
 import { TerminalView } from './terminalView'
@@ -265,7 +266,7 @@ const findBar = new FindBar($('editor-pane'), editor)
 let tasks: TaskController
 const dock = new DockView($('dock'), {
   changed: (root) => tasks.changed(root),
-  closePanel: (id) => tasks.closePanel(id),
+  closePanel: (id) => { tasks.closePanel(id); editBar.fill() },
   drop: (p, s, z) => tasks.drop(p, s, z)
 })
 tasks = new TaskController(dock, {
@@ -281,9 +282,35 @@ dock.register({ id: 'search', title: 'Search', body: $('search-panel') })
 dock.register({ id: 'outline', title: 'Outline', body: $('outline-panel'), onShow: () => void refreshOutline() })
 dock.register({ id: 'git', title: 'Git', body: $('git-panel'), onShow: () => void refreshGit() })
 
+/** Edit Layout mode (View → Edit Layout): move, close and add panels; Done or Esc to finish. */
+const editBar = new EditBar(document.body, {
+  done: () => setEditingLayout(false),
+  reset: () => { tasks.resetCurrent(); editBar.fill() },
+  add: (id) => tasks.addPanel(id),
+  hidden: () => tasks.hiddenPanels(),
+  title: (id) => dock.titleOf(id)
+})
+function setEditingLayout(on: boolean): void {
+  if (dock.editing === on) return
+  dock.editing = on
+  if (on) editBar.show()
+  else {
+    editBar.hide()
+    tasks.flush()
+  }
+}
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && dock.editing) {
+    e.preventDefault()
+    e.stopPropagation()
+    setEditingLayout(false)
+  }
+}, true)
+
 /** The task switcher in the top bar shows the current task; the project remembers it. */
 function onTaskChanged(task: TaskId): void {
   for (const b of document.querySelectorAll<HTMLButtonElement>('#task-switcher button')) b.setAttribute('aria-selected', String(b.dataset.task === task))
+  if (dock.editing) editBar.fill()
   saveStateSoon()
 }
 const output = new OutputView(
@@ -2754,6 +2781,7 @@ void shortcuts.load()
 const TASK_NAMES: Record<TaskId, string> = { code: 'Code', connect: 'Connect', debug: 'Debug', run: 'Run' }
 TASKS.forEach((t, i) => commands.register({ id: `task.${t}`, title: `Switch to ${TASK_NAMES[t]}`, keys: `Ctrl+Alt+${i + 1}`, run: () => tasks.switchTo(t) }))
 commands.register({ id: 'view.resetLayout', title: 'Reset Layout of This Task', run: () => tasks.resetCurrent() })
+commands.register({ id: 'view.editLayout', title: 'Edit Layout (move, close and add panels)', run: () => setEditingLayout(!dock.editing) })
 // The dock starts with the defaults, then your saved arrangements.
 tasks.switchTo('code')
 void window.api.getLayouts().catch(() => ({})).then((saved) => tasks.useSaved(saved))
