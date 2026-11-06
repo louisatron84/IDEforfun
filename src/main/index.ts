@@ -3,6 +3,7 @@ import { buildMenu, type EditAction, type MenuState } from './menu'
 import { ensureProjectFile, ensureProjectSettings, readProjectFile, readProjectSettings, updateProjectSettings, UserState, writeProjectFile } from './userState'
 import { testCall } from './apiCall'
 import { loadSpec } from './openapiLoad'
+import { Updates } from './updates'
 import { dataflow } from './dataflow'
 import { addEnvToGitignore, envNames, gitignoreHasEnv, setDotEnvValue } from './dotenvFile'
 import { normalizeBoxes } from '../shared/boxes'
@@ -44,6 +45,10 @@ const debugAdapter = new DebugAdapter()
 const backups = new Backups(() => join(app.getPath('userData'), 'backups'))
 const userState = new UserState(() => app.getPath('userData'))
 const testRunner = new TestRunner()
+/** New versions on GitHub Releases: checking, downloading, installing (the window shows where it stands). */
+const updates = new Updates((state) => {
+  for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send('update:state', state)
+})
 
 // The menu shows the window's current shortcuts and the recent folders, so it's rebuilt when they change.
 const menuState: MenuState = { keys: {}, recent: [] }
@@ -374,6 +379,9 @@ ipcMain.handle('box:testCall', (_event, root: string, box: unknown, requestId: s
 })
 ipcMain.handle('env:names', (_event, root: string) => envNames(String(root)))
 ipcMain.handle('openapi:load', (_event, source: string) => loadSpec(String(source)))
+ipcMain.handle('update:check', (_event, manual: boolean) => updates.check(manual === true))
+ipcMain.handle('update:download', () => updates.download())
+ipcMain.handle('update:install', () => updates.install())
 ipcMain.handle('dataflow:read', (_event, root: string, source: string, func: string, python?: string) =>
   dataflow(String(root), String(source), String(func ?? ''), typeof python === 'string' && python ? python : undefined))
 ipcMain.handle('openapi:pick', async (event) => {

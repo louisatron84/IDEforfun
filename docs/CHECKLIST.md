@@ -50,6 +50,7 @@ to real source code or runtime behaviour.
 - [x] Run configurations (arguments, environment variables and working directory) (v0.27: file or module, for Run and Debug, picked in the status bar)
 - [x] Python environment management (create, select and manage virtual environments) (v0.28: 🐍 in the status bar, finds venvs and installed Pythons, creates .venv, saved per project)
 - [x] Dependency management integration (pip, requirements.txt, pyproject.toml) (v0.28: Python Packages…, missing-package warning, install/upgrade/uninstall, freeze)
+- [x] Updates (v0.46: the installed app checks GitHub Releases after starting or from Help → Check for Updates, asks, downloads in the background and restarts into the new version; the portable version opens the download page; see docs/RELEASING.md)
 - [x] Test runner integration (pytest, unittest) (v0.29)
   - [x] Test discovery and running individual tests (reads test files; ▶ per test / file, Run Test at Cursor)
   - [x] Test results panel with navigation to failures (Tests tab: ✓ ✗ per test, click to the failing line, full traceback)

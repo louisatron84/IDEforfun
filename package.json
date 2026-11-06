@@ -1,6 +1,6 @@
 {
   "name": "ideforfun",
-  "version": "0.45.0",
+  "version": "0.46.0",
   "description": "A hobby IDE with a hand-written editor",
   "main": "./out/main/index.js",
   "private": true,
@@ -10,8 +10,8 @@
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "node scripts/test.mjs",
-    "dist": "electron-vite build && electron-builder --win --x64",
-    "dist:dir": "electron-vite build && electron-builder --win --x64 --dir"
+    "dist": "electron-vite build && electron-builder --win --x64 --publish never",
+    "dist:dir": "electron-vite build && electron-builder --win --x64 --dir --publish never"
   },
   "devDependencies": {
     "@types/node": "24.9.2",
@@ -29,6 +29,7 @@
     "@xterm/addon-fit": "0.10.0",
     "@xterm/xterm": "5.5.0",
     "basedpyright": "1.40.2",
+    "electron-updater": "6.6.2",
     "node-pty": "1.1.0",
     "yaml": "2.6.1"
   },
@@ -51,7 +52,7 @@
       "node_modules/node-pty/**"
     ],
     "npmRebuild": false,
-    "publish": null,
+    "publish": [{ "provider": "github", "owner": "louisatron84", "repo": "IDEforfun" }],
     "win": {
       "target": [
         {

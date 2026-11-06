@@ -232,6 +232,7 @@ export function buildMenu(state: MenuState = { keys: {}, recent: [] }): Menu {
       submenu: [
         cmd('Welcome', 'help.welcome'),
         cmd('All Commands and Shortcuts', 'palette.commands', 'CmdOrCtrl+Shift+P'),
+        cmd('Check for Updates…', 'help.checkUpdates'),
         {
           label: 'About Forge',
           click: () => {

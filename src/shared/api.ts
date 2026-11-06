@@ -87,6 +87,14 @@ export interface RunSpec {
   traceData?: string
 }
 
+/** Where an update stands (see src/main/updates.ts). */
+export type UpdateState =
+  | { kind: 'idle' | 'checking' | 'none'; current: string; manual?: boolean }
+  | { kind: 'available'; current: string; latest: string; notes: string; url: string; selfUpdate: boolean; manual?: boolean }
+  | { kind: 'downloading'; current: string; latest?: string; notes?: string; url?: string; percent: number }
+  | { kind: 'ready'; current: string; latest?: string; notes?: string; url?: string }
+  | { kind: 'error'; current: string; message: string; manual?: boolean; latest?: string; notes?: string; url?: string }
+
 /** One message from a traced run's tracer (checked by the window before use). */
 export interface RunTraceEvent {
   runId: number
@@ -317,6 +325,13 @@ export interface IdeApi {
   apiTestCall(root: string, box: ApiBox, requestId: string): Promise<TestCallResult>
   /** Read a function's data flow (its parameters and steps) from a file's text; with no function, just list them. */
   readDataflow(root: string, source: string, func: string, python?: string): Promise<import('./dataflow').RawFlow>
+  /** Look for a newer Forge (manual: the user asked). */
+  checkForUpdates(manual: boolean): Promise<UpdateState>
+  /** Installed app: download the update. Otherwise: open the download page. */
+  downloadUpdate(): Promise<void>
+  /** Restart into the downloaded update. */
+  installUpdate(): Promise<void>
+  onUpdateState(listener: (state: UpdateState) => void): void
   /** Load an OpenAPI description from an http(s) address or a file (JSON or YAML). */
   loadOpenApi(source: string): Promise<{ doc?: unknown; from: string; error?: string }>
   /** Pick an OpenAPI file; null if cancelled. */

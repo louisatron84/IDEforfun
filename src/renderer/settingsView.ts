@@ -221,6 +221,14 @@ export class SettingsView {
     const animRow = this.row('Animations', 'Animate switching tasks and moving panels (off anyway if your system asks for less motion)', anim)
     animRow.querySelector('label')!.htmlFor = anim.id
 
+    const upd = document.createElement('input')
+    upd.type = 'checkbox'
+    upd.id = 'setting-updates'
+    upd.checked = s.checkForUpdates
+    upd.addEventListener('change', () => this.update({ checkForUpdates: upd.checked }))
+    const updRow = this.row('Updates', 'Look for a new version of Forge when it starts (it asks before downloading anything)', upd)
+    updRow.querySelector('label')!.htmlFor = upd.id
+
     const rows: HTMLElement[] = [header]
     if (this.projectNote) {
       const note = document.createElement('p')
@@ -228,7 +236,7 @@ export class SettingsView {
       note.textContent = this.projectNote
       rows.push(note)
     }
-    rows.push(fontRow, themeRow, densityRow, animRow, tabRow, pyRow, shellRow, fmtRow, fosRow, lintRow, dbgRow, dbgTaskRow, runGraphRow, reopenRow)
+    rows.push(fontRow, themeRow, densityRow, animRow, tabRow, pyRow, shellRow, fmtRow, fosRow, lintRow, dbgRow, dbgTaskRow, runGraphRow, reopenRow, updRow)
 
     if (this.links.length) {
       const linkRow = document.createElement('div')

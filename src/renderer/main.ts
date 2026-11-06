@@ -73,6 +73,7 @@ import { moduleOfPath } from '../shared/boxes'
 import { suggestTools } from '../shared/suggest'
 import { showProjectMap } from './projectMap'
 import { FloatingPanels } from './dock/floating'
+import type { UpdateState } from '../shared/api'
 import { envKeys } from '../shared/openapi'
 import { addImport, generateClient, generatedState, importLine } from '../shared/openapiCode'
 import type { TraceTick } from './graph/liveRun'
@@ -2712,6 +2713,52 @@ async function openProjectMap(): Promise<void> {
     }
   })
 }
+// ---------- Updates: a newer Forge on GitHub Releases ----------
+let updateState: UpdateState | null = null
+window.api.onUpdateState((s) => showUpdateState(s))
+function showUpdateState(s: UpdateState): void {
+  updateState = s
+  const b = $('sb-update') as HTMLButtonElement
+  if (s.kind === 'available') {
+    b.hidden = false
+    b.textContent = `⬆ Forge ${s.latest}`
+    b.title = s.selfUpdate ? 'A new version of Forge: click to see what\'s new and install it' : 'A new version of Forge: click to see what\'s new and download it'
+    if (s.manual) void offerUpdate()
+  } else if (s.kind === 'downloading') {
+    b.hidden = false
+    b.textContent = `⬇ Update ${s.percent}%`
+    b.title = 'Downloading the update'
+  } else if (s.kind === 'ready') {
+    b.hidden = false
+    b.textContent = '⟳ Restart to update'
+    b.title = `Forge ${s.latest ?? ''} is downloaded: restart to finish (or it installs when you quit)`
+  } else {
+    b.hidden = true
+    if (s.kind === 'checking' && s.manual) statusNote('Checking for updates…')
+    if (s.kind === 'none' && s.manual) statusNote(`Forge ${s.current} is the newest version.`)
+    if (s.kind === 'error' && 'manual' in s && s.manual) statusNote(`Couldn't check for updates: ${s.message}`)
+  }
+}
+async function offerUpdate(): Promise<void> {
+  const s = updateState
+  if (s?.kind !== 'available') return
+  const ok = await showCodeDialog({
+    title: `Forge ${s.latest} is available (you have ${s.current})`,
+    code: s.notes.trim() || 'See the release page for what\'s new.',
+    ok: s.selfUpdate ? 'Download and install' : 'Open the download page'
+  })
+  if (ok) await window.api.downloadUpdate()
+}
+$('sb-update').addEventListener('click', () => {
+  if (updateState?.kind === 'available') void offerUpdate()
+  else if (updateState?.kind === 'ready' && confirm('Restart Forge now to finish updating? (If anything is unsaved, you\'ll be asked first.)')) void window.api.installUpdate()
+})
+commands.register({ id: 'help.checkUpdates', title: 'Check for Updates…', run: () => void window.api.checkForUpdates(true) })
+// A quiet look a little after starting (Settings → Updates turns it off).
+window.setTimeout(() => {
+  if (settings.checkForUpdates) void window.api.checkForUpdates(false).catch(() => {})
+}, 15_000)
+
 commands.register({ id: 'nav.projectMap', title: 'Project Map (find a file visually)', keys: 'Ctrl+Alt+M', run: () => void openProjectMap() })
 commands.register({ id: 'view.pipeline', title: 'Show Pipeline (data flow of a function)', run: () => panel.show('pipeline') })
 

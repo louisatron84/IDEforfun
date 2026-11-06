@@ -27,4 +27,5 @@ Patch CRLF files with Python scripts written via the Write tool (Bash heredocs e
 - 5.3 OpenAPI: 8b44c10
 - 5.4 data flow + pipelines: ec10d63
 - Tier 3 semantic highlighting (basedpyright): e2851d9
-- Tier 4: density + animations d53827d, suggestions 22a082d, project map eccb2f5, floating windows: next commit
+- Tier 4: density + animations d53827d, suggestions 22a082d, project map eccb2f5, floating windows 18cd7c8
+- Updates (electron-updater, v0.46.0): next commit
