@@ -10,7 +10,7 @@ export const TASKS: readonly TaskId[] = ['code', 'connect', 'debug', 'run']
 /** Every panel the workspace knows. */
 export const PANEL_IDS = [
   'files', 'search', 'outline', 'git', 'history', 'editor', 'where', 'infile', 'graph', 'toolbox', 'box',
-  'terminal', 'problems', 'output', 'debug', 'tests', 'references', 'calls', 'network'
+  'terminal', 'problems', 'output', 'debug', 'tests', 'references', 'calls', 'network', 'pipeline'
 ] as const
 export type PanelId = (typeof PANEL_IDS)[number]
 /** The code editor: can't be closed, always placed in the Code task. */

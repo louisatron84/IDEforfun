@@ -105,6 +105,12 @@ class FileScan(ast.NodeVisitor):
         }
         if kind == 'class':
             d['bases'] = [b for b in (dotted(x) for x in node.bases) if b]
+        else:
+            # The signature and first docstring line: pipeline blocks are made from these.
+            d['params'] = signature(node)
+            d['returns'] = unparse(node.returns)
+            doc = ast.get_docstring(node)
+            d['doc'] = doc.strip().split('\n')[0][:200] if doc else ''
         self.defs.append(d)
         for dec in node.decorator_list:
             self.visit(dec)
@@ -339,6 +345,30 @@ def find_unreachable(tree):
 
     block(tree.body, None)
     return sorted(found, key=lambda u: u['line'])
+
+
+def unparse(node):
+    """Source text of an annotation or default (None if absent or the Python is too old to say)."""
+    if node is None or not hasattr(ast, 'unparse'):
+        return None
+    try:
+        text = ast.unparse(node)
+    except Exception:
+        return None
+    return text if len(text) <= 80 else text[:79] + '…'
+
+
+def signature(fn):
+    a = fn.args
+    positional = a.posonlyargs + a.args if hasattr(a, 'posonlyargs') else a.args
+    defaults = [None] * (len(positional) - len(a.defaults)) + list(a.defaults)
+    out = [{'name': p.arg, 'annotation': unparse(p.annotation), 'default': unparse(d)} for p, d in zip(positional, defaults)]
+    if a.vararg is not None:
+        out.append({'name': '*' + a.vararg.arg, 'annotation': unparse(a.vararg.annotation), 'default': None})
+    out += [{'name': p.arg, 'annotation': unparse(p.annotation), 'default': unparse(d)} for p, d in zip(a.kwonlyargs, a.kw_defaults)]
+    if a.kwarg is not None:
+        out.append({'name': '**' + a.kwarg.arg, 'annotation': unparse(a.kwarg.annotation), 'default': None})
+    return out[:16]
 
 
 def fnv_utf16(text):

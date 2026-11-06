@@ -164,25 +164,25 @@ Visualisations are interactive representations of real code, not a separate prog
 - [ ] Later: AI-assisted API documentation interpretation and integration
 
 ### 5.4 Data-flow visualisation
-- [ ] Trace data between functions
-- [ ] Visualise function inputs and outputs
-- [ ] Show where variables originate
-- [ ] Show transformations applied to data
-- [ ] Highlight data dependencies
-- [ ] Interactive pipeline graph
-- [ ] Pandas DataFrame pipeline visualisation
-- [ ] Inspect DataFrame shapes, columns and types
-- [ ] Preview intermediate DataFrame contents
-- [ ] Visualise data filtering, grouping and merging
-- [ ] Export visual pipelines as ordinary Python
+- [x] Trace data between functions (v0.46: traced runs record what goes into and comes out of each function (first two calls), and Run with data records each line of one function)
+- [x] Visualise function inputs and outputs (v0.46: Last run in a function's Graph details; inputs on the Pipeline's input boxes)
+- [x] Show where variables originate (v0.46: Pipeline view: wires from where each value was set; Where its data comes from)
+- [x] Show transformations applied to data (v0.46: each step shows what it made and what changed (rows, columns, groups))
+- [x] Highlight data dependencies (v0.46: hover or select a step: what it depends on and what depends on it)
+- [x] Interactive pipeline graph (v0.46: Pipeline panel (Connect task, or Data flow on a function in the Graph))
+- [x] Pandas DataFrame pipeline visualisation (v0.46)
+- [x] Inspect DataFrame shapes, columns and types (v0.46)
+- [x] Preview intermediate DataFrame contents (v0.46: the first rows of each step's table)
+- [x] Visualise data filtering, grouping and merging (v0.46: 1,204 → 873 rows, 100 rows → 4 groups, columns added / removed)
+- [x] Export visual pipelines as ordinary Python (v0.46: pipelines are ordinary Python; Export writes a script with the built-in blocks copied in)
 
 Block library (for the pipeline graph): blocks are whole steps, not single statements, so graphs stay small and map cleanly to code.
-- [ ] Each block is an ordinary Python function; inputs and outputs come from its parameters, type hints and return value
-- [ ] Placing a block inserts a readable call (plus import); wiring blocks passes one block's result to the next
-- [ ] Built-in library of useful steps (read CSV/JSON, filter rows, group by, call API endpoint, retry, save)
-- [ ] User blocks: mark a project function (e.g. `@block` or `.ideforfun/blocks/`) and it appears in the library
-- [ ] Editing a block opens its Python; editing a built-in makes a project copy first, so library updates never overwrite it
-- [ ] A single "for each" container block instead of loop/if wiring
+- [x] Each block is an ordinary Python function; inputs and outputs come from its parameters, type hints and return value (v0.46)
+- [x] Placing a block inserts a readable call (plus import); wiring blocks passes one block's result to the next (v0.46: click a data input to take it from another step; click a setting to change it)
+- [x] Built-in library of useful steps (read CSV/JSON, filter rows, group by, call API endpoint, retry, save) (v0.46: forge_blocks.py (pandas): read CSV / JSON, call API, filter, select, rename, add column, sort, group, merge, de-duplicate, fill missing, retry, save CSV / JSON)
+- [x] User blocks: mark a project function (e.g. `@block` or `.ideforfun/blocks/`) and it appears in the library (v0.46: @block, or any function in a blocks.py)
+- [x] Editing a block opens its Python; editing a built-in makes a project copy first, so library updates never overwrite it (v0.46: a built-in is copied into the project's blocks.py first)
+- [x] A single "for each" container block instead of loop/if wiring (v0.46: For each… runs a block on every item (or row) of a step's result)
 
 ### 5.5 Execution visualisation
 - [x] Live call graph while debugging (v0.46: at each pause the paused function glows, the stack and its calls are marked, calls not seen before get a spark)

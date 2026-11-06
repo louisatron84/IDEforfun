@@ -83,6 +83,8 @@ export interface RunSpec {
   python?: string
   /** Show the run on the Graph: start it through Forge's tracer. */
   trace?: boolean
+  /** Also record what each line of this function (`module:qual`) produces (implies trace). */
+  traceData?: string
 }
 
 /** One message from a traced run's tracer (checked by the window before use). */
@@ -313,6 +315,8 @@ export interface IdeApi {
 
   /** Test call: send one of the API box's requests (secrets come from .env, in the main process). */
   apiTestCall(root: string, box: ApiBox, requestId: string): Promise<TestCallResult>
+  /** Read a function's data flow (its parameters and steps) from a file's text; with no function, just list them. */
+  readDataflow(root: string, source: string, func: string, python?: string): Promise<import('./dataflow').RawFlow>
   /** Load an OpenAPI description from an http(s) address or a file (JSON or YAML). */
   loadOpenApi(source: string): Promise<{ doc?: unknown; from: string; error?: string }>
   /** Pick an OpenAPI file; null if cancelled. */

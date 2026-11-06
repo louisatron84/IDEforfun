@@ -38,6 +38,8 @@ export interface GraphHooks {
   debugHistory?(node: string): HTMLElement | null
   /** From the last traced run (recursion trees): shown in a node's details, or null. */
   runDetails?(node: string): HTMLElement | null
+  /** Open a function's data flow (the Pipeline view). */
+  showDataFlow?(node: string): void
 }
 
 const SVG = 'http://www.w3.org/2000/svg'
@@ -865,6 +867,7 @@ export class GraphView {
       actions.append(b)
     }
     if (n.module) action('Open', () => this.open(n.id))
+    if (n.module && this.hooks.showDataFlow && (n.kind === 'function' || n.kind === 'method')) action('Data flow', () => this.hooks.showDataFlow!(n.id))
     const out: HTMLElement[] = [head, sub, actions]
     const nb = neighbourhood(this.data.edges, n.id)
     const label = (id: string) => this.data.nodes.find((x) => x.id === id)?.label ?? id

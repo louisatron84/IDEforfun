@@ -3,6 +3,7 @@ import { buildMenu, type EditAction, type MenuState } from './menu'
 import { ensureProjectFile, ensureProjectSettings, readProjectFile, readProjectSettings, updateProjectSettings, UserState, writeProjectFile } from './userState'
 import { testCall } from './apiCall'
 import { loadSpec } from './openapiLoad'
+import { dataflow } from './dataflow'
 import { addEnvToGitignore, envNames, gitignoreHasEnv, setDotEnvValue } from './dotenvFile'
 import { normalizeBoxes } from '../shared/boxes'
 import { checkDependencies, describePython, findInterpreters, freeze, listPackages } from './pyenv'
@@ -352,6 +353,8 @@ ipcMain.handle('box:testCall', (_event, root: string, box: unknown, requestId: s
 })
 ipcMain.handle('env:names', (_event, root: string) => envNames(String(root)))
 ipcMain.handle('openapi:load', (_event, source: string) => loadSpec(String(source)))
+ipcMain.handle('dataflow:read', (_event, root: string, source: string, func: string, python?: string) =>
+  dataflow(String(root), String(source), String(func ?? ''), typeof python === 'string' && python ? python : undefined))
 ipcMain.handle('openapi:pick', async (event) => {
   const win = BrowserWindow.fromWebContents(event.sender)
   const opts = { title: 'Choose an OpenAPI description', buttonLabel: 'Open', properties: ['openFile' as const], filters: [{ name: 'OpenAPI (JSON or YAML)', extensions: ['json', 'yaml', 'yml'] }, { name: 'All files', extensions: ['*'] }] }

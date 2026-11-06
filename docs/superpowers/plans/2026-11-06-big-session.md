@@ -18,9 +18,11 @@ Patch CRLF files with Python scripts written via the Write tool (Bash heredocs e
 4. 5.4 Data flow: trace values between functions (types, shapes), inputs/outputs, origins, pipeline graph, DataFrame shapes/columns/preview, block library, user blocks, for-each, export.
 5. Tier 3: basedpyright semantic tokens.
 6. Tier 4: information density, animated transitions, context-aware tools, visual navigation, floating windows.
+7. (Asked 2026-11-06) Updates: check how users get a new version of the installed app; if there is no easy way, add one (check GitHub releases, download, install).
 
 ## Ledger
 - unreachable code (5.1): done, df2f7a7
 - 5.2 network: done, bf934e6
 - 5.5 debug on graph: 3811058; recursion + replay: 5b0d85a
-- 5.3 OpenAPI: next commit
+- 5.3 OpenAPI: 8b44c10
+- 5.4 data flow + pipelines: next commit

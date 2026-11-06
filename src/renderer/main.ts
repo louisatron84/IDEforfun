@@ -66,6 +66,10 @@ import { objectGraphExpression, parseObjectGraph } from '../shared/objectGraph'
 import { funcLabel } from '../shared/network'
 import { drawRecursionTree, parseRec, RecursionStore } from './graph/recursionTree'
 import { showOpenApiDialog } from './boxes/openApiDialog'
+import { PipelineView } from './pipeline/pipelineView'
+import { DataLog, parseDataMessage, summaryText } from '../shared/dataSummary'
+import { builtinBlocks, projectBlocks } from '../shared/blocks'
+import { moduleOfPath } from '../shared/boxes'
 import { envKeys } from '../shared/openapi'
 import { addImport, generateClient, generatedState, importLine } from '../shared/openapiCode'
 import type { TraceTick } from './graph/liveRun'
@@ -1289,6 +1293,9 @@ let outlineGeneration = 0
 let outlineDoc: Doc | null = null
 let outlineVersion = -1
 
+/** The file the Pipeline view last read (switching files refreshes it sooner). */
+let lastPipelineDoc: unknown = null
+
 function refreshOutlineSoon(delay = 500): void {
   window.clearTimeout(outlineTimer)
   outlineTimer = window.setTimeout(() => void refreshOutline(), delay)
@@ -1452,6 +1459,8 @@ workspace.subscribe(() => {
   }
   updateWelcome()
   refreshOutlineSoon(workspace.active === outlineDoc ? 600 : 50)
+  refreshPipelineSoon(workspace.active === lastPipelineDoc ? 900 : 60)
+  lastPipelineDoc = workspace.active
   if (gitView.status) refreshBlameSoon(blame?.doc === workspace.active ? 1500 : 150)
   refreshFilePanels()
   syncGroups()
@@ -1829,8 +1838,8 @@ commands.register({ id: 'find.close', title: 'Close Find', keys: 'Escape', when:
 const parentDir = (path: string) => path.replace(/[\\/][^\\/]*$/, '')
 let lastRunId = 0
 
-/** Run the selected run configuration, or the open file (Ctrl+F5). */
-async function runCurrentFile(): Promise<void> {
+/** Run the selected run configuration, or the open file (Ctrl+F5). `traceData`: also record a function's values line by line. */
+async function runCurrentFile(traceData?: string): Promise<void> {
   panel.show('output')
   const spec = launchSpec()
   if ('error' in spec) {
@@ -1848,7 +1857,7 @@ async function runCurrentFile(): Promise<void> {
   // With the Graph in view (and the setting on), the run shows where it's at on it.
   // With the Network panel in view, the run reports its web requests there too.
   const trace = (settings.showRunsOnGraph && tasks.isShown('graph')) || tasks.isShown('network')
-  await window.api.runPython({ ...spec, root: rootFolder ?? spec.cwd, python: settings.pythonPath || undefined, trace })
+  await window.api.runPython({ ...spec, root: rootFolder ?? spec.cwd, python: settings.pythonPath || undefined, trace: trace || !!traceData, ...(traceData ? { traceData } : {}) })
   editor.focus()
 }
 
@@ -1965,8 +1974,18 @@ window.api.onRunTrace((e) => {
     sparkedNet.clear()
     networkView.setRunning(true)
     recursion.begin(e.runId)
+    dataLog.begin(e.runId)
     replayTicks = []
     graphView.setReplay(0, () => {}, () => {})
+    return
+  }
+  const data = parseDataMessage(e.message)
+  if (data) {
+    if (dataLog.runId === e.runId) {
+      dataLog.add(data)
+      pipelineView.dataChanged()
+      if (data.kind === 'io') recursionChanged()
+    }
     return
   }
   const rec = parseRec(e.message)
@@ -2029,9 +2048,27 @@ function recursionChanged(): void {
 function recursionDetails(node: string): HTMLElement | null {
   const funcs = node.includes(':') ? [node] : recursion.funcs().filter((f) => f.slice(0, f.indexOf(':')) === node)
   const trees = funcs.flatMap((f) => recursion.forFunc(f))
-  if (!trees.length) return null
+  const io = node.includes(':') ? dataLog.io(node) : undefined
+  if (!trees.length && !io) return null
   const box = document.createElement('div')
   box.className = 'graph-run-details'
+  if (io) {
+    // What went in and what came out (its first calls in the last traced run).
+    for (const call of io.calls) {
+      const line = document.createElement('div')
+      line.className = 'graph-io'
+      const ins = Object.entries(call.in).map(([k, v]) => `${k} = ${summaryText(v)}`).join(', ')
+      line.textContent = `${ins || '(no inputs)'} → ${call.out ? summaryText(call.out) : 'raised / no value'}`
+      line.title = line.textContent
+      box.append(line)
+    }
+    if (io.total > io.calls.length) {
+      const more = document.createElement('div')
+      more.className = 'graph-io-more'
+      more.textContent = `Called ${io.total} times (the first ${io.calls.length} shown)`
+      box.append(more)
+    }
+  }
   for (const t of trees) {
     const name = t.func.slice(t.func.indexOf(':') + 1).split('.').pop() ?? t.func
     const b = document.createElement('button')
@@ -2097,7 +2134,7 @@ commands.register({
     void runCurrentFile()
   }
 })
-commands.register({ id: 'run.file', title: 'Run Python File (without debugging)', keys: 'Ctrl+F5', when: canLaunch, run: runCurrentFile })
+commands.register({ id: 'run.file', title: 'Run Python File (without debugging)', keys: 'Ctrl+F5', when: canLaunch, run: () => void runCurrentFile() })
 commands.register({ id: 'run.selectConfig', title: 'Select Run Configuration…', when: () => rootFolder !== null, run: pickRunConfig })
 commands.register({ id: 'run.editConfigs', title: 'Edit Run Configurations and Tasks (run.json)', when: () => rootFolder !== null, run: () => void editRunFile() })
 commands.register({ id: 'tasks.run', title: 'Run Task…', keys: 'Ctrl+Shift+B', when: () => rootFolder !== null, run: pickTask })
@@ -2569,6 +2606,54 @@ async function loadBoxes(folder: string): Promise<void> {
   void boxSettings.refreshEnv()
 }
 
+// ---------- Pipeline: a function's data flow, blocks, and values from a run (5.4) ----------
+const dataLog = new DataLog()
+function projectRel(path: string): string | null {
+  return rootFolder && isInside(path, rootFolder) ? path.slice(rootFolder.length).replace(/^[\\/]+/, '').replace(/\\/g, '/') : null
+}
+function openRel(rel: string, line: number): void {
+  if (!rootFolder) return
+  const sep = rootFolder.includes('\\') ? '\\' : '/'
+  void openFile(rootFolder.replace(/[\\/]+$/, '') + sep + rel.split('/').join(sep), line)
+}
+const pipelineView = new PipelineView({
+  current: () => {
+    const doc = workspace.active
+    const rel = doc ? projectRel(doc.path) : null
+    if (!doc || !rel || !/\.pyw?$/i.test(rel)) return null
+    return { rel, text: doc.getText(), module: moduleOfPath(rel) }
+  },
+  readFlow: (text, func) => (rootFolder ? window.api.readDataflow(rootFolder, text, func, settings.pythonPath || undefined) : Promise.resolve({ functions: [], error: 'Open a project folder first.' })),
+  read: (rel) => boxFiles.read(rel),
+  write: (rel, text) => boxFiles.write(rel, text),
+  blocks: () => [...builtinBlocks(), ...(graphView.projectGraph ? projectBlocks(graphView.projectGraph) : [])],
+  openAt: (rel, line) => openRel(rel, line),
+  runWithData: (func) => void runCurrentFile(func),
+  ask: (placeholder, initial, verb) => new Promise((resolve) => palette.prompt(placeholder, (text) => resolve(text), initial, verb)),
+  note: (message) => statusNote(message),
+  data: dataLog
+})
+panel.addView('pipeline', 'Pipeline', pipelineView.body, pipelineView.actions, () => void pipelineView.refresh())
+let pipelineTimer = 0
+function refreshPipelineSoon(delay = 700): void {
+  window.clearTimeout(pipelineTimer)
+  pipelineTimer = window.setTimeout(() => {
+    if (tasks.isShown('pipeline')) void pipelineView.refresh()
+  }, delay)
+}
+/** From the Graph: open the function's file and show its data flow. */
+async function showDataFlow(node: string): Promise<void> {
+  const g = graphView.projectGraph
+  const module = node.slice(0, node.indexOf(':'))
+  const m = g?.modules.find((x) => x.id === module)
+  const s = m?.symbols.find((x) => x.id === node)
+  if (!m || !s) return
+  openRel(m.path, s.line - 1)
+  tasks.reveal('pipeline')
+  pipelineView.show(s.qual)
+}
+commands.register({ id: 'view.pipeline', title: 'Show Pipeline (data flow of a function)', run: () => panel.show('pipeline') })
+
 // ---------- Network panel: the web requests a traced run makes ----------
 const netLog = new NetLog()
 const networkView = new NetworkView(netLog, {
@@ -2593,6 +2678,7 @@ const graphView = new GraphView({
   scan: () => scanProjectGraph(),
   debugHistory: (node) => debugHistoryView(debugTrail, node),
   runDetails: (node) => recursionDetails(node),
+  showDataFlow: (node) => void showDataFlow(node),
   boxes: {
     list: () => boxes.boxes,
     selected: () => boxes.selected,

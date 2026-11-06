@@ -93,6 +93,41 @@ const FILES: Record<string, string> = {
     '    return x + 1',
     'print(fib(4), deep(400), plain(1))'
   ].join('\n'),
+  'data.py': [
+    'class Dtypes:',
+    '    def __init__(self, pairs):',
+    '        self.pairs = pairs',
+    '    def items(self):',
+    '        return iter(self.pairs)',
+    '',
+    'class Frame:',
+    '    """Looks like a pandas DataFrame (pandas may not be installed)."""',
+    '    def __init__(self, rows, cols):',
+    '        self.rows, self.cols = rows, cols',
+    '    shape = property(lambda self: (len(self.rows), len(self.cols)))',
+    '    columns = property(lambda self: self.cols)',
+    '    dtypes = property(lambda self: Dtypes([(c, "int64") for c in self.cols]))',
+    '    index = property(lambda self: list(range(len(self.rows))))',
+    '    def head(self, n):',
+    '        return Frame(self.rows[:n], self.cols)',
+    '    def itertuples(self, index=False, name=None):',
+    '        return iter([tuple(r) for r in self.rows])',
+    '',
+    'def load(n):',
+    '    return Frame([[i, i * i] for i in range(n)], ["a", "b"])',
+    '',
+    'def pipeline(n):',
+    '    df = load(n)',
+    '    small = df.head(2)',
+    '    names = [{"x": 1, "y": "a"}, {"x": 2}]',
+    '    total = 0',
+    '    for i in range(1, 6):',
+    '        total += i',
+    '    return small',
+    '',
+    'pipeline(10)',
+    'pipeline(3)'
+  ].join('\n'),
   'libs.py': [
     'import asyncio, sys',
     'import requests, httpx, aiohttp',
@@ -157,10 +192,10 @@ beforeAll(() => {
 })
 afterAll(() => rmSync(root, { recursive: true, force: true }))
 
-async function run(target: string[], args: string[] = [], opts: { port?: number } = {}) {
+async function run(target: string[], args: string[] = [], opts: { port?: number; env?: Record<string, string> } = {}) {
   const messages: unknown[] = []
   const server = await openTraceServer((m) => messages.push(m))
-  const env = { ...process.env, ...traceEnv(root, opts.port ?? server.port, server.token) }
+  const env = { ...process.env, ...traceEnv(root, opts.port ?? server.port, server.token), ...opts.env }
   const child = spawn(python!, traceCommand(target, args), { cwd: root, env })
   let stdout = ''
   let stderr = ''
@@ -282,6 +317,33 @@ describe.skipIf(!python)('run tracer (real Python)', () => {
     const deep = all[1]
     expect(deep.total).toBe(401)
     expect(deep.nodes.length).toBe(300)
+  })
+
+  it('watched function: what each line produced (DataFrames: shape, columns, rows); every function: inputs and output', async () => {
+    const r = await run([join(root, 'data.py')], [], { env: { FORGE_TRACE_DATA: 'data:pipeline' } })
+    expect(r.stderr).toBe('')
+    type Summary = { type: string; kind: string; shape?: number[]; columns?: [string, string][]; rows?: string[][]; len?: number; repr?: string }
+    const data = (r.messages as { t: string; func?: string; line?: number; var?: string; n?: number; summary?: Summary }[]).filter((m) => m.t === 'data')
+    expect(data.every((d) => d.func === 'data:pipeline')).toBe(true)
+    const at = (v: string) => data.filter((d) => d.var === v)
+    expect(at('df')).toHaveLength(1)
+    expect(at('df')[0]).toMatchObject({ line: 24, summary: { kind: 'dataframe', type: '__main__.Frame', shape: [10, 2], columns: [['a', 'int64'], ['b', 'int64']] } })
+    expect(at('df')[0].summary!.rows).toEqual([['0', '0'], ['1', '1'], ['2', '4'], ['3', '9'], ['4', '16']])
+    expect(at('small')[0].summary!.shape).toEqual([2, 2])
+    expect(at('names')[0].summary).toMatchObject({ kind: 'sequence', len: 2, columns: [['x', ''], ['y', '']], rows: [['1', "'a'"], ['2', 'None']] })
+    // In a loop, the same line is reported a few times, not every time.
+    expect(at('total').map((d) => d.summary!.repr)).toEqual(['0', '1', '3', '6'])
+    expect(at('(returned)')).toHaveLength(1)
+    // Only the first call is traced line by line.
+    expect(at('df').every((d) => d.summary!.shape![0] === 10)).toBe(true)
+
+    type Io = { func: string; total: number; calls: { in: Record<string, Summary>; out: Summary | null }[] }
+    const io = new Map<string, Io>()
+    for (const m of r.messages as { t: string; io?: Io }[]) if (m.t === 'io') io.set(m.io!.func, m.io!)
+    const load = io.get('data:load')!
+    expect(load.total).toBe(2)
+    expect(load.calls.map((c) => `${c.in.n.repr} -> ${c.out?.shape}`)).toEqual(['10 -> 10,2', '3 -> 3,2'])
+    expect(io.get('data:pipeline')!.calls[0].out!.kind).toBe('dataframe')
   })
 
   it('no connection: the program still runs, untraced', async () => {

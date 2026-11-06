@@ -13,6 +13,7 @@
 
 export interface RawImport { module: string; names: string[]; alias: string | null; level: number; line: number }
 export interface RawCall { name: string; line: number }
+export interface RawParamSig { name: string; annotation: string | null; default: string | null }
 export interface RawDef {
   name: string
   /** Dotted path inside the module: "Client.get"; "<module>" for top-level code. */
@@ -24,6 +25,10 @@ export interface RawDef {
   /** Names (and attribute names) the code reads. */
   refs: string[]
   decorators: string[]
+  /** Functions: the parameters (name, annotation and default as written), return annotation and first docstring line. */
+  params?: RawParamSig[]
+  returns?: string | null
+  doc?: string
   bases?: string[]
 }
 export interface RawRoute { methods: string[]; path: string; func: string; line: number; framework: string; owner: string | null }
@@ -69,6 +74,10 @@ export interface SymbolNode {
   line: number
   endLine: number
   decorators: string[]
+  /** Functions: the parameters (name, annotation and default as written), return annotation and first docstring line. */
+  params?: RawParamSig[]
+  returns?: string | null
+  doc?: string
 }
 
 export interface ModuleNode {
@@ -188,7 +197,8 @@ export function buildGraph(scan: RawScan): ProjectGraph {
     ...(f.error ? { error: f.error } : {}),
     symbols: f.defs.filter((d) => d.kind !== 'module').map((d) => ({
       id: `${f.module}:${d.qual}`, module: f.module, qual: d.qual, name: d.name, kind: d.kind as SymbolNode['kind'],
-      line: d.line, endLine: d.endLine, decorators: d.decorators
+      line: d.line, endLine: d.endLine, decorators: d.decorators,
+      ...(d.params ? { params: d.params, returns: d.returns ?? null, doc: d.doc ?? '' } : {})
     })),
     routes: f.routes,
     http: f.http,

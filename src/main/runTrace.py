@@ -109,11 +109,138 @@ def _forge_trace():
         local = frame.f_locals
         return ", ".join(short(local.get(name)) for name in names[:4] if name not in ("self", "cls"))
 
+    # ---------- data: what values look like (summaries) ----------
+    # For one function chosen in Forge (FORGE_TRACE_DATA = "module:qual"): what
+    # each line of its first call produced. For every project function: what
+    # went in and what came out, for its first two calls. Values are summarised
+    # here (type, size, a few rows; DataFrames: shape, columns, first rows).
+    data_target = os.environ.pop("FORGE_TRACE_DATA", "")
+    IO_CALLS = 2
+    MAX_IO_FUNCS = 300
+    io_records = {}
+    io_dirty = set()
+
+    def summarise(v, rows=5):
+        t = type(v)
+        name = t.__qualname__ if t.__module__ == "builtins" else "%s.%s" % (t.__module__.split(".")[0], t.__qualname__)
+        s = {"type": name}
+        try:
+            if hasattr(v, "columns") and hasattr(v, "dtypes") and hasattr(v, "shape") and hasattr(v, "head"):
+                s["kind"] = "dataframe"
+                s["shape"] = [int(x) for x in v.shape]
+                s["columns"] = [[str(c), str(dt)] for c, dt in list(v.dtypes.items())[:60]]
+                head = v.head(rows)
+                s["index"] = [short(i, 20) for i in list(head.index)]
+                s["rows"] = [[short(x, 40) for x in r] for r in head.itertuples(index=False, name=None)]
+            elif hasattr(v, "dtype") and hasattr(v, "shape") and hasattr(v, "head") and hasattr(v, "items"):
+                s["kind"] = "series"
+                s["shape"] = [int(x) for x in v.shape]
+                s["dtype"] = str(v.dtype)
+                s["name"] = short(getattr(v, "name", None), 30)
+                s["rows"] = [[short(i, 20), short(x, 40)] for i, x in list(v.head(rows).items())]
+            elif isinstance(v, (list, tuple, set, frozenset)):
+                items = list(v)
+                s["kind"] = "sequence"
+                s["len"] = len(items)
+                if items and all(isinstance(x, dict) for x in items[:rows]):
+                    cols = []
+                    for d in items[:rows]:
+                        for k in d:
+                            if k not in cols and len(cols) < 20:
+                                cols.append(k)
+                    s["columns"] = [[str(c), ""] for c in cols]
+                    s["rows"] = [[short(d.get(c), 40) for c in cols] for d in items[:rows]]
+                else:
+                    s["sample"] = [short(x, 60) for x in items[:rows]]
+            elif isinstance(v, dict):
+                s["kind"] = "mapping"
+                s["len"] = len(v)
+                s["sample"] = [[short(k, 30), short(x, 60)] for k, x in list(v.items())[:rows]]
+            else:
+                s["kind"] = "value"
+                s["repr"] = short(v, 120)
+        except Exception:
+            s["kind"] = "value"
+            s["repr"] = short(v, 120)
+        return s
+
+    def inputs_of(frame):
+        code = frame.f_code
+        n = code.co_argcount + code.co_kwonlyargcount
+        if code.co_flags & 0x04:
+            n += 1
+        if code.co_flags & 0x08:
+            n += 1
+        local = frame.f_locals
+        return {name: summarise(local[name]) for name in code.co_varnames[:n] if name not in ("self", "cls") and name in local}
+
+    def io_start(to, frame):
+        rec = io_records.get(to)
+        if rec is None:
+            if len(io_records) >= MAX_IO_FUNCS:
+                return None
+            rec = io_records[to] = {"func": to, "calls": [], "total": 0}
+        rec["total"] += 1
+        if len(rec["calls"]) >= IO_CALLS:
+            return None
+        call = {"in": inputs_of(frame), "out": None}
+        rec["calls"].append(call)
+        io_dirty.add(to)
+        return call
+
+    def io_end(to, call, value):
+        call["out"] = summarise(value)
+        io_dirty.add(to)
+
+    def send_io():
+        for key in list(io_dirty):
+            io_dirty.discard(key)
+            send({"t": "io", "io": io_records[key]})
+
+    # The watched function: a line-by-line trace of its first call.
+    data_state = {"done": False, "prev_line": None, "seen": {}, "sent": 0, "per": {}}
+
+    def data_line(frame, event, arg):
+        st = data_state
+        if st["done"]:
+            return None
+        if event in ("line", "return"):
+            line = st["prev_line"]
+            if line is not None and st["sent"] < 400:
+                seen = st["seen"]
+                for name, value in list(frame.f_locals.items()):
+                    if seen.get(name) is value:
+                        continue
+                    seen[name] = value
+                    key = (line, name)
+                    n = st["per"].get(key, 0) + 1
+                    st["per"][key] = n
+                    if n > 3:  # the same line in a loop: the first few times are enough
+                        continue
+                    st["sent"] += 1
+                    send({"t": "data", "func": data_target, "line": line, "var": name, "n": n, "summary": summarise(value)})
+            st["prev_line"] = frame.f_lineno
+            if event == "return":
+                send({"t": "data", "func": data_target, "line": line, "var": "(returned)", "n": 1, "summary": summarise(arg)})
+                st["done"] = True
+                sys.settrace(None)
+                return None
+        return data_line
+
+    def data_call(frame, event, arg):
+        if event == "call" and not data_state["done"] and ident(frame.f_code) == data_target:
+            # Values set before the first line (the arguments) count as already seen.
+            data_state["seen"] = dict(frame.f_locals)
+            return data_line
+        return None
+
     def profile(frame, event, arg):
         if event == "return":
             stack = stacks.get(threading.get_ident())
             if stack and stack[-1][1] is frame:
                 entry = stack.pop()
+                if entry[4] is not None:
+                    io_end(entry[0], entry[4], arg)
                 if entry[2] is not None:
                     tree = trees[entry[3]]
                     tree["nodes"][entry[2]][2] = short(arg, 40)
@@ -130,7 +257,7 @@ def _forge_trace():
             key = (caller, to)
             calls[key] = calls.get(key, 0) + 1
         stack = stacks.setdefault(threading.get_ident(), [])
-        entry = [to, frame, None, None]  # id, frame, node in its tree, tree key
+        entry = [to, frame, None, None, io_start(to, frame)]  # id, frame, node in its tree, tree key, inputs/output record
         for i in range(len(stack) - 1, max(-1, len(stack) - 200), -1):
             outer = stack[i]
             if outer[0] != to:
@@ -580,6 +707,7 @@ def _forge_trace():
     def flush():
         send_net()
         send_trees()
+        send_io()
         calls, state["calls"] = state["calls"], {}
         frame = sys._current_frames().get(main_id)
         at = project_frame(frame, 256)
@@ -601,6 +729,8 @@ def _forge_trace():
         finished["done"] = True
         sys.setprofile(None)
         threading.setprofile(None)
+        if data_target:
+            sys.settrace(None)
         stop.set()
         flush()
         send({"t": "end"})
@@ -618,6 +748,8 @@ def _forge_trace():
     if conn["sock"] is not None:
         threading.Thread(target=loop, name="forge-trace", daemon=True).start()
         install_net_hooks()
+        if data_target:
+            sys.settrace(data_call)
         threading.setprofile(profile)
         sys.setprofile(profile)
 

@@ -138,6 +138,7 @@ const api: IdeApi = {
   writeProjectFile: (root, name, value) => ipcRenderer.invoke('project:writeFile', root, name, value),
   apiTestCall: (root, box, requestId) => ipcRenderer.invoke('box:testCall', root, box, requestId),
   loadOpenApi: (source) => ipcRenderer.invoke('openapi:load', source),
+  readDataflow: (root, source, func, python) => ipcRenderer.invoke('dataflow:read', root, source, func, python),
   pickOpenApiFile: () => ipcRenderer.invoke('openapi:pick'),
   envNames: (root) => ipcRenderer.invoke('env:names', root),
   setEnvValue: (root, name, value) => ipcRenderer.invoke('env:set', root, name, value),
