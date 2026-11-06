@@ -46,3 +46,17 @@ describe('DapClient', () => {
     await expect(p).rejects.toThrow('gone')
   })
 })
+
+describe('reverse requests', async () => {
+  const { DapClient } = await import('./dapClient')
+  it('answers handled ones and refuses the rest', async () => {
+    const sent: any[] = []
+    const c = new DapClient((m) => sent.push(m))
+    c.onRequest('runInTerminal', async (args: { args: string[] }) => ({ processId: args.args.length }))
+    c.handleMessage({ type: 'request', seq: 7, command: 'runInTerminal', arguments: { args: ['python', 'x.py'] } })
+    c.handleMessage({ type: 'request', seq: 8, command: 'startDebugging', arguments: {} })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(sent.find((m) => m.request_seq === 7)).toMatchObject({ success: true, body: { processId: 2 } })
+    expect(sent.find((m) => m.request_seq === 8)).toMatchObject({ success: false })
+  })
+})

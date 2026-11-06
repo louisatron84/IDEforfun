@@ -184,6 +184,14 @@ export class SettingsView {
     const lintRow = this.row('Ruff warnings', "Show Ruff's lint warnings and quick fixes (when Ruff is installed)", lint)
     lintRow.querySelector('label')!.htmlFor = lint.id
 
+    const dbg = document.createElement('input')
+    dbg.type = 'checkbox'
+    dbg.id = 'setting-debug-terminal'
+    dbg.checked = s.debugInTerminal
+    dbg.addEventListener('change', () => this.update({ debugInTerminal: dbg.checked }))
+    const dbgRow = this.row('Debug in terminal', 'Run the program being debugged in a terminal, so input() works', dbg)
+    dbgRow.querySelector('label')!.htmlFor = dbg.id
+
     const rows: HTMLElement[] = [header]
     if (this.projectNote) {
       const note = document.createElement('p')
@@ -191,7 +199,7 @@ export class SettingsView {
       note.textContent = this.projectNote
       rows.push(note)
     }
-    rows.push(fontRow, themeRow, tabRow, pyRow, shellRow, fmtRow, fosRow, lintRow, reopenRow)
+    rows.push(fontRow, themeRow, tabRow, pyRow, shellRow, fmtRow, fosRow, lintRow, dbgRow, reopenRow)
 
     if (this.links.length) {
       const linkRow = document.createElement('div')

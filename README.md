@@ -66,7 +66,7 @@ your terminal has `ELECTRON_RUN_AS_NODE` set. Clear it first: `$env:ELECTRON_RUN
 | Ctrl+Shift+M | Problems (errors and warnings from Pyright) |
 | F5 | Run the current Python file (auto-saves). With breakpoints set it debugs instead; while paused it continues |
 | Ctrl+F5 / Shift+F5 | Run without debugging / stop (running or debugging) |
-| F9 or click a line number | Toggle a breakpoint |
+| F9 or click a line number | Toggle a breakpoint (right-click the line number for a condition, hit count or log message) |
 | F10 / F11 / Shift+F11 | Debugger: step over / step into / step out |
 | Ctrl+Shift+F5 | Restart debugging |
 | Ctrl+Shift+B | Run a task (in its own terminal) |
@@ -115,6 +115,10 @@ the app's data folder, which you can also edit by hand ("Edit Keyboard Shortcuts
   from `requirements.txt` or the project's `pyproject.toml`, or save what's installed to
   `requirements.txt`. If the project needs packages that aren't installed, the status
   bar says so (⚠ n missing packages); click it to install them. pip runs in the Output panel.
+- **Debugging**: the program runs in a terminal so `input()` works (Settings → Debug in terminal).
+  The Debug panel has Watch expressions, every Breakpoint (switch on/off, edit, remove) and
+  "Pause on raised / uncaught exceptions"; programs with several threads list them in the
+  call stack. Breakpoints, watches and exception settings are saved with the project.
 - **Git** (Git tab, Git menu, ⎇ in the status bar): changed files grouped as conflicts / staged /
   changes; click one for a colored diff where each hunk can be staged, unstaged or discarded
   on its own. Commit (or amend), switch / create branches, fetch, pull and push. Open files

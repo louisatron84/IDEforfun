@@ -72,14 +72,33 @@ export class Terminals {
 
   /** Start a shell (`profileId` from shells(); default if missing or unknown). Returns its id. */
   create(sender: WebContents, cwd: string | null, cols: number, rows: number, profileId?: string): number {
-    const id = this.nextId++
     const shell = this.shells().find((s) => s.id === profileId) ?? defaultShell(process.platform, process.env)
-    const term = pty.spawn(shell.file, shell.args, {
+    return this.spawn(sender, shell.file, shell.args, cwd, cols, rows, {}).id
+  }
+
+  /**
+   * Run a program directly (no shell) in a terminal, e.g. the program being
+   * debugged, so it gets a real keyboard. `env` adds to (or with null, removes
+   * from) the environment. Returns the terminal id and the process id.
+   */
+  run(sender: WebContents, args: string[], cwd: string | null, env: Record<string, string | null>, cols: number, rows: number): { id: number; pid: number } {
+    if (!args.length) throw new Error('Nothing to run')
+    return this.spawn(sender, args[0], args.slice(1), cwd, cols, rows, env)
+  }
+
+  private spawn(sender: WebContents, file: string, args: string[], cwd: string | null, cols: number, rows: number, extraEnv: Record<string, string | null>): { id: number; pid: number } {
+    const id = this.nextId++
+    const env: Record<string, string> = { ...(process.env as Record<string, string>), TERM_PROGRAM: 'IDEforfun' }
+    for (const [k, v] of Object.entries(extraEnv)) {
+      if (v === null) delete env[k]
+      else env[k] = String(v)
+    }
+    const term = pty.spawn(file, args, {
       name: 'xterm-256color',
       cols: Math.max(2, cols),
       rows: Math.max(2, rows),
       cwd: cwd && existsSync(cwd) ? cwd : homedir(),
-      env: { ...process.env, TERM_PROGRAM: 'IDEforfun' } as Record<string, string>
+      env
     })
     const send = (e: TerminalEvent) => {
       if (!sender.isDestroyed()) sender.send('term:event', e)
@@ -90,7 +109,7 @@ export class Terminals {
       send({ type: 'exit', id, code: exitCode })
     })
     this.terms.set(id, term)
-    return id
+    return { id, pid: term.pid }
   }
 
   write(id: number, data: string): void {

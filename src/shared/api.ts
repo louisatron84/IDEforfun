@@ -174,6 +174,8 @@ export interface IdeApi {
 
   /** Start a shell in a pseudo-terminal; returns its id. */
   terminalCreate(cwd: string | null, cols: number, rows: number, profileId?: string): Promise<number>
+  /** Run a program (not a shell) in a terminal, e.g. the program being debugged. */
+  terminalRun(args: string[], cwd: string | null, env: Record<string, string | null>, cols: number, rows: number): Promise<{ id: number; pid: number }>
   /** Shells installed on this machine, default first. */
   terminalShells(): Promise<ShellProfile[]>
   terminalWrite(id: number, data: string): void

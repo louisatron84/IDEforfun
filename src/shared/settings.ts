@@ -18,6 +18,8 @@ export interface Settings {
   formatOnSave: boolean
   /** Show Ruff's lint warnings (when Ruff is installed). */
   lintWithRuff: boolean
+  /** Run the program being debugged in a terminal (so input() works) instead of the Debug console. */
+  debugInTerminal: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -30,7 +32,8 @@ export const DEFAULT_SETTINGS: Settings = {
   showWelcome: true,
   formatter: 'auto',
   formatOnSave: false,
-  lintWithRuff: true
+  lintWithRuff: true,
+  debugInTerminal: true
 }
 
 export const FONT_SIZE_MIN = 10
@@ -52,6 +55,7 @@ export function normalizeSettings(raw: unknown): Settings {
   if (r.formatter === 'auto' || r.formatter === 'ruff' || r.formatter === 'black') s.formatter = r.formatter
   if (typeof r.formatOnSave === 'boolean') s.formatOnSave = r.formatOnSave
   if (typeof r.lintWithRuff === 'boolean') s.lintWithRuff = r.lintWithRuff
+  if (typeof r.debugInTerminal === 'boolean') s.debugInTerminal = r.debugInTerminal
   return s
 }
 

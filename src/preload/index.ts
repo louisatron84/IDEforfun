@@ -46,6 +46,7 @@ const api: IdeApi = {
     return () => ipcRenderer.removeListener('run:event', handler)
   },
   terminalCreate: (cwd, cols, rows, profileId) => ipcRenderer.invoke('term:create', cwd, cols, rows, profileId),
+  terminalRun: (args, cwd, env, cols, rows) => ipcRenderer.invoke('term:run', args, cwd, env, cols, rows),
   terminalShells: () => ipcRenderer.invoke('term:shells'),
   // Keystrokes and resizes are fire-and-forget (send, not invoke) to keep typing snappy.
   terminalWrite: (id, data) => ipcRenderer.send('term:write', id, data),

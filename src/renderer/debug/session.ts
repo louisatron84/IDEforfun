@@ -8,6 +8,7 @@
  *   setBreakpoints per file → setExceptionBreakpoints → configurationDone → launch answered
  */
 import { DapClient, type DapEvent } from './dapClient'
+import type { Breakpoint } from './breakpoints'
 
 export type DebugState = 'idle' | 'starting' | 'running' | 'paused'
 
@@ -35,7 +36,20 @@ export interface PauseInfo {
   /** For exceptions: e.g. "ZeroDivisionError: division by zero". */
   description?: string
   frames: StackFrame[]
+  /** The thread that stopped, and all threads (Python threads of the program). */
+  threadId: number
+  threads: { id: number; name: string }[]
 }
+
+/** An exception setting the adapter offers ("Raised Exceptions", "Uncaught Exceptions"...). */
+export interface ExceptionFilter {
+  filter: string
+  label: string
+  default: boolean
+}
+
+/** Run the program in a terminal (debugpy's runInTerminal request): returns its process id. */
+export type RunInTerminal = (args: { title?: string; cwd: string; args: string[]; env?: Record<string, string | null> }) => Promise<number | undefined>
 
 export interface SessionHooks {
   send(message: unknown): void
@@ -52,7 +66,11 @@ export interface LaunchOptions {
   args?: string[]
   env?: Record<string, string>
   cwd: string
-  breakpoints: { path: string; lines: readonly number[] }[]
+  breakpoints: { path: string; breakpoints: readonly Breakpoint[] }[]
+  /** Which exception settings to turn on (filter ids); undefined = "uncaught" if offered. */
+  exceptionFilters?: string[]
+  /** Run the program in a terminal (so input() works) instead of the Debug console. */
+  runInTerminal?: RunInTerminal
 }
 
 export class DebugSession {
@@ -62,6 +80,8 @@ export class DebugSession {
   private exitCode: number | null = null
   private configured = false
   private initialized: Promise<void>
+  /** Exception settings the adapter offers (known after startup). */
+  exceptionFilters: ExceptionFilter[] = []
 
   constructor(private readonly hooks: SessionHooks) {
     this.client = new DapClient(hooks.send)
@@ -91,25 +111,36 @@ export class DebugSession {
 
   async start(opts: LaunchOptions): Promise<void> {
     this.setState('starting')
+    const inTerminal = !!opts.runInTerminal
+    if (opts.runInTerminal) {
+      const run = opts.runInTerminal
+      this.client.onRequest('runInTerminal', async (a: { title?: string; cwd: string; args: string[]; env?: Record<string, string | null> }) => {
+        const processId = await run(a)
+        return processId ? { processId } : {}
+      })
+    }
     const caps = await this.client.request('initialize', {
       clientID: 'ideforfun', clientName: 'IDEforfun', adapterID: 'debugpy', locale: 'en',
       pathFormat: 'path', linesStartAt1: true, columnsStartAt1: true,
-      supportsVariableType: true, supportsRunInTerminalRequest: false
+      supportsVariableType: true, supportsRunInTerminalRequest: inTerminal
     })
+    this.exceptionFilters = (caps?.exceptionBreakpointFilters ?? []).map((f: any) => ({ filter: String(f.filter), label: String(f.label ?? f.filter), default: !!f.default }))
     const launch = this.client.request('launch', {
       name: 'IDEforfun', type: 'python', request: 'launch',
       ...(opts.module ? { module: opts.module } : { program: opts.program }),
       args: opts.args ?? [], cwd: opts.cwd,
-      console: 'internalConsole', redirectOutput: true,
+      // In a terminal the program gets a real keyboard (input() works); its output shows there.
+      console: inTerminal ? 'integratedTerminal' : 'internalConsole', redirectOutput: !inTerminal,
       justMyCode: true, showReturnValue: true,
       env: { PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1', ...opts.env }
     })
     launch.catch(() => {}) // awaited below; avoid an "unhandled" warning if it fails early
     await Promise.race([this.initialized, launch])
 
-    for (const f of opts.breakpoints) await this.sendBreakpoints(f.path, f.lines)
-    // Pause where an exception would crash the program, so you can look around.
-    const filters = (caps?.exceptionBreakpointFilters ?? []).some((f: any) => f.filter === 'uncaught') ? ['uncaught'] : []
+    for (const f of opts.breakpoints) await this.sendBreakpoints(f.path, f.breakpoints)
+    // By default pause where an exception would crash the program, so you can look around.
+    const offered = new Set(this.exceptionFilters.map((f) => f.filter))
+    const filters = (opts.exceptionFilters ?? ['uncaught']).filter((f) => offered.has(f))
     await this.client.request('setExceptionBreakpoints', { filters })
     await this.client.request('configurationDone')
     this.configured = true
@@ -118,17 +149,49 @@ export class DebugSession {
   }
 
   /** Update one file's breakpoints while running (no-op before startup is done). */
-  async setBreakpoints(path: string, lines: readonly number[]): Promise<void> {
+  async setBreakpoints(path: string, bps: readonly Breakpoint[]): Promise<void> {
     if (!this.configured || !this.active) return
-    await this.sendBreakpoints(path, lines)
+    await this.sendBreakpoints(path, bps)
   }
 
-  private async sendBreakpoints(path: string, lines: readonly number[]): Promise<void> {
+  /** Change which exceptions pause the program, while it runs. */
+  async setExceptionFilters(filters: string[]): Promise<void> {
+    if (!this.configured || !this.active) return
+    const offered = new Set(this.exceptionFilters.map((f) => f.filter))
+    await this.client.request('setExceptionBreakpoints', { filters: filters.filter((f) => offered.has(f)) })
+  }
+
+  private async sendBreakpoints(path: string, bps: readonly Breakpoint[]): Promise<void> {
     await this.client.request('setBreakpoints', {
       source: { path },
-      breakpoints: lines.map((l) => ({ line: l + 1 })),
+      // Switched-off breakpoints aren't sent at all.
+      breakpoints: bps.filter((b) => b.enabled).map((b) => ({
+        line: b.line + 1,
+        ...(b.condition ? { condition: b.condition } : {}),
+        ...(b.hitCondition ? { hitCondition: b.hitCondition } : {}),
+        ...(b.logMessage ? { logMessage: b.logMessage } : {})
+      })),
       sourceModified: false
     })
+  }
+
+  /** The program's threads. */
+  async threads(): Promise<{ id: number; name: string }[]> {
+    const res = await this.client.request('threads')
+    return (res.threads ?? []).map((t: any) => ({ id: t.id, name: String(t.name ?? `Thread ${t.id}`) }))
+  }
+
+  /** A thread's call stack (while paused). Stepping then applies to this thread. */
+  async stackTrace(threadId: number): Promise<StackFrame[]> {
+    const res = await this.client.request('stackTrace', { threadId, startFrame: 0, levels: 100 })
+    this.threadId = threadId
+    return (res.stackFrames ?? []).map((f: any) => ({
+      id: f.id,
+      name: f.name,
+      path: f.source?.path ?? null,
+      line: Math.max(0, (f.line ?? 1) - 1),
+      col: Math.max(0, (f.column ?? 1) - 1)
+    }))
   }
 
   continue(): Promise<void> {
@@ -166,7 +229,7 @@ export class DebugSession {
   }
 
   /** Run an expression in the paused frame (Debug Console). */
-  async evaluate(expression: string, frameId?: number, context: 'repl' | 'hover' = 'repl'): Promise<{ result: string; ref: number }> {
+  async evaluate(expression: string, frameId?: number, context: 'repl' | 'hover' | 'watch' = 'repl'): Promise<{ result: string; ref: number }> {
     const res = await this.client.request('evaluate', { expression, frameId, context })
     return { result: res.result ?? '', ref: res.variablesReference ?? 0 }
   }
@@ -226,16 +289,12 @@ export class DebugSession {
     }
     this.setState('paused')
     let frames: StackFrame[] = []
+    let threads: { id: number; name: string }[] = []
+    const threadId = this.threadId
     let description: string | undefined = body.text ?? body.description
     try {
-      const res = await this.client.request('stackTrace', { threadId: this.threadId, startFrame: 0, levels: 100 })
-      frames = (res.stackFrames ?? []).map((f: any) => ({
-        id: f.id,
-        name: f.name,
-        path: f.source?.path ?? null,
-        line: Math.max(0, (f.line ?? 1) - 1),
-        col: Math.max(0, (f.column ?? 1) - 1)
-      }))
+      frames = await this.stackTrace(threadId)
+      threads = await this.threads().catch(() => [])
       if (body.reason === 'exception') {
         const info = await this.client.request('exceptionInfo', { threadId: this.threadId })
         description = [info.exceptionId, info.description].filter(Boolean).join(': ') || description
@@ -244,7 +303,7 @@ export class DebugSession {
       // the program may have ended meanwhile
     }
     if (this._state !== 'paused') return
-    this.hooks.onPaused({ reason: body.reason ?? 'pause', description, frames })
+    this.hooks.onPaused({ reason: body.reason ?? 'pause', description, frames, threadId, threads })
   }
 
   private end(): void {

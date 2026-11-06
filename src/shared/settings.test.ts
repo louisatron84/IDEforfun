@@ -8,7 +8,7 @@ describe('normalizeSettings', () => {
     expect(normalizeSettings({})).toEqual(DEFAULT_SETTINGS)
   })
   it('keeps valid values', () => {
-    const s = { fontSize: 18, theme: 'light', tabSize: 2, pythonPath: 'C:\\Py\\python.exe', shell: 'gitbash', reopenLastProject: false, showWelcome: false, formatter: 'black', formatOnSave: true, lintWithRuff: false }
+    const s = { fontSize: 18, theme: 'light', tabSize: 2, pythonPath: 'C:\\Py\\python.exe', shell: 'gitbash', reopenLastProject: false, showWelcome: false, formatter: 'black', formatOnSave: true, lintWithRuff: false, debugInTerminal: false }
     expect(normalizeSettings(s)).toEqual(s)
   })
   it('only accepts plain shell ids', () => {

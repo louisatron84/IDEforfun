@@ -86,12 +86,12 @@ Git:
 - [x] Git history and file blame, with a graph view (v0.36: History tab with graph, commit files and diffs, file history; blame in the status bar and gutter)
 
 Debugger improvements:
-- [ ] Support `input()` while debugging (run the debugged program in a terminal)
-- [ ] Conditional breakpoints
-- [ ] Watch expressions
-- [ ] Option to pause on every raised exception, not just uncaught ones
-- [ ] Breakpoint management panel (and keep breakpoints between sessions)
-- [ ] Debug multiple processes
+- [x] Support `input()` while debugging (run the debugged program in a terminal) (v0.37: runInTerminal; setting to use the Debug console instead)
+- [x] Conditional breakpoints (v0.37: condition, hit count, log message, on/off; right-click a line number)
+- [x] Watch expressions (v0.37: Watch section, re-evaluated on every pause, expandable)
+- [x] Option to pause on every raised exception, not just uncaught ones (v0.37: Breakpoints section checkboxes, Run menu)
+- [x] Breakpoint management panel (and keep breakpoints between sessions) (v0.37: Breakpoints section; saved per project with watches)
+- [ ] Debug multiple processes (v0.37: threads are listed and selectable; child processes (multiprocessing) still to do)
 
 ## Tier 4: Visual identity and workspace
 

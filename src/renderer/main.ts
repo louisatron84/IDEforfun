@@ -18,8 +18,8 @@ import { LspClient } from './lsp/client'
 import { PythonLanguage, type Diagnostic } from './lsp/python'
 import { ProblemsView } from './problemsView'
 import { Tooltip } from './tooltip'
-import { BreakpointStore } from './debug/breakpoints'
-import { DebugSession, type PauseInfo, type StackFrame } from './debug/session'
+import { BreakpointStore, breakpointStyle } from './debug/breakpoints'
+import { DebugSession, type ExceptionFilter, type PauseInfo, type StackFrame } from './debug/session'
 import { DebugView } from './debug/debugView'
 import { Completion } from './completion'
 import { hoverSections } from './lsp/markdown'
@@ -83,6 +83,11 @@ const editorOptions = (index: number): EditorOptions => ({
   onGutterClick: (line) => {
     workspace.focusGroup(index)
     toggleBreakpoint(line)
+  },
+  onGutterContextMenu: (line) => {
+    workspace.focusGroup(index)
+    const doc = editors[index].currentDoc
+    if (doc) editBreakpoint(doc.path, line)
   },
   onLightbulb: () => {
     workspace.focusGroup(index)
@@ -281,8 +286,34 @@ const debugView = new DebugView({
     if (!session) return Promise.reject(new Error('Not debugging'))
     return session.evaluate(expr, debugView.currentFrame?.id)
   },
-  openLink: (path, line) => void openFile(path, line - 1)
+  openLink: (path, line) => void openFile(path, line - 1),
+  selectThread: (id) => session ? session.stackTrace(id) : Promise.reject(new Error('Not debugging')),
+  watch: (expr, frameId) => session ? session.evaluate(expr, frameId, 'watch') : Promise.reject(new Error('Not debugging')),
+  watchesChanged: (list) => {
+    watches = list
+    saveStateSoon()
+  },
+  breakpoints: () => breakpoints.save(),
+  goToBreakpoint: (b) => void openFile(b.path, b.line),
+  setBreakpointEnabled: (b, on) => breakpoints.update(b.path, b.line, { enabled: on }),
+  editBreakpoint: (b) => editBreakpoint(b.path, b.line),
+  removeBreakpoint: (b) => breakpoints.remove(b.path, b.line),
+  setAllBreakpoints: (on) => breakpoints.setAllEnabled(on),
+  removeAllBreakpoints: () => breakpoints.clear(),
+  exceptionFilters: () => ({ offered: offeredExceptionFilters, on: exceptionFilters }),
+  setExceptionFilter: (filter, on) => {
+    exceptionFilters = on ? [...new Set([...exceptionFilters, filter])] : exceptionFilters.filter((f) => f !== filter)
+    void session?.setExceptionFilters(exceptionFilters).catch(() => {})
+    saveStateSoon()
+    debugView.renderBreakpoints()
+  },
+  relative: (p) => (rootFolder && isInside(p, rootFolder) ? p.slice(rootFolder.length).replace(/^[\\/]+/, '') : p)
 })
+/** Watch expressions and which exceptions pause the program (saved with the project). */
+let watches: string[] = []
+let exceptionFilters: string[] = ['uncaught']
+let offeredExceptionFilters: ExceptionFilter[] = []
+debugView.renderBreakpoints()
 panel.addView('debug', 'Debug', debugView.body, debugView.actions, () => debugView.focusInput())
 
 function watchDoc(doc: Doc): void {
@@ -297,15 +328,34 @@ function updateLineMarkers(): void {
     const doc = ed.currentDoc
     if (!doc) continue
     const exec = pausedAt && samePath(pausedAt.path, doc.path) ? pausedAt.line : null
-    ed.setLineMarkers(breakpoints.linesFor(doc.path), exec)
+    const styles = new Map(breakpoints.breakpointsFor(doc.path).map((b) => [b.line, breakpointStyle(b)]))
+    ed.setLineMarkers(breakpoints.linesFor(doc.path), exec, styles)
   }
 }
 
 breakpoints.subscribe((path) => {
   updateLineMarkers()
+  debugView.renderBreakpoints()
+  saveStateSoon()
   // Breakpoints changed while debugging: tell debugpy right away.
-  void session?.setBreakpoints(path, breakpoints.linesFor(path)).catch(() => {})
+  void session?.setBreakpoints(path, breakpoints.breakpointsFor(path)).catch(() => {})
 })
+
+/** Condition, hit count, log message, on/off for the breakpoint on a line (creating one if needed). */
+function editBreakpoint(path: string, line: number): void {
+  const b = breakpoints.get(path, line)
+  const ask = (what: string, field: 'condition' | 'hitCondition' | 'logMessage', placeholder: string) => () => setTimeout(() =>
+    palette.prompt(placeholder, (text) => breakpoints.update(path, line, { [field]: text }), b?.[field] ?? '', `Set ${what}`), 0)
+  palette.choose(`Breakpoint on line ${line + 1}${b ? '' : ' (adds one)'}`, [
+    { label: 'Condition…', detail: b?.condition ? `now: ${b.condition}` : 'stop only when a Python expression is true, e.g. x > 10', run: ask('condition', 'condition', 'Condition, e.g. x > 10 or name == "Ada" (empty to remove)') },
+    { label: 'Hit count…', detail: b?.hitCondition ? `now: ${b.hitCondition}` : 'stop only on some hits, e.g. 3, >= 5, % 2', run: ask('hit count', 'hitCondition', 'Hit count: 3 (the 3rd time), >= 5, % 2 (every 2nd) (empty to remove)') },
+    { label: 'Log message instead of stopping…', detail: b?.logMessage ? `now: ${b.logMessage}` : 'print a message, e.g. x is {x}', run: ask('log message', 'logMessage', 'Message to print, {expressions} are filled in, e.g. total = {total} (empty to stop instead)') },
+    ...(b ? [
+      { label: b.enabled ? 'Switch off' : 'Switch on', run: () => breakpoints.update(path, line, { enabled: !b.enabled }) },
+      { label: 'Remove', run: () => breakpoints.remove(path, line) }
+    ] : [])
+  ])
+}
 
 function toggleBreakpoint(line = editor.getCursor().line): void {
   const doc = workspace.active
@@ -406,7 +456,21 @@ async function startDebugging(given?: LaunchSpec): Promise<void> {
   session = s
   await window.api.debugStart(prep.python, cwd)
   try {
-    await s.start({ program: spec.program, module: spec.module, args: spec.args, env: spec.env, cwd, breakpoints: breakpoints.all() })
+    if (settings.debugInTerminal) debugView.output('console', 'The program runs in the Terminal tab, so input() works there (Settings → Debug in terminal).\n')
+    await s.start({
+      program: spec.program, module: spec.module, args: spec.args, env: spec.env, cwd,
+      breakpoints: breakpoints.all(),
+      exceptionFilters,
+      runInTerminal: settings.debugInTerminal
+        ? (a) => {
+            panel.show('terminal')
+            const name = (spec.program ?? spec.module ?? 'program').split(/[\\/]/).pop()
+            return terminal.runProgram(`Debug: ${name}`, a.args, a.cwd || cwd, a.env ?? {})
+          }
+        : undefined
+    })
+    offeredExceptionFilters = s.exceptionFilters
+    debugView.renderBreakpoints()
   } catch (err) {
     if (session !== s || !s.active) return
     debugView.error(`Couldn't start debugging: ${err instanceof Error ? err.message : String(err)}`)
@@ -1195,6 +1259,10 @@ async function openFolderPath(folder: string): Promise<void> {
     runConfigName = null
     lastTask = null
     tests.reset()
+    breakpoints.clear()
+    watches = []
+    exceptionFilters = ['uncaught']
+    debugView.setWatches([])
     await loadRunFile(folder)
     await tree.setRoot(folder)
     workspace.notifyChanged()
@@ -1224,7 +1292,10 @@ function captureState(): WorkspaceState {
     activeGroup: workspace.activeGroup,
     terminals: terminal.shellIds(),
     panel: panel.activeView,
-    runConfig: runConfigName
+    runConfig: runConfigName,
+    breakpoints: breakpoints.save(),
+    watches,
+    exceptionFilters
   }
 }
 
@@ -1262,6 +1333,11 @@ async function restoreLayout(folder: string): Promise<void> {
     }
   })
   if (state.runConfig && runFile.configurations.some((c) => c.name === state.runConfig)) runConfigName = state.runConfig
+  breakpoints.load(state.breakpoints.filter((b) => isInside(b.path, folder)))
+  watches = state.watches
+  exceptionFilters = state.exceptionFilters ?? ['uncaught']
+  debugView.setWatches(watches)
+  debugView.renderBreakpoints()
   scheduleStatus()
   terminal.setPending(state.terminals)
   if (state.panel) panel.show(state.panel)
@@ -1622,6 +1698,21 @@ commands.register({ id: 'debug.stepInto', title: 'Step Into', keys: 'F11', when:
 commands.register({ id: 'debug.stepOut', title: 'Step Out', keys: 'Shift+F11', when: debugPaused, run: () => void session!.stepOut() })
 commands.register({ id: 'debug.pause', title: 'Pause', when: () => session?.state === 'running', run: () => void session!.pause() })
 commands.register({ id: 'debug.toggleBreakpoint', title: 'Toggle Breakpoint', keys: 'F9', when: hasDoc, run: () => toggleBreakpoint() })
+commands.register({
+  id: 'debug.editBreakpoint', title: 'Edit Breakpoint (condition, hit count, log message)…', when: hasDocNow,
+  run: () => editBreakpoint(workspace.active!.path, editor.getCursor().line)
+})
+commands.register({
+  id: 'debug.toggleRaised', title: 'Debug: Pause on Raised Exceptions (on / off)',
+  run: () => {
+    const on = !exceptionFilters.includes('raised')
+    exceptionFilters = on ? [...exceptionFilters, 'raised'] : exceptionFilters.filter((f) => f !== 'raised')
+    void session?.setExceptionFilters(exceptionFilters).catch(() => {})
+    statusNote(on ? 'The debugger now pauses wherever an exception is raised.' : 'The debugger pauses only on uncaught exceptions.')
+    saveStateSoon()
+    debugView.renderBreakpoints()
+  }
+})
 commands.register({ id: 'debug.clearBreakpoints', title: 'Remove All Breakpoints', when: () => breakpoints.count > 0, run: () => breakpoints.clear() })
 commands.register({
   id: 'editor.toggleMinimap', title: 'Toggle Minimap',

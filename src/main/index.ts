@@ -259,6 +259,14 @@ ipcMain.handle('debug:stop', () => debugAdapter.stop())
 ipcMain.handle('term:create', (event, cwd: string | null, cols: number, rows: number, profileId?: string) =>
   terminals.create(event.sender, cwd, cols, rows, profileId)
 )
+ipcMain.handle('term:run', (event, args: unknown, cwd: string | null, env: unknown, cols: number, rows: number) => {
+  const list = Array.isArray(args) ? args.filter((a): a is string => typeof a === 'string') : []
+  const vars: Record<string, string | null> = {}
+  if (env && typeof env === 'object') {
+    for (const [k, v] of Object.entries(env as Record<string, unknown>)) if (typeof v === 'string' || v === null) vars[k] = v
+  }
+  return terminals.run(event.sender, list, cwd, vars, cols, rows)
+})
 ipcMain.handle('term:shells', () => terminals.shells())
 ipcMain.on('term:write', (_event, id: number, data: string) => terminals.write(id, data))
 ipcMain.on('term:resize', (_event, id: number, cols: number, rows: number) => terminals.resize(id, cols, rows))

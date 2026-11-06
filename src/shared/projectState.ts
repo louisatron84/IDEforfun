@@ -28,6 +28,20 @@ export interface WorkspaceState {
   panel: string | null
   /** The run configuration picked for Run / Debug (null = the open file). */
   runConfig: string | null
+  breakpoints: SavedBreakpointState[]
+  /** Debugger watch expressions. */
+  watches: string[]
+  /** Which exceptions pause the debugger (null = the default: uncaught). */
+  exceptionFilters: string[] | null
+}
+
+export interface SavedBreakpointState {
+  path: string
+  line: number
+  enabled: boolean
+  condition?: string
+  hitCondition?: string
+  logMessage?: string
 }
 
 const isWinPath = (p: string) => /^[a-zA-Z]:/.test(p) || p.startsWith('\\\\')
@@ -83,6 +97,16 @@ export function normalizeWorkspaceState(raw: unknown): WorkspaceState {
     activeGroup: Math.min(int(r.activeGroup), groups.length - 1),
     terminals,
     panel: typeof r.panel === 'string' && /^[\w-]+$/.test(r.panel) ? r.panel : null,
-    runConfig: typeof r.runConfig === 'string' && r.runConfig ? r.runConfig : null
+    runConfig: typeof r.runConfig === 'string' && r.runConfig ? r.runConfig : null,
+    breakpoints: Array.isArray(r.breakpoints) ? r.breakpoints.slice(0, 2000).flatMap((b): SavedBreakpointState[] => {
+      if (!b || typeof b !== 'object') return []
+      const o = b as Record<string, unknown>
+      if (typeof o.path !== 'string' || !o.path || typeof o.line !== 'number' || !Number.isInteger(o.line) || o.line < 0) return []
+      const out: SavedBreakpointState = { path: o.path, line: o.line, enabled: o.enabled !== false }
+      for (const k of ['condition', 'hitCondition', 'logMessage'] as const) if (typeof o[k] === 'string' && (o[k] as string).trim()) out[k] = o[k] as string
+      return [out]
+    }) : [],
+    watches: Array.isArray(r.watches) ? r.watches.filter((w): w is string => typeof w === 'string' && !!w.trim()).slice(0, 100) : [],
+    exceptionFilters: Array.isArray(r.exceptionFilters) ? r.exceptionFilters.filter((f): f is string => typeof f === 'string' && /^[\w-]+$/.test(f)) : null
   }
 }

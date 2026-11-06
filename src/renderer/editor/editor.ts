@@ -47,6 +47,8 @@ export interface EditorOptions {
   onCtrlClick?: (pos: Position) => void
   /** Click in the line-number gutter (0-based line), e.g. to toggle a breakpoint. */
   onGutterClick?: (line: number) => void
+  /** Right-click in the line-number gutter (e.g. breakpoint options). */
+  onGutterContextMenu?: (line: number, e: MouseEvent) => void
   /** The 💡 next to a line with quick fixes was clicked. */
   onLightbulb?: (line: number) => void
   /** The editor got keyboard focus (with a split view: this side became active). */
@@ -186,6 +188,12 @@ export class Editor {
       if (this.hasDoc) this.opts.onMouseMove?.(this.hitTest(e.clientX, e.clientY), e)
     })
     this.textArea.addEventListener('mouseleave', () => this.opts.onMouseLeave?.())
+    this.gutter.addEventListener('contextmenu', (e) => {
+      if (!this.hasDoc) return
+      e.preventDefault()
+      const line = this.lineAtY(e.clientY - this.content.getBoundingClientRect().top)
+      if (line >= 0 && line < this.buffer.lineCount) this.opts.onGutterContextMenu?.(line, e)
+    })
     this.gutter.addEventListener('mousedown', (e) => {
       if (!this.hasDoc || e.button !== 0) return
       e.preventDefault() // keep focus in the editor
@@ -1114,7 +1122,9 @@ export class Editor {
     for (let row = first; row <= last; row++) {
       const i = this.foldMap.bufferLine(row)
       lineEls.push(this.renderLine(i))
-      const num = el('div', this.breakpoints.has(i) ? (i === this.execLine ? 'bp exec' : 'bp') : i === this.execLine ? 'exec' : '')
+      const bpStyle = this.breakpointStyles.get(i)
+      const bp = this.breakpoints.has(i) ? `bp${bpStyle && bpStyle !== 'plain' ? ` bp-${bpStyle}` : ''}` : ''
+      const num = el('div', [bp, i === this.execLine ? 'exec' : ''].filter(Boolean).join(' '))
       num.textContent = String(i + 1)
       if (isFoldable(this.getLine, n, i)) {
         const folded = this.foldMap.isFolded(i)
@@ -1179,8 +1189,12 @@ export class Editor {
     if (this.hasDoc) this.renderLines()
   }
 
-  setLineMarkers(breakpoints: Iterable<number>, execLine: number | null): void {
+  /** Kind of each breakpoint (conditional, log, disabled) for its dot's look. */
+  private breakpointStyles = new Map<number, string>()
+
+  setLineMarkers(breakpoints: Iterable<number>, execLine: number | null, styles?: Map<number, string>): void {
     this.breakpoints = new Set(breakpoints)
+    this.breakpointStyles = styles ?? new Map()
     this.execLine = execLine
     if (!this.hasDoc) return
     this.renderLines()

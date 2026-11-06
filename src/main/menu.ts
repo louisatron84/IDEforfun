@@ -185,6 +185,8 @@ export function buildMenu(state: MenuState = { keys: {}, recent: [] }): Menu {
         cmd('Step Out', 'debug.stepOut', 'Shift+F11'),
         sep,
         cmd('Toggle Breakpoint', 'debug.toggleBreakpoint', 'F9'),
+        cmd('Edit Breakpoint…', 'debug.editBreakpoint'),
+        cmd('Pause on Raised Exceptions', 'debug.toggleRaised'),
         cmd('Remove All Breakpoints', 'debug.clearBreakpoints')
       ]
     },

@@ -44,9 +44,14 @@ describe('DebugSession', () => {
   it('does the startup handshake in the order debugpy expects', async () => {
     const bpArgs: any[] = []
     const t = setup({ setBreakpoints: (a) => { bpArgs.push(a); return { breakpoints: [] } } })
-    await t.session.start({ program: '/p/main.py', cwd: '/p', breakpoints: [{ path: '/p/main.py', lines: [0, 4] }, { path: '/p/lib.py', lines: [2] }] })
+    await t.session.start({ program: '/p/main.py', cwd: '/p', breakpoints: [
+      { path: '/p/main.py', breakpoints: [{ line: 0, enabled: true }, { line: 4, enabled: true, condition: 'x > 1' }, { line: 6, enabled: false }] },
+      { path: '/p/lib.py', breakpoints: [{ line: 2, enabled: true, logMessage: 'hi {x}', hitCondition: '3' }] }
+    ] })
     expect(t.commands).toEqual(['initialize', 'launch', 'setBreakpoints', 'setBreakpoints', 'setExceptionBreakpoints', 'configurationDone'])
-    expect(bpArgs[0]).toEqual({ source: { path: '/p/main.py' }, breakpoints: [{ line: 1 }, { line: 5 }], sourceModified: false })
+    // Switched-off breakpoints aren't sent; conditions and log messages are.
+    expect(bpArgs[0]).toEqual({ source: { path: '/p/main.py' }, breakpoints: [{ line: 1 }, { line: 5, condition: 'x > 1' }], sourceModified: false })
+    expect(bpArgs[1].breakpoints).toEqual([{ line: 3, logMessage: 'hi {x}', hitCondition: '3' }])
     expect(t.states).toEqual(['starting', 'running'])
   })
 
@@ -60,7 +65,8 @@ describe('DebugSession', () => {
     expect(t.states.at(-1)).toBe('paused')
     expect(t.paused[0]).toEqual({
       reason: 'breakpoint', description: undefined,
-      frames: [{ id: 7, name: 'greet', path: '/p/main.py', line: 2, col: 4 }, { id: 8, name: '<module>', path: null, line: 9, col: 0 }]
+      frames: [{ id: 7, name: 'greet', path: '/p/main.py', line: 2, col: 4 }, { id: 8, name: '<module>', path: null, line: 9, col: 0 }],
+      threadId: 1, threads: []
     })
     await t.session.stepOver()
     expect(t.commands.at(-1)).toBe('next')

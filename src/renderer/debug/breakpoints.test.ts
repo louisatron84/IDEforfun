@@ -61,3 +61,42 @@ describe('BreakpointStore', () => {
     expect(s.all().map((f) => f.path)).toEqual(['/p/main.py'])
   })
 })
+
+describe('breakpoint extras', async () => {
+  const { BreakpointStore, breakpointStyle } = await import('./breakpoints')
+  it('keeps conditions, hit counts and log messages, and moves them with edits', () => {
+    const s = new BreakpointStore()
+    s.update('/a.py', 4, { condition: ' x > 1 ' })
+    s.update('/a.py', 9, { logMessage: 'x is {x}' })
+    s.update('/a.py', 9, { hitCondition: '>= 2' })
+    expect(s.get('/a.py', 4)).toEqual({ line: 4, enabled: true, condition: 'x > 1' })
+    expect(s.get('/a.py', 9)).toEqual({ line: 9, enabled: true, logMessage: 'x is {x}', hitCondition: '>= 2' })
+    // Two lines inserted at the top: both move down, extras intact.
+    s.applyChange('/a.py', { kind: 'insert', at: { line: 0, col: 0 }, text: 'a\nb\n' } as never)
+    expect(s.breakpointsFor('/a.py').map((b) => [b.line, b.condition ?? b.logMessage])).toEqual([[6, 'x > 1'], [11, 'x is {x}']])
+    // Clearing a field removes it.
+    s.update('/a.py', 6, { condition: '' })
+    expect(s.get('/a.py', 6)).toEqual({ line: 6, enabled: true })
+  })
+  it('switches breakpoints off and counts only the ones that are on', () => {
+    const s = new BreakpointStore()
+    s.toggle('/a.py', 1)
+    s.toggle('/b.py', 2)
+    s.update('/b.py', 2, { enabled: false })
+    expect(s.count).toBe(1)
+    expect(s.total).toBe(2)
+    s.setAllEnabled(false)
+    expect(s.count).toBe(0)
+    expect(breakpointStyle(s.get('/a.py', 1)!)).toBe('disabled')
+  })
+  it('saves and loads', () => {
+    const s = new BreakpointStore()
+    s.update('/a.py', 3, { condition: 'y' })
+    s.toggle('/b.py', 0)
+    const saved = s.save()
+    const t = new BreakpointStore()
+    t.load(saved)
+    expect(t.save()).toEqual(saved)
+    expect(breakpointStyle(t.get('/a.py', 3)!)).toBe('conditional')
+  })
+})

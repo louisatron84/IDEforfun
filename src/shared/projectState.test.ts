@@ -27,7 +27,7 @@ describe('recent projects', () => {
 
 describe('normalizeWorkspaceState', () => {
   it('gives an empty layout for garbage', () => {
-    expect(normalizeWorkspaceState(null)).toEqual({ groups: [{ tabs: [], active: null }], activeGroup: 0, terminals: [], panel: null, runConfig: null })
+    expect(normalizeWorkspaceState(null)).toEqual({ groups: [{ tabs: [], active: null }], activeGroup: 0, terminals: [], panel: null, runConfig: null, breakpoints: [], watches: [], exceptionFilters: null })
   })
   it('keeps valid tabs and fixes the rest', () => {
     const s = normalizeWorkspaceState({
