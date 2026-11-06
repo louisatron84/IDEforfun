@@ -148,6 +148,15 @@ export class BoxController {
     this.changed()
   }
 
+  /** The box's block as it is in the file now (null if it isn't there). */
+  async currentBlock(id: string): Promise<string | null> {
+    const box = this.get(id)
+    const text = box ? await this.files.read(box.target.file) : null
+    if (!box || text === null) return null
+    const found = findBlock(text, box.id)
+    return found === 'missing' || found === 'broken' ? null : found.text
+  }
+
   /** "Overwrite with box": the box's code replaces the hand-edited block. */
   overwrite(id: string): Promise<void> {
     return this.writeCode(id)
@@ -189,6 +198,7 @@ export class BoxController {
           ok: false,
           at: Date.now(),
           status: result.status,
+          statusText: result.statusText,
           ms: result.ms,
           error: result.error ?? (result.tooBig ? 'The response is too big.' : result.json === undefined && result.text !== undefined ? "The response isn't JSON, so there are no fields to pick." : `${result.status ?? ''} ${result.statusText ?? ''}`.trim())
         }
@@ -198,7 +208,7 @@ export class BoxController {
       const fields = fieldTree(picked.records)
       req.recordsPath = picked.path
       if (!previous?.fields?.length && !req.ticked.length) req.ticked = defaultTicks(fields)
-      req.test = { ok: true, at: Date.now(), status: result.status, ms: result.ms, count: picked.records.length, fields, sample: result.json }
+      req.test = { ok: true, at: Date.now(), status: result.status, statusText: result.statusText, ms: result.ms, count: picked.records.length, fields, sample: result.json }
     })
   }
 

@@ -35,6 +35,7 @@ export interface TestSummary {
   /** When it ran (ms since epoch). */
   at: number
   status?: number
+  statusText?: string
   count?: number
   ms?: number
   error?: string
@@ -191,6 +192,7 @@ function normTest(raw: unknown): TestSummary | undefined {
   const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
   const t: TestSummary = { ok: raw.ok === true, at: num(raw.at) ?? 0 }
   if (num(raw.status) !== undefined) t.status = num(raw.status)
+  if (typeof raw.statusText === 'string') t.statusText = raw.statusText
   if (num(raw.count) !== undefined) t.count = num(raw.count)
   if (num(raw.ms) !== undefined) t.ms = num(raw.ms)
   if (typeof raw.error === 'string') t.error = raw.error

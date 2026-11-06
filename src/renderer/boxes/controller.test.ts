@@ -167,6 +167,20 @@ describe('BoxController', () => {
     expect(ctrl.recordChoices(box.id, req.id)).toEqual([{ path: ['users'], count: 2 }, { path: ['teams'], count: 1 }])
   })
 
+  it('currentBlock: the code as it is in the file now (for the Overwrite diff)', async () => {
+    const { m, ctrl, id } = await written()
+    expect(await ctrl.currentBlock(id)).toBe(ctrl.preview(id))
+    m.files.set('api/github.py', 'gone\n')
+    expect(await ctrl.currentBlock(id)).toBeNull()
+  })
+
+  it('setTest keeps the status text', async () => {
+    const { ctrl, id } = await written()
+    const req = ctrl.get(id)!.requests[0]
+    await ctrl.setTest(id, req.id, { ok: true, status: 200, statusText: 'OK', ms: 1, json: RESPONSE })
+    expect(ctrl.get(id)!.requests[0].test!.statusText).toBe('OK')
+  })
+
   it('load: boxes from boxes.json', () => {
     const { ctrl } = { ctrl: new BoxController(memory().io) }
     ctrl.load({ version: 1, boxes: [{ type: 'api', id: 'gh-1', name: 'GitHub', requests: [] }] })

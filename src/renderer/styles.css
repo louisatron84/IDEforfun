@@ -1542,3 +1542,52 @@ button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 .toolbox-name { font-weight: 600; }
 .toolbox-note { font-size: 11px; color: var(--fg-muted); }
 
+
+/* ---------- Box settings ---------- */
+.box-settings { display: flex; flex-direction: column; overflow: auto; font-size: 12px; }
+.box-empty { padding: 12px; color: var(--fg-muted); }
+.box-header { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.box-name { font: 600 14px var(--font-ui); color: var(--heat-2); }
+.box-section { padding: 8px 10px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+.box-section h3 { margin: 0; font: 600 11px var(--font-ui); text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-muted); }
+.box-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.box-label { color: var(--fg-muted); min-width: 92px; }
+.box-input, .box-select, .box-body { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius); padding: 3px 6px; font: 12px var(--font-code); min-width: 0; }
+.box-input.wide { flex: 1; }
+.box-input:focus, .box-select:focus, .box-body:focus { outline: none; border-color: var(--heat-2); }
+.box-body { flex: 1; min-height: 60px; resize: vertical; }
+.box-button { background: var(--raised); color: var(--fg); border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 3px 10px; cursor: pointer; font: 12px var(--font-ui); }
+.box-button:hover:not(:disabled) { border-color: var(--heat-2); }
+.box-button.quiet { border-color: transparent; background: none; color: var(--fg-muted); }
+.box-button.quiet:hover { color: var(--fg); }
+.box-button.hot { background: var(--heat-3); color: var(--on-heat); border-color: var(--heat-3); font-weight: 600; }
+.box-button:disabled { opacity: 0.6; cursor: default; }
+.box-secret { display: flex; gap: 6px; align-items: center; padding-left: 98px; }
+.box-secret-state { font-size: 11px; }
+.box-secret-state.set { color: var(--ok); }
+.box-secret-state.unset { color: var(--warn); }
+.box-warn { color: var(--warn); }
+.box-tabs { display: flex; gap: 2px; padding: 6px 10px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.box-tab { background: none; border: 1px solid transparent; border-bottom: none; color: var(--fg-muted); padding: 4px 10px; cursor: pointer; border-radius: var(--radius); font: 12px var(--font-ui); }
+.box-tab.active { color: var(--fg); border-color: var(--border); background: var(--raised); }
+.box-tab.add { color: var(--heat-2); }
+.box-kv { display: flex; flex-direction: column; gap: 3px; }
+.box-kv-row { display: flex; gap: 4px; align-items: center; }
+.box-arg { display: flex; gap: 3px; align-items: center; color: var(--fg-muted); font-size: 11px; }
+.box-test { display: flex; gap: 8px; align-items: center; }
+.box-result.ok { color: var(--ok); }
+.box-result.fail { color: var(--err); }
+.box-fields { display: flex; flex-direction: column; gap: 1px; }
+.box-field { display: flex; gap: 6px; align-items: center; padding: 1px 0; }
+.box-field-name { font-family: var(--font-code); }
+.box-field-sample { color: var(--fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.box-field-group { padding-left: 2px; }
+.box-field-group > summary { cursor: pointer; font-family: var(--font-code); }
+.box-field-group > .box-field, .box-field-group > .box-field-group { padding-left: 16px; }
+.box-preview { overflow: auto; }
+.box-preview table { border-collapse: collapse; font: 11px var(--font-code); }
+.box-preview th, .box-preview td { border: 1px solid var(--border); padding: 2px 6px; text-align: left; white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.box-preview th { color: var(--heat-2); }
+.box-footer { padding: 8px 10px; }
+.box-state { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.box-state[data-state="edited"], .box-state[data-state="missing"], .box-state[data-state="broken"] { color: var(--warn); }
