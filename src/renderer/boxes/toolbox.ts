@@ -9,6 +9,7 @@ export const BOX_DRAG_TYPE = 'application/x-forge-box'
 
 const TYPES = [
   { type: 'api', label: 'API', note: 'Call a web API and save what it returns to a CSV file', enabled: true },
+  { type: 'openapi', label: 'OpenAPI client', note: 'Write a Python client from an API\'s OpenAPI description', enabled: true },
   { type: 'database', label: 'Database', note: 'coming later', enabled: false },
   { type: 'file', label: 'File', note: 'coming later', enabled: false },
   { type: 'schedule', label: 'Schedule', note: 'coming later', enabled: false }
@@ -17,7 +18,7 @@ const TYPES = [
 export class Toolbox {
   readonly body: HTMLDivElement
 
-  constructor(hooks: { add(): void }) {
+  constructor(hooks: { add(): void; addOpenApi?(): void }) {
     this.body = document.createElement('div')
     this.body.className = 'toolbox'
     const hint = document.createElement('div')
@@ -37,7 +38,10 @@ export class Toolbox {
       note.textContent = t.note
       b.append(name, note)
       b.title = t.enabled ? `${t.label} box: ${t.note}` : `${t.label} box: ${t.note}`
-      if (t.enabled) {
+      if (t.type === 'openapi') {
+        b.addEventListener('click', () => hooks.addOpenApi?.())
+        b.hidden = !hooks.addOpenApi
+      } else if (t.enabled) {
         b.draggable = true
         b.addEventListener('click', () => hooks.add())
         b.addEventListener('dragstart', (e) => {

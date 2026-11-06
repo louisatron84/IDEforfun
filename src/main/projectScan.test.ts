@@ -4,6 +4,8 @@ import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runScan } from './projectScan'
+import { readSpec } from '../shared/openapi'
+import { generateClient } from '../shared/openapiCode'
 import { buildGraph, describeUnreachable, hostOf, isTestPath, stronglyConnected, type ProjectGraph, type RawScan } from '../shared/projectGraph'
 
 /** A python on PATH, or null (then the tests that need it are skipped). */
@@ -210,5 +212,36 @@ describe('project graph helpers', () => {
     const many = Array.from({ length: 20000 }, (_, i) => `m${i}`)
     const chain = many.map((m, i) => ({ from: m, to: many[(i + 1) % many.length] }))
     expect(stronglyConnected(many, chain)[0]).toHaveLength(20000)
+  })
+})
+
+describe.skipIf(!python)('project scan: generated clients and base addresses (real Python)', () => {
+  let dir: string
+  let graph: ProjectGraph
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'forge-scan-gen-'))
+    const spec = readSpec({
+      swagger: '2.0', info: { title: 'Café Shop', version: '1' }, host: 'shop.example.com', basePath: '/api',
+      paths: { '/items': { get: { operationId: 'listItems', responses: { 200: { description: 'ok' } } } } }
+    })
+    const code = generateClient(spec)
+    writeFileSync(join(dir, 'shop_client.py'), code)
+    writeFileSync(join(dir, 'edited_client.py'), code.replace(/\n/g, '\r\n') + '# my change\r\n')
+    writeFileSync(join(dir, 'raw.py'), 'import urllib.request\nBASE_URL = "https://data.example.org/v2"\ndef get():\n    return urllib.request.urlopen(BASE_URL + "/x")\n')
+    const res = await runScan(python!, dir)
+    graph = buildGraph(res.scan!)
+  }, 60000)
+  afterAll(() => rmSync(dir, { recursive: true, force: true }))
+
+  it('marks clients Forge generated, and whether they were edited since (hashes agree with TypeScript, line endings ignored)', () => {
+    const mod = (id: string) => graph.modules.find((m) => m.id === id)!
+    expect(mod('shop_client').generated).toEqual({ kind: 'openapi', slug: 'caf_shop', edited: false })
+    expect(mod('edited_client').generated).toEqual({ kind: 'openapi', slug: 'caf_shop', edited: true })
+    expect(mod('raw').generated).toBeUndefined()
+  })
+
+  it('urllib calls whose address comes from the module\'s BASE_URL reach that host', () => {
+    expect(graph.http.filter((h) => h.module === 'raw').map((h) => `${h.library} ${h.method} ${h.host}`)).toEqual(['urllib HTTP data.example.org'])
+    expect(graph.http.filter((h) => h.module === 'shop_client').map((h) => h.host)).toEqual(['shop.example.com'])
   })
 })

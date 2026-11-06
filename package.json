@@ -29,7 +29,8 @@
     "@xterm/addon-fit": "0.10.0",
     "@xterm/xterm": "5.5.0",
     "node-pty": "1.1.0",
-    "pyright": "1.1.414"
+    "pyright": "1.1.414",
+    "yaml": "2.6.1"
   },
   "author": "louisatron84",
   "homepage": "https://forgecode.uk",

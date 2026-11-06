@@ -52,6 +52,8 @@ export interface RawFile {
   all?: string[]
   /** Has an `if __name__ == "__main__":` block. */
   main?: boolean
+  /** A client Forge generated (from an OpenAPI description), and whether it was edited by hand since. */
+  generated?: { kind: 'openapi'; slug: string; edited: boolean }
 }
 export interface RawScan { root: string; python: string; truncated: boolean; files: RawFile[] }
 
@@ -77,6 +79,7 @@ export interface ModuleNode {
   isTest: boolean
   /** Runs as a program (`if __name__ == "__main__":`). */
   isEntry: boolean
+  generated?: RawFile['generated']
   lines: number
   error?: string
   symbols: SymbolNode[]
@@ -180,6 +183,7 @@ export function buildGraph(scan: RawScan): ProjectGraph {
     isPackage: f.isPackage,
     isTest: isTestPath(f.path),
     isEntry: !!f.main,
+    ...(f.generated ? { generated: f.generated } : {}),
     lines: f.lines,
     ...(f.error ? { error: f.error } : {}),
     symbols: f.defs.filter((d) => d.kind !== 'module').map((d) => ({

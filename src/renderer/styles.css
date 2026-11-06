@@ -1736,3 +1736,28 @@ button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 .rec-ret { fill: var(--ok); }
 .rec-node.open .rec-ret { fill: var(--fg-muted); }
 .rec-wire { fill: none; stroke: var(--fg-muted); stroke-width: 1.2; }
+
+/* Add API from OpenAPI */
+.openapi-dialog { width: min(860px, 94vw); max-height: 88vh; display: flex; flex-direction: column; }
+.openapi-intro { margin: 0 0 8px; color: var(--fg-muted); }
+.openapi-source { display: flex; gap: 6px; }
+.openapi-input { flex: 1; min-width: 0; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 8px; font: inherit; font-family: var(--font-code); }
+.openapi-status { min-height: 1.4em; margin: 6px 0; color: var(--warn); }
+.openapi-content { flex: 1; min-height: 0; overflow: auto; }
+.openapi-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; margin: 0 0 8px; }
+.openapi-facts dt { color: var(--fg-muted); }
+.openapi-facts dd { margin: 0; word-break: break-word; }
+.openapi-warning { color: var(--warn); margin-bottom: 4px; }
+.openapi-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.openapi-row > span { color: var(--fg-muted); min-width: 80px; }
+.openapi-ops { border: 1px solid var(--border); border-radius: var(--radius); margin-top: 8px; }
+.openapi-ops-head { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-bottom: 1px solid var(--border); background: var(--bg-panel); }
+.openapi-ops-head > span { flex: 1; font-weight: 600; }
+.openapi-op-list { max-height: 300px; overflow: auto; }
+.openapi-tag { padding: 4px 8px 2px; color: var(--fg-muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.05em; }
+.openapi-op { display: grid; grid-template-columns: auto 60px minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.4fr); gap: 8px; align-items: center; padding: 2px 8px; cursor: pointer; }
+.openapi-op:hover { background: var(--bg-hover); }
+.openapi-op > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.openapi-method { font-family: var(--font-code); color: var(--accent); }
+.openapi-path, .openapi-fn { font-family: var(--font-code); }
+.openapi-fn, .openapi-summary { color: var(--fg-muted); }

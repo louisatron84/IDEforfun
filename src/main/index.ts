@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
 import { buildMenu, type EditAction, type MenuState } from './menu'
 import { ensureProjectFile, ensureProjectSettings, readProjectFile, readProjectSettings, updateProjectSettings, UserState, writeProjectFile } from './userState'
 import { testCall } from './apiCall'
+import { loadSpec } from './openapiLoad'
 import { addEnvToGitignore, envNames, gitignoreHasEnv, setDotEnvValue } from './dotenvFile'
 import { normalizeBoxes } from '../shared/boxes'
 import { checkDependencies, describePython, findInterpreters, freeze, listPackages } from './pyenv'
@@ -350,6 +351,13 @@ ipcMain.handle('box:testCall', (_event, root: string, box: unknown, requestId: s
   return testCall(String(root), checked, String(requestId))
 })
 ipcMain.handle('env:names', (_event, root: string) => envNames(String(root)))
+ipcMain.handle('openapi:load', (_event, source: string) => loadSpec(String(source)))
+ipcMain.handle('openapi:pick', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const opts = { title: 'Choose an OpenAPI description', buttonLabel: 'Open', properties: ['openFile' as const], filters: [{ name: 'OpenAPI (JSON or YAML)', extensions: ['json', 'yaml', 'yml'] }, { name: 'All files', extensions: ['*'] }] }
+  const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+  return res.canceled || !res.filePaths[0] ? null : res.filePaths[0]
+})
 ipcMain.handle('env:set', (_event, root: string, name: string, value: string) => setDotEnvValue(String(root), String(name), String(value)))
 ipcMain.handle('env:ignored', (_event, root: string) => gitignoreHasEnv(String(root)))
 ipcMain.handle('env:ignore', (_event, root: string) => addEnvToGitignore(String(root)))

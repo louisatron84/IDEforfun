@@ -18,6 +18,9 @@ SKIP_DIRS = {
 MAX_FILES = 3000
 MAX_BYTES = 2_000_000
 HTTP_LIBS = {'requests', 'httpx', 'aiohttp'}
+URLLIB_CALLS = {'urllib.request.urlopen', 'request.urlopen', 'urlopen'}
+import re as _re
+BASE_URL_NAME = _re.compile(r'^(BASE|API|ROOT|SERVER)_?(URL|ADDRESS|ENDPOINT)$|^BASE$', _re.I)
 HTTP_METHODS = {'get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'request', 'stream'}
 ROUTE_METHODS = {'get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'route', 'api_route', 'websocket'}
 
@@ -61,6 +64,7 @@ class FileScan(ast.NodeVisitor):
         self.http = []
         self.env = []
         self.all_names = None
+        self.base_url = None  # a module-level BASE_URL = "https://..."
         self.stack = []  # enclosing defs (dicts)
         self.module_def = {'name': '<module>', 'qual': '<module>', 'kind': 'module', 'line': 1, 'endLine': 1, 'calls': [], 'refs': set(), 'decorators': []}
         self.http_aliases = {}  # local name -> library ('requests', 'httpx', 'aiohttp')
@@ -158,6 +162,15 @@ class FileScan(ast.NodeVisitor):
         self.generic_visit(node)
 
     def _http(self, node, name):
+        if name in URLLIB_CALLS:
+            # urllib.request.urlopen(url_or_request): the method is usually only known at run time.
+            url = const_str(node.args[0]) if node.args else None
+            method = 'HTTP'
+            for kw in node.keywords:
+                if kw.arg == 'method' and const_str(kw.value):
+                    method = const_str(kw.value).upper()
+            self.http.append({'library': 'urllib', 'method': method, 'url': url, 'line': node.lineno, 'func': self.current_qual()})
+            return
         parts = name.split('.')
         lib = self.http_aliases.get(parts[0])
         method = parts[-1].lower()
@@ -217,7 +230,21 @@ class FileScan(ast.NodeVisitor):
                 if lib and created.split('.')[-1][:1].isupper():
                     self.http_aliases[name_node.id] = lib
 
+    def _base_url(self, node):
+        """BASE_URL = "https://..." or os.environ.get("X_BASE_URL", "https://...") at the top of a module."""
+        if self.current is not self.module_def:
+            return
+        if not any(isinstance(t, ast.Name) and BASE_URL_NAME.search(t.id) for t in node.targets):
+            return
+        value = node.value
+        url = const_str(value)
+        if url is None and isinstance(value, ast.Call) and dotted(value.func) in ('os.getenv', 'getenv', 'os.environ.get', 'environ.get') and len(value.args) >= 2:
+            url = const_str(value.args[1])
+        if url and url.lower().startswith(('http://', 'https://')):
+            self.base_url = url
+
     def visit_Assign(self, node):
+        self._base_url(node)
         # __all__ = ["a", "b"]: names the module exports.
         if any(isinstance(t, ast.Name) and t.id == '__all__' for t in node.targets) and isinstance(node.value, (ast.List, ast.Tuple)):
             self.all_names = [s for s in (const_str(e) for e in node.value.elts) if s]
@@ -314,6 +341,32 @@ def find_unreachable(tree):
     return sorted(found, key=lambda u: u['line'])
 
 
+def fnv_utf16(text):
+    """FNV-1a over UTF-16 code units (like Forge's blockHash in TypeScript)."""
+    import struct
+    data = text.encode('utf-16-le')
+    h = 0x811c9dc5
+    for (unit,) in struct.iter_unpack('<H', data):
+        h ^= unit
+        h = (h * 0x01000193) & 0xffffffff
+    return '%08x' % h
+
+
+def generated_mark(source):
+    """A client Forge generated (first line `# forge:openapi <slug> <hash>`): which, and whether it was edited since."""
+    if not source.startswith(b'# forge:openapi '):
+        return None
+    try:
+        text = source.decode('utf-8').replace('\r\n', '\n')
+    except UnicodeDecodeError:
+        return None
+    first, _, rest = text.partition('\n')
+    parts = first.split()
+    if len(parts) != 4:
+        return None
+    return {'kind': 'openapi', 'slug': parts[2], 'edited': fnv_utf16(rest) != parts[3]}
+
+
 def module_name(rel):
     parts = rel[:-3].split('/')
     is_package = parts[-1] == '__init__'
@@ -343,6 +396,14 @@ def scan_file(root, rel):
     s = FileScan()
     s.module_def['endLine'] = entry['lines']
     s.visit(tree)
+    # Calls whose address is built at run time from the module's BASE_URL go to that host.
+    if s.base_url:
+        for h in s.http:
+            if h['url'] is None:
+                h['url'] = s.base_url
+    generated = generated_mark(source)
+    if generated:
+        entry['generated'] = generated
     defs = [s.module_def] + s.defs
     for d in defs:
         d['refs'] = sorted(d['refs'])

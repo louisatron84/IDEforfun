@@ -22,4 +22,5 @@ Patch CRLF files with Python scripts written via the Write tool (Bash heredocs e
 ## Ledger
 - unreachable code (5.1): done, df2f7a7
 - 5.2 network: done, bf934e6
-- 5.5 debug on graph: 3811058; recursion + replay: next commit
+- 5.5 debug on graph: 3811058; recursion + replay: 5b0d85a
+- 5.3 OpenAPI: next commit

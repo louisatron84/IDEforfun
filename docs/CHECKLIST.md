@@ -147,12 +147,12 @@ Visualisations are interactive representations of real code, not a separate prog
 
 ### 5.3 Visual API integration
 - [x] Drag from a file/function to an unconnected API (v0.44: drag the API box from the Toolbox onto a module)
-- [ ] Generate client modules and imports
+- [x] Generate client modules and imports (v0.46: Add API from OpenAPI writes a client module and can add its import to the open file)
 - [x] Generate `.env` keys (v0.44: API box)
-- [ ] OpenAPI / Swagger support
-  - [ ] Generate functions for individual endpoints
-  - [ ] Generate request and response models
-  - [ ] Generate authentication handling
+- [x] OpenAPI / Swagger support (v0.46: OpenAPI 3 and Swagger 2, JSON or YAML, from an address or a file (Toolbox → OpenAPI client))
+  - [x] Generate functions for individual endpoints (v0.46: pick the endpoints; typed parameters)
+  - [x] Generate request and response models (v0.46: a dataclass per schema, with from_dict / to_dict)
+  - [x] Generate authentication handling (v0.46: API key, bearer token or user name and password, from .env)
 - [x] Support APIs without specifications (v0.44: API box)
   - [x] Generate base URL configuration
   - [x] Generate authentication configuration
@@ -160,7 +160,7 @@ Visualisations are interactive representations of real code, not a separate prog
 - [x] Preview generated code before applying changes (v0.44: API box)
 - [x] Ensure visual changes generate normal, readable Python (v0.44: standard library only)
 - [x] When removing a visual connection, offer to remove associated code (v0.44: API box)
-- [ ] Detect changes to generated code and update graph relationships
+- [x] Detect changes to generated code and update graph relationships (v0.46: the scan marks generated clients and whether they were edited (and regenerating asks first); urllib calls built from a module's BASE_URL link to that host)
 - [ ] Later: AI-assisted API documentation interpretation and integration
 
 ### 5.4 Data-flow visualisation

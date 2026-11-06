@@ -313,6 +313,10 @@ export interface IdeApi {
 
   /** Test call: send one of the API box's requests (secrets come from .env, in the main process). */
   apiTestCall(root: string, box: ApiBox, requestId: string): Promise<TestCallResult>
+  /** Load an OpenAPI description from an http(s) address or a file (JSON or YAML). */
+  loadOpenApi(source: string): Promise<{ doc?: unknown; from: string; error?: string }>
+  /** Pick an OpenAPI file; null if cancelled. */
+  pickOpenApiFile(): Promise<string | null>
   /** The project's .env variables that have a value (names only). */
   envNames(root: string): Promise<string[]>
   /** Set one variable in the project's .env. */

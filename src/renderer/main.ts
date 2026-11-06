@@ -65,6 +65,9 @@ import { drawObjectGraph } from './graph/objectGraph'
 import { objectGraphExpression, parseObjectGraph } from '../shared/objectGraph'
 import { funcLabel } from '../shared/network'
 import { drawRecursionTree, parseRec, RecursionStore } from './graph/recursionTree'
+import { showOpenApiDialog } from './boxes/openApiDialog'
+import { envKeys } from '../shared/openapi'
+import { addImport, generateClient, generatedState, importLine } from '../shared/openapiCode'
 import type { TraceTick } from './graph/liveRun'
 import { NetLog, parseNet, stateOf } from '../shared/network'
 import { HistoryView } from './historyView'
@@ -2485,7 +2488,45 @@ function addBox(module: string | null): void {
   tasks.reveal('box')
 }
 
-const toolbox = new Toolbox({ add: () => addBox(null) })
+const toolbox = new Toolbox({ add: () => addBox(null), addOpenApi: () => void addApiFromOpenApi() })
+
+/** "Add API from OpenAPI…": generate a client module from a description, its .env keys, and (if asked) its import. */
+async function addApiFromOpenApi(): Promise<void> {
+  const root = rootFolder
+  if (!root) return void alert('Open a project folder first (Ctrl+O).')
+  const active = workspace.active?.path ?? null
+  const currentFile = active && /\.py$/i.test(active) && isInside(active, root) ? active.slice(root.length).replace(/^[\\/]+/, '').replace(/\\/g, '/') : null
+  const c = await showOpenApiDialog({
+    load: (source) => window.api.loadOpenApi(source),
+    pick: () => window.api.pickOpenApiFile(),
+    currentFile,
+    preview: (title, code) => showCodeDialog({ title, code, ok: 'Close' })
+  })
+  if (!c || rootFolder !== root) return
+  const code = generateClient(c.spec, c.chosen)
+  const existing = await boxFiles.read(c.file)
+  if (existing !== null && existing.trim()) {
+    const state = generatedState(existing)
+    if (!state && !confirm(`${c.file} already exists, and Forge didn't write it. Replace it with the generated client?`)) return
+    if (state?.edited && !(await showCodeDialog({ title: `${c.file} was edited since Forge generated it. Replace your edits? (- yours, + new)`, diff: codeLineDiff(existing, code), ok: 'Replace' }))) return
+  }
+  try {
+    await boxFiles.write(c.file, code)
+    // Settings it reads: added to .env for you to fill in (existing values are kept).
+    const have = new Set(await window.api.envNames(root))
+    for (const key of envKeys(c.spec)) if (!have.has(key)) await window.api.setEnvValue(root, key, key.endsWith('_BASE_URL') ? c.spec.baseUrl : '')
+    if (c.importInto) {
+      const names = [...c.chosen]
+      const line = names.length <= 6 ? importLine(c.file, names) : `import ${c.file.replace(/\.py$/, '').split('/').join('.')} as ${c.spec.slug}`
+      const text = await boxFiles.read(c.importInto)
+      if (text !== null) await boxFiles.write(c.importInto, addImport(text, line))
+    }
+    statusNote(`Wrote ${c.file}: ${c.chosen.size} function${c.chosen.size === 1 ? '' : 's'} for ${c.spec.title}. Fill in its settings in .env.`)
+  } catch (err) {
+    alert(`Couldn't write the client: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+commands.register({ id: 'api.addOpenApi', title: 'Add API from OpenAPI Description…', run: () => void addApiFromOpenApi() })
 const boxSettings = new BoxSettings(boxes, {
   // The last response stays in the window: only the box's settings are sent.
   testCall: (box, requestId) => window.api.apiTestCall(rootFolder ?? '', serializeBoxes([box]).boxes[0], requestId),
