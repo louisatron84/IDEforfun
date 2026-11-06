@@ -197,6 +197,15 @@ After that, every change in the box rewrites its block (between `# forge:box …
 **Overwrite with box** (with a diff) or **Keep my edits**. A box can hold several requests, each
 writing its own CSV. Boxes are saved in `.forge/boxes.json`.
 
+### Watching a run
+
+Press **▶ Run** while the Graph is in view (the Connect task) and the Graph shows where the
+program is at: the function running now glows (its module, in the Modules view), sparks travel
+along the lines as functions call each other, and an API box lights up when its function runs.
+In the Plain theme it's a highlight and a moving dot; with reduced motion, just the highlight.
+Only your project's own code is followed, and only runs started with the Graph in view are traced
+(they run a little slower). Turn it off in Settings → *Runs on the graph*.
+
 Forge loads the project's `.env` into Run, Tests, Debug and new terminals, so the generated code
 finds its secrets (variables already set in your environment win).
 

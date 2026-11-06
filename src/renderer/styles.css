@@ -1603,3 +1603,13 @@ button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 .code-dialog-buttons { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); }
 .code-dialog-buttons button { background: var(--raised); color: var(--fg); border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 4px 14px; cursor: pointer; font: 12px var(--font-ui); }
 .code-dialog-buttons button.primary { background: var(--heat-3); color: var(--on-heat); border-color: var(--heat-3); font-weight: 600; }
+
+/* ---------- Live run feedback ---------- */
+.gnode.run-at rect:first-of-type { stroke: var(--heat-1); stroke-width: 2.5; filter: drop-shadow(0 0 8px var(--heat-3)); }
+.gnode.run-was rect:first-of-type { stroke: var(--heat-3); transition: stroke 0.6s, filter 0.6s; }
+.run-spark { fill: var(--heat-1); filter: drop-shadow(0 0 4px var(--heat-2)); pointer-events: none; }
+.graph-status.running { color: var(--heat-2); }
+:root[data-theme="plain"] .gnode.run-at rect:first-of-type { stroke: var(--fg); stroke-width: 3; filter: none; }
+:root[data-theme="plain"] .gnode.run-was rect:first-of-type { stroke: var(--fg-muted); }
+:root[data-theme="plain"] .run-spark { fill: var(--fg); filter: none; }
+

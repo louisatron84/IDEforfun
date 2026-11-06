@@ -13,6 +13,7 @@ import { buildView, neighbourhood, type GraphViewData, type ViewNode, type ViewO
 import type { ApiBox } from '../../shared/boxes'
 import { boxBounds, drawBoxLayer, panToShow, placeBoxes, type PlacedBox } from './boxLayer'
 import { BOX_DRAG_TYPE } from '../boxes/toolbox'
+import type { RunFrame, RunView } from './liveRun'
 
 /** Connect boxes shown on the graph. */
 export interface GraphBoxHooks {
@@ -81,6 +82,10 @@ export class GraphView {
   private edgeEls: { from: string; to: string; el: SVGPathElement }[] = []
   private boxLayer: SVGGElement | null = null
   private placedBoxes: ReadonlyMap<string, PlacedBox> = new Map()
+  /** Live run: the node glowing now, the layer sparks fly on, the status text to put back. */
+  private runGlow: string | null = null
+  private sparkLayer: SVGGElement = svg('g', {}, 'graph-sparks')
+  private statusBeforeRun: string | null = null
   private selected: string | null = null
   private hovered: string | null = null
   /** Pan and zoom. */
@@ -280,7 +285,9 @@ export class GraphView {
       nodeLayer.append(g)
       this.nodeEls.set(n.id, g)
     }
-    this.world.replaceChildren(edgeLayer, nodeLayer)
+    this.sparkLayer = svg('g', {}, 'graph-sparks')
+    this.world.replaceChildren(edgeLayer, this.sparkLayer, nodeLayer)
+    if (this.runGlow) this.nodeEls.get(this.runGlow)?.classList.add('run-at')
     this.boxLayer = null
     this.redrawBoxes()
   }
@@ -359,6 +366,64 @@ export class GraphView {
     const k = Math.min(1, (box.width - pad * 2) / size.width, (box.height - pad * 2) / size.height)
     this.view = { k: Math.max(0.05, k), x: (box.width - size.width * k) / 2, y: Math.max(pad, (box.height - size.height * k) / 2) }
     this.applyView()
+  }
+
+  /** What is on screen, for the live run planner. */
+  runView(): RunView {
+    return {
+      mode: this.opts.mode,
+      nodes: new Set(this.data.nodes.map((n) => n.id)),
+      edges: new Set(this.data.edges.map((e) => `${e.from}→${e.to}`))
+    }
+  }
+
+  /** A traced run's update: the running node glows, sparks fly along the calls. */
+  showRun(frame: RunFrame): void {
+    if (this.statusBeforeRun === null) {
+      this.statusBeforeRun = this.status.textContent ?? ''
+      this.status.textContent = '● Running (traced)'
+      this.status.classList.add('running')
+    }
+    if (frame.glow !== this.runGlow) {
+      this.fade(this.runGlow, 600)
+      if (frame.glow) this.nodeEls.get(frame.glow)?.classList.add('run-at')
+      this.runGlow = frame.glow
+    }
+    const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (reducedMotion) return
+    for (const s of frame.sparks) {
+      const forward = this.edgeEls.find((e) => e.from === s.from && e.to === s.to)
+      const edge = forward ?? this.edgeEls.find((e) => e.from === s.to && e.to === s.from)
+      const d = edge?.el.getAttribute('d')
+      if (!d) continue
+      const spark = svg('circle', { r: 3.5 }, 'run-spark')
+      const move = svg('animateMotion', { dur: '0.5s', fill: 'freeze', path: d, begin: 'indefinite', ...(forward ? {} : { keyPoints: '1;0', keyTimes: '0;1', calcMode: 'linear' }) })
+      spark.append(move)
+      this.sparkLayer.append(spark)
+      ;(move as SVGAnimationElement).beginElement?.()
+      setTimeout(() => spark.remove(), 550)
+    }
+  }
+
+  /** The traced run ended: the glow fades and the status line comes back. */
+  endRun(): void {
+    this.fade(this.runGlow, 1000)
+    this.runGlow = null
+    if (this.statusBeforeRun !== null) {
+      this.status.textContent = this.statusBeforeRun
+      this.status.classList.remove('running')
+      this.statusBeforeRun = null
+    }
+  }
+
+  private fade(id: string | null, ms: number): void {
+    const el = id ? this.nodeEls.get(id) : undefined
+    if (!el) return
+    el.classList.remove('run-at')
+    el.classList.add('run-was')
+    setTimeout(() => {
+      if (!el.classList.contains('run-at')) el.classList.remove('run-was')
+    }, ms)
   }
 
   /** Pan so a box is fully in view (after Box settings opened and the canvas got narrower). */

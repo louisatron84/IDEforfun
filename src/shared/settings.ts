@@ -25,6 +25,8 @@ export interface Settings {
   debugInTerminal: boolean
   /** Switch to the Debug task while debugging (and back afterwards). */
   switchToDebugTask: boolean
+  /** While a program runs with the Graph in view, show where it's at. */
+  showRunsOnGraph: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -39,7 +41,8 @@ export const DEFAULT_SETTINGS: Settings = {
   formatOnSave: false,
   lintWithRuff: true,
   debugInTerminal: true,
-  switchToDebugTask: true
+  switchToDebugTask: true,
+  showRunsOnGraph: true
 }
 
 export const FONT_SIZE_MIN = 10
@@ -66,6 +69,7 @@ export function normalizeSettings(raw: unknown): Settings {
   if (typeof r.lintWithRuff === 'boolean') s.lintWithRuff = r.lintWithRuff
   if (typeof r.debugInTerminal === 'boolean') s.debugInTerminal = r.debugInTerminal
   if (typeof r.switchToDebugTask === 'boolean') s.switchToDebugTask = r.switchToDebugTask
+  if (typeof r.showRunsOnGraph === 'boolean') s.showRunsOnGraph = r.showRunsOnGraph
   return s
 }
 

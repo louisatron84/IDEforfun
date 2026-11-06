@@ -57,6 +57,7 @@ import { BoxSettings } from './boxes/boxSettings'
 import { Toolbox } from './boxes/toolbox'
 import { lineDiff as codeLineDiff, showCodeDialog } from './boxes/codeDialog'
 import { serializeBoxes } from '../shared/boxes'
+import { parseTrace, planFrame } from './graph/liveRun'
 import { HistoryView } from './historyView'
 import { conflictNear, findConflicts, resolveConflict, type Conflict, type Resolution } from '../shared/conflicts'
 import { timeAgo, type BlameLine } from '../shared/history'
@@ -1771,7 +1772,9 @@ async function runCurrentFile(): Promise<void> {
   }
   // Auto-save before running, so Python sees what's in the editor.
   if (!(await saveAllDirty((m) => output.error(`Run cancelled: ${m}`)))) return
-  await window.api.runPython({ ...spec, root: rootFolder ?? spec.cwd, python: settings.pythonPath || undefined })
+  // With the Graph in view (and the setting on), the run shows where it's at on it.
+  const trace = settings.showRunsOnGraph && tasks.isShown('graph')
+  await window.api.runPython({ ...spec, root: rootFolder ?? spec.cwd, python: settings.pythonPath || undefined, trace })
   editor.focus()
 }
 
@@ -1876,10 +1879,36 @@ function pickTask(): void {
 const afterRun = new Map<number, (code: number | null) => void>()
 let lastExit: { runId: number; code: number | null } | null = null
 
+// ---------- live run feedback (a traced run's updates) ----------
+/** Boxes whose function is running (lit like during a Test call). */
+const runBoxes = new Set<string>()
+window.api.onRunTrace((e) => {
+  if (e.runId < lastRunId) return
+  const tick = parseTrace(e.message)
+  if (tick === 'end') return endRunOnGraph()
+  if (!tick) return
+  const frame = planFrame(tick, graphView.runView(), boxes.boxes)
+  graphView.showRun(frame)
+  const lit = new Set(frame.boxes)
+  if (lit.size !== runBoxes.size || [...lit].some((id) => !runBoxes.has(id))) {
+    runBoxes.clear()
+    for (const id of lit) runBoxes.add(id)
+    graphView.redrawBoxes()
+  }
+})
+function endRunOnGraph(): void {
+  graphView.endRun()
+  if (runBoxes.size) {
+    runBoxes.clear()
+    graphView.redrawBoxes()
+  }
+}
+
 window.api.onRunEvent((e) => {
   if (e.runId < lastRunId) return // late event from a run we already replaced
   lastRunId = e.runId
   if (e.type !== 'output') scheduleStatus() // the ▶ Run / ■ Stop button
+  if (e.type === 'exit') endRunOnGraph()
   if (e.type === 'start') output.started(e.python)
   else if (e.type === 'output') output.append(e.stream, e.text)
   else if (e.type === 'error') output.error(e.message)
@@ -2364,7 +2393,7 @@ const graphView = new GraphView({
       tasks.closePanel('box')
     },
     drop: (module) => addBox(module),
-    live: () => liveBoxes
+    live: () => (runBoxes.size ? new Set([...liveBoxes, ...runBoxes]) : liveBoxes)
   },
   openModule: (rel, line) => {
     if (!rootFolder) return

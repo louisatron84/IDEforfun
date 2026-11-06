@@ -202,6 +202,14 @@ export class SettingsView {
     const dbgTaskRow = this.row('Debug task', 'Switch to the Debug task while debugging (and back afterwards)', dbgTask)
     dbgTaskRow.querySelector('label')!.htmlFor = dbgTask.id
 
+    const runGraph = document.createElement('input')
+    runGraph.type = 'checkbox'
+    runGraph.id = 'setting-run-graph'
+    runGraph.checked = s.showRunsOnGraph
+    runGraph.addEventListener('change', () => this.update({ showRunsOnGraph: runGraph.checked }))
+    const runGraphRow = this.row('Runs on the graph', "When you Run with the Graph in view, show where the program is at (the run is a little slower)", runGraph)
+    runGraphRow.querySelector('label')!.htmlFor = runGraph.id
+
     const rows: HTMLElement[] = [header]
     if (this.projectNote) {
       const note = document.createElement('p')
@@ -209,7 +217,7 @@ export class SettingsView {
       note.textContent = this.projectNote
       rows.push(note)
     }
-    rows.push(fontRow, themeRow, tabRow, pyRow, shellRow, fmtRow, fosRow, lintRow, dbgRow, dbgTaskRow, reopenRow)
+    rows.push(fontRow, themeRow, tabRow, pyRow, shellRow, fmtRow, fosRow, lintRow, dbgRow, dbgTaskRow, runGraphRow, reopenRow)
 
     if (this.links.length) {
       const linkRow = document.createElement('div')

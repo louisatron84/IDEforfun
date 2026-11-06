@@ -111,7 +111,7 @@ Best started once a first graph view exists (5.1), so the layout is designed aro
 - [ ] Visual navigation through projects
 - [x] Consistent visual language for graphs, code, debugging and terminal (v0.42: Forge look: Molten / Plain themes, Smithy schematic shapes, bundled fonts)
 - [x] Forge task workspace: Code / Connect / Debug / Run, movable panels, Edit Layout mode (Part 2 of docs/superpowers/specs/2026-11-06-forge-design.md) (v0.43: Forge task workspace); Where you are and In this file panels
-- [ ] Live run feedback on the graph: while the program runs, sparks travel along the connections and the running boxes glow (Molten); a dot and a highlight in Plain. Needs runtime tracing of calls (see 5.2 / 5.5). Requested 2026-11-06
+- [x] Live run feedback on the graph (v0.45: traced ▶ Run with the Graph in view; Settings → Runs on the graph): while the program runs, sparks travel along the connections and the running boxes glow (Molten); a dot and a highlight in Plain. Needs runtime tracing of calls (see 5.2 / 5.5). Requested 2026-11-06
 - [x] Connect task and the API box (Part 3 of the same spec; also covers parts of 5.3) (v0.44: Toolbox, Box settings, test call, tick boxes, CSV code kept in sync; .env loaded into Run / Tests / Debug / terminals)
 
 ## Tier 5: Visual programming environment
@@ -188,7 +188,7 @@ Block library (for the pipeline graph): blocks are whole steps, not single state
 - [ ] Live call graph while debugging
 - [ ] Animated function execution
 - [ ] Visualise recursion trees
-- [ ] Show current execution position on the graph
+- [x] Show current execution position on the graph (v0.45, during ▶ Run; not yet while debugging)
 - [ ] Display live variable values on nodes
 - [ ] Track variable changes over time
 - [ ] Visualise object relationships

@@ -46,10 +46,11 @@ describe('planFrame', () => {
   })
 
   it('at most 12 sparks, busiest first', () => {
-    const many: RunView = { mode: 'calls', nodes: new Set(), edges: new Set() }
+    const edges = new Set<string>()
+    const many: RunView = { mode: 'calls', nodes: new Set(), edges }
     const rows: [string, string, number][] = []
     for (let i = 0; i < 20; i++) {
-      many.edges.add(`a:f→b:g${i}`)
+      edges.add(`a:f→b:g${i}`)
       rows.push(['a:f', `b:g${i}`, i + 1])
     }
     const plan = planFrame({ at: null, calls: rows }, many, [])
