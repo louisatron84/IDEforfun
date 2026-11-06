@@ -95,6 +95,8 @@ Debugger improvements:
 
 ## Tier 4: Visual identity and workspace
 
+The IDE is now **Forge** (design: docs/superpowers/specs/2026-11-06-forge-design.md).
+
 Goal: give the IDE a distinctive identity rather than reskinning a conventional editor layout.
 Best started once a first graph view exists (5.1), so the layout is designed around real visual tools.
 
@@ -107,7 +109,9 @@ Best started once a first graph view exists (5.1), so the layout is designed aro
 - [ ] Customisable information density
 - [ ] Animated transitions between workspace states
 - [ ] Visual navigation through projects
-- [ ] Consistent visual language for graphs, code, debugging and terminal
+- [x] Consistent visual language for graphs, code, debugging and terminal (v0.42: Forge look: Molten / Plain themes, Smithy schematic shapes, bundled fonts)
+- [ ] Forge task workspace: Code / Connect / Debug / Run, movable panels, Edit Layout mode (Part 2 of docs/superpowers/specs/2026-11-06-forge-design.md)
+- [ ] Connect task and the API box (Part 3 of the same spec; also covers parts of 5.3)
 
 ## Tier 5: Visual programming environment
 
