@@ -193,6 +193,9 @@ export function buildMenu(state: MenuState = { keys: {}, recent: [] }): Menu {
       submenu: [
         cmd('Source Control', 'git.show', 'CmdOrCtrl+Shift+G'),
         cmd('Show Changes in This File', 'git.diffFile'),
+        cmd('History', 'git.history'),
+        cmd('File History', 'git.fileHistory'),
+        cmd('Toggle Blame', 'git.toggleBlame'),
         sep,
         cmd('Commit', 'git.commit'),
         cmd('Stage All Changes', 'git.stageAll'),

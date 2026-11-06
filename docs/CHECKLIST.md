@@ -82,8 +82,8 @@ Git:
 - [x] Stage/unstage individual hunks (v0.35: Stage / Unstage / Discard Hunk in the diff)
 - [x] Commit interface (v0.35: Git tab, Ctrl+Enter, amend, stage-all offer; fetch / pull / push)
 - [x] Branch switching and creation (v0.35: ⎇ in the status bar or Git tab; local, new and remote branches)
-- [ ] Merge conflict resolution
-- [ ] Git history and file blame, with a graph view
+- [x] Merge conflict resolution (v0.36: shaded sides, Accept Current / Incoming / Both bar, next / previous, save and mark resolved)
+- [x] Git history and file blame, with a graph view (v0.36: History tab with graph, commit files and diffs, file history; blame in the status bar and gutter)
 
 Debugger improvements:
 - [ ] Support `input()` while debugging (run the debugged program in a terminal)

@@ -225,6 +225,14 @@ ipcMain.handle('git:sync', (_event, root: string, action: string) =>
   action === 'fetch' || action === 'pull' || action === 'push' ? gitOps.sync(root, action) : { ok: false, output: '', error: 'unknown action' }
 )
 ipcMain.handle('git:init', (_event, folder: string) => gitOps.init(folder))
+ipcMain.handle('git:log', (_event, root: string, opts: { all?: boolean; path?: string; limit?: number; skip?: number }) =>
+  gitOps.log(root, { all: !!opts?.all, path: typeof opts?.path === 'string' && opts.path ? opts.path : undefined, limit: Number(opts?.limit) || 200, skip: Number(opts?.skip) || 0 })
+)
+ipcMain.handle('git:commitDetails', (_event, root: string, sha: string) => gitOps.commitDetails(root, String(sha)))
+ipcMain.handle('git:commitFileDiff', (_event, root: string, sha: string, path: string) => gitOps.commitFileDiff(root, String(sha), String(path)))
+ipcMain.handle('git:blame', (_event, root: string, path: string, contents?: string) =>
+  gitOps.blame(root, String(path), typeof contents === 'string' ? contents : undefined)
+)
 ipcMain.handle('search:project', (_event, root: string, query: string, opts: FindOptions) =>
   searchProject(root, query, opts)
 )

@@ -91,6 +91,27 @@ describe.skipIf(!hasGit)('git operations on a real repository', () => {
     expect(bad.ok).toBe(false)
   })
 
+  it('reads history, a commit, its diff and blame', async () => {
+    writeFileSync(join(dir, 'b.txt'), 'one\ntwo\n')
+    expect((await git.commit(dir, 'add b\n\nmore details', { amend: false, all: true })).ok).toBe(true)
+    const h = await git.log(dir, { all: true, limit: 50, skip: 0 })
+    expect(h.ok).toBe(true)
+    expect(h.commits.map((c) => c.subject)).toEqual(['add b', 'first'])
+    expect(h.commits[0].refs.join(' ')).toContain('main')
+    const fileLog = await git.log(dir, { all: false, path: 'b.txt', limit: 50, skip: 0 })
+    expect(fileLog.commits).toHaveLength(1)
+
+    const d = await git.commitDetails(dir, h.commits[0].sha)
+    expect(d).toMatchObject({ ok: true, message: 'add b\n\nmore details', files: [{ status: 'A', path: 'b.txt' }] })
+    expect((await git.commitFileDiff(dir, h.commits[0].sha, 'b.txt')).output).toContain('+two')
+
+    const b = await git.blame(dir, 'b.txt', 'one\nchanged\ntwo\n')
+    expect(b.ok).toBe(true)
+    expect(b.lines.map((l) => l.uncommitted)).toEqual([false, true, false])
+    expect(b.lines[0]).toMatchObject({ author: 'Test', summary: 'add b' })
+    expect((await git.commitDetails(dir, 'not-a-sha')).ok).toBe(false)
+  })
+
   it('says when there is no remote to push to', async () => {
     const r = await git.sync(dir, 'push')
     expect(r).toMatchObject({ ok: false })

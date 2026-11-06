@@ -3,6 +3,7 @@ import type { KeyOverrides } from './keybindings'
 import type { WorkspaceState } from './projectState'
 import type { TestFile } from './tests'
 import type { Branch, RepoStatus } from './git'
+import type { BlameLine, Commit } from './history'
 import type { FindOptions } from './regex'
 import type { Encoding, TextFileResult } from './encoding'
 
@@ -215,6 +216,14 @@ export interface IdeApi {
   gitSwitch(root: string, name: string, opts: { create: boolean; remote: boolean }): Promise<GitResult>
   gitSync(root: string, action: 'fetch' | 'pull' | 'push'): Promise<GitResult>
   gitInit(folder: string): Promise<GitResult>
+  /** Commits newest first (all branches, or one file's history). */
+  gitLog(root: string, opts: { all: boolean; path?: string; limit: number; skip: number }): Promise<{ ok: boolean; commits: Commit[]; error?: string }>
+  /** A commit's message and changed files. */
+  gitCommitDetails(root: string, sha: string): Promise<{ ok: boolean; message: string; files: { path: string; from?: string; status: string }[]; error?: string }>
+  /** What a commit changed in one file. */
+  gitCommitFileDiff(root: string, sha: string, path: string): Promise<GitResult>
+  /** Who last changed each line (`contents`: the editor's text, so unsaved edits line up). */
+  gitBlame(root: string, path: string, contents?: string): Promise<{ ok: boolean; lines: BlameLine[]; error?: string }>
 
   /** Start (or restart) the Python language server. */
   lspStart(): Promise<void>

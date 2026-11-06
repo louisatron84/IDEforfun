@@ -7,6 +7,7 @@
 import { spawn } from 'node:child_process'
 import type { GitResult } from '../shared/api'
 import { isValidBranchName, parseBranches, parseStatusV2, type Branch, type RepoStatus } from '../shared/git'
+import { LOG_FORMAT, parseBlame, parseLog, type BlameLine, type Commit } from '../shared/history'
 
 function runGit(cwd: string, args: string[], input?: string, timeout = 120_000): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
@@ -132,4 +133,61 @@ export async function sync(root: string, action: 'fetch' | 'pull' | 'push'): Pro
 
 export async function init(folder: string): Promise<GitResult> {
   return result(await runGit(folder, ['init']))
+}
+
+// ---------- history and blame ----------
+
+/**
+ * Commits, newest first (topological, so the graph draws cleanly). `all`
+ * includes every branch; `path` limits it to one file's history (following renames).
+ */
+export async function log(root: string, opts: { all: boolean; path?: string; limit: number; skip: number }): Promise<{ ok: boolean; commits: Commit[]; error?: string }> {
+  const args = ['-c', 'core.quotepath=false', 'log', '--topo-order', `--format=${LOG_FORMAT}`, `-n${Math.min(Math.max(1, opts.limit), 2000)}`, `--skip=${Math.max(0, opts.skip)}`]
+  if (opts.all) args.push('--all')
+  if (opts.path) args.push('--follow', '--', opts.path)
+  const r = await runGit(root, args)
+  if (!r.ok) {
+    // A repo without commits has no history yet (not an error worth showing).
+    if (/does not have any commits|bad default revision/.test(r.stderr)) return { ok: true, commits: [] }
+    return { ok: false, commits: [], error: r.stderr.trim() }
+  }
+  return { ok: true, commits: parseLog(r.stdout) }
+}
+
+/** A commit's full message and the files it changed. */
+export async function commitDetails(root: string, sha: string): Promise<{ ok: boolean; message: string; files: { path: string; from?: string; status: string }[]; error?: string }> {
+  if (!/^[0-9a-f]{4,64}$/.test(sha)) return { ok: false, message: '', files: [], error: 'bad commit id' }
+  const r = await runGit(root, ['-c', 'core.quotepath=false', 'show', '--no-color', '--format=%B%x00', '--name-status', '-z', '-M', sha])
+  if (!r.ok) return { ok: false, message: '', files: [], error: r.stderr.trim() }
+  const nul = r.stdout.indexOf('\0')
+  const message = r.stdout.slice(0, nul).trim()
+  const parts = r.stdout.slice(nul + 1).replace(/^\s+/, '').split('\0').filter((p) => p !== '')
+  const files: { path: string; from?: string; status: string }[] = []
+  for (let i = 0; i < parts.length; i++) {
+    const status = parts[i].trim()
+    if (!/^[A-Z]\d*$/.test(status)) continue
+    if (status.startsWith('R') || status.startsWith('C')) {
+      files.push({ status: status[0], from: parts[i + 1], path: parts[i + 2] })
+      i += 2
+    } else {
+      files.push({ status, path: parts[i + 1] })
+      i += 1
+    }
+  }
+  return { ok: true, message, files }
+}
+
+/** What one commit changed in one file (compared with its first parent). */
+export async function commitFileDiff(root: string, sha: string, path: string): Promise<GitResult> {
+  if (!/^[0-9a-f]{4,64}$/.test(sha)) return { ok: false, output: '', error: 'bad commit id' }
+  const r = await runGit(root, ['-c', 'core.quotepath=false', 'show', '--no-color', '--no-ext-diff', '--format=', '-M', '--first-parent', sha, '--', path])
+  return r.ok ? { ok: true, output: r.stdout } : result(r)
+}
+
+/** Who last changed each line. `contents` is the editor's text (so unsaved edits line up). */
+export async function blame(root: string, path: string, contents?: string): Promise<{ ok: boolean; lines: BlameLine[]; error?: string }> {
+  const args = ['blame', '--porcelain', ...(contents !== undefined ? ['--contents', '-'] : []), '--', path]
+  const r = await runGit(root, args, contents)
+  if (!r.ok) return { ok: false, lines: [], error: r.stderr.trim().replace(/^fatal: /, '') }
+  return { ok: true, lines: parseBlame(r.stdout) }
 }

@@ -1047,6 +1047,18 @@ body { display: flex; flex-direction: column; }
   font-size: 11px;
 }
 .editor .gutter-lines > div.bp.exec::after { left: 9px; color: #fff; font-size: 8px; }
+/* Merge conflicts: your side green, the incoming side blue, marker lines stronger */
+.editor .line-shade { position: absolute; top: 0; left: 0; width: 100%; height: var(--line-height); }
+.editor .line-shade.conflict-current { background: rgba(80, 180, 90, 0.14); }
+.editor .line-shade.conflict-incoming { background: rgba(70, 140, 230, 0.16); }
+.editor .line-shade.conflict-base { background: rgba(127, 127, 127, 0.12); }
+.editor .line-shade.conflict-marker { background: rgba(127, 127, 127, 0.28); }
+/* Blame notes in the gutter */
+.editor .gutter-note {
+  position: absolute; left: 22px; top: 0;
+  width: 25ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-align: left; font-family: var(--font-ui); font-size: 11px; color: var(--fg-muted); opacity: 0.85;
+}
 .editor .exec-line {
   position: absolute;
   top: 0;
@@ -1305,3 +1317,47 @@ button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 .diff-line.add .diff-mark { color: #6aab73; }
 .diff-line.del .diff-mark { color: var(--sev-1); }
 .diff-code { flex: 1; tab-size: var(--tab-size); }
+
+/* ---- merge conflict bar (top of the editor) ---- */
+.conflict-bar {
+  position: absolute; top: 36px; left: 50%; transform: translateX(-50%); z-index: 7;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: calc(100% - 32px);
+  padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg-panel); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3); font-size: 12px;
+}
+.conflict-bar[hidden] { display: none; }
+.conflict-bar span { margin-right: 4px; font-weight: 600; }
+.conflict-bar button {
+  padding: 2px 8px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg); color: var(--fg); font: inherit; cursor: pointer;
+}
+.conflict-bar button:hover { background: var(--bg-hover); }
+
+/* ---- History panel ---- */
+.history-view { position: absolute; inset: 0; display: flex; background: var(--bg); }
+.history-list { flex: 3 1 0; min-width: 0; overflow: auto; }
+.history-details { flex: 2 1 0; min-width: 0; overflow: auto; border-left: 1px solid var(--border); padding: 6px 10px; }
+.history-row { display: flex; align-items: center; gap: 6px; height: 24px; padding-right: 10px; cursor: pointer; white-space: nowrap; }
+.history-row:hover { background: var(--bg-hover); }
+.history-row.selected { background: var(--bg-active); }
+.history-graph { flex-shrink: 0; }
+.history-text { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; overflow: hidden; }
+.history-subject { overflow: hidden; text-overflow: ellipsis; }
+.history-meta { flex-shrink: 0; color: var(--fg-muted); font-size: 11px; }
+.history-ref {
+  flex-shrink: 0; padding: 0 5px; border-radius: 3px; font-size: 11px;
+  background: rgba(59, 142, 234, 0.2); color: var(--fg); border: 1px solid rgba(59, 142, 234, 0.5);
+}
+.history-ref.head { background: rgba(47, 177, 112, 0.25); border-color: rgba(47, 177, 112, 0.6); font-weight: 600; }
+.history-ref.remote { background: transparent; color: var(--fg-muted); }
+.history-ref.tag { background: rgba(229, 165, 10, 0.2); border-color: rgba(229, 165, 10, 0.5); }
+.history-more { margin: 6px 10px; padding: 3px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-panel); color: var(--fg); font: inherit; cursor: pointer; }
+.history-detail-head { color: var(--fg-muted); font-size: 12px; }
+.history-detail-head code { color: var(--accent); cursor: pointer; }
+.history-message { margin: 6px 0 10px; white-space: pre-wrap; font-family: var(--font-ui); font-size: 13px; }
+.history-files { display: flex; flex-direction: column; }
+.history-file {
+  display: flex; align-items: center; gap: 6px; padding: 2px 4px; border: 0; border-radius: 3px;
+  background: none; color: var(--fg); font: inherit; font-size: 12px; text-align: left; cursor: pointer;
+}
+.history-file:hover { background: var(--bg-hover); }

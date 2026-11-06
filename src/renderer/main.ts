@@ -34,6 +34,9 @@ import { WelcomePage } from './welcome'
 import { CodeTools } from './codeTools'
 import { GitView } from './gitView'
 import { DiffView } from './diffView'
+import { HistoryView } from './historyView'
+import { conflictNear, findConflicts, resolveConflict, type Conflict, type Resolution } from '../shared/conflicts'
+import { timeAgo, type BlameLine } from '../shared/history'
 import { lineDiff } from '../shared/lint'
 import { ReferencesView } from './referencesView'
 import { CallHierarchyView } from './callHierarchyView'
@@ -1083,6 +1086,7 @@ workspace.subscribe(() => {
   }
   updateWelcome()
   refreshOutlineSoon(workspace.active === outlineDoc ? 600 : 50)
+  if (gitView.status) refreshBlameSoon(blame?.doc === workspace.active ? 1500 : 150)
   syncGroups()
   workspace.groups.forEach((g, i) => {
     tabBars[i].render()
@@ -1702,7 +1706,9 @@ async function refreshGit(): Promise<void> {
     const [status, repo] = await Promise.all([window.api.gitStatus(folder), window.api.gitRepo(folder)])
     if (rootFolder !== folder) return
     tree.setGitStatus(status)
+    const hadRepo = gitView.status !== null
     gitView.setStatus(repo)
+    if (repo && !hadRepo) refreshBlameSoon(0)
     const branch = $('sb-branch')
     branch.textContent = repo ? `⎇ ${repo.detached ? 'detached' : repo.branch ?? ''}${repo.ahead ? ` ↑${repo.ahead}` : ''}${repo.behind ? ` ↓${repo.behind}` : ''}` : ''
     // The diff on screen may be out of date (files edited, staged elsewhere...).
@@ -1755,6 +1761,9 @@ async function gitRun(action: () => Promise<{ ok: boolean; error?: string; outpu
   if (res.ok && /Switch|Pull|Discard|Creat/.test(busyText)) await reloadCleanDocs()
   await refreshGit()
   void tree.refreshAll()
+  blame = null // commits change who-wrote-what
+  refreshBlameSoon(0)
+  conflictBarKey = ''
   return res.ok
 }
 
@@ -1821,6 +1830,214 @@ async function diffActiveFile(): Promise<void> {
   if (staged) return diffView.show(repo, staged, true)
   statusNote(doc.dirty ? 'No changes on disk yet: save the file to compare it.' : 'This file has no changes since the last commit.')
 }
+
+// ---------- history, blame, merge conflicts ----------
+
+/** The active file's path relative to the repository (with /), or null. */
+function repoPath(doc: Doc | null = workspace.active): string | null {
+  const repo = gitView.status
+  if (!doc || !repo || !isInside(doc.path, repo.root)) return null
+  return doc.path.slice(repo.root.length).replace(/^[\\/]+/, '').replace(/\\/g, '/')
+}
+
+const historyView = new HistoryView({
+  repo: () => gitView.status,
+  activeFile: () => repoPath(),
+  showCommitFile: (repo, sha, subject, path) => void diffView.showCommitFile(repo, sha, subject, path),
+  openFile: (path) => {
+    const repo = gitView.status
+    if (repo) void openFile(repo.root + (repo.root.includes('\\') ? '\\' : '/') + path)
+  }
+})
+panel.addView('history', 'History', historyView.body, historyView.actions, () => void historyView.load())
+
+// Blame: the cursor line's author in the status bar; every line in the gutter when turned on.
+let blameOn = false
+let blame: { doc: Doc; version: number; lines: BlameLine[] } | null = null
+let blameTimer: number | undefined
+let blameGeneration = 0
+
+function blameText(l: BlameLine): string {
+  return l.uncommitted ? 'You · not committed yet' : `${l.author} · ${timeAgo(l.time)} · ${l.summary}`
+}
+
+/** Fetch blame for the active file (using its current text, so unsaved edits line up). */
+function refreshBlameSoon(delay = 600): void {
+  window.clearTimeout(blameTimer)
+  blameTimer = window.setTimeout(() => void loadBlame(), delay)
+}
+
+async function loadBlame(): Promise<void> {
+  const doc = workspace.active
+  const repo = gitView.status
+  const rel = repoPath(doc)
+  if (!doc || !repo || !rel || doc.large || repo.unstaged.some((c) => c.path === rel && c.kind === 'untracked')) {
+    blame = null
+    applyBlame()
+    return
+  }
+  if (blame && blame.doc === doc && blame.version === doc.version) return applyBlame()
+  const gen = ++blameGeneration
+  const version = doc.version
+  const res = await window.api.gitBlame(repo.root, rel, doc.getText()).catch(() => null)
+  if (gen !== blameGeneration || workspace.active !== doc) return
+  blame = res?.ok ? { doc, version, lines: res.lines } : null
+  applyBlame()
+}
+
+function applyBlame(): void {
+  const doc = workspace.active
+  const usable = blame && blame.doc === doc && blame.version === doc?.version ? blame : null
+  editors.forEach((ed, i) => {
+    if (i !== workspace.activeGroup || !blameOn || !usable) return ed.setGutterNotes(null)
+    // Only the first line of each run from the same commit, to keep it readable.
+    ed.setGutterNotes(usable.lines.map((l, k) => (k > 0 && usable.lines[k - 1].sha === l.sha ? '' : l.uncommitted ? 'not committed yet' : `${l.author.split(' ')[0]} · ${timeAgo(l.time)}`)))
+  })
+  scheduleStatus()
+}
+
+function lineBlame(): string {
+  const doc = workspace.active
+  if (!blame || blame.doc !== doc || blame.version !== doc?.version) return ''
+  const l = blame.lines[editor.getCursor().line]
+  return l ? blameText(l) : ''
+}
+
+// Merge conflicts in the active file: shaded, with a bar to resolve them.
+const conflictBar = document.createElement('div')
+conflictBar.className = 'conflict-bar'
+conflictBar.hidden = true
+$('editor-pane').append(conflictBar)
+let conflictCache: { doc: Doc; version: number; list: Conflict[] } | null = null
+
+function conflictsOf(doc: Doc): Conflict[] {
+  if (conflictCache?.doc === doc && conflictCache.version === doc.version) return conflictCache.list
+  const lines = doc.buffer.getLines()
+  const list = doc.large || !lines.some((l) => l.startsWith('<<<<<<<')) ? [] : findConflicts(lines)
+  conflictCache = { doc, version: doc.version, list }
+  editors.forEach((ed, i) => ed.setLineShades(i === workspace.activeGroup ? conflictShades(list) : []))
+  return list
+}
+
+function conflictShades(list: Conflict[]): { from: number; to: number; cls: string }[] {
+  const out: { from: number; to: number; cls: string }[] = []
+  for (const c of list) {
+    const mid = c.base ?? c.separator
+    out.push({ from: c.start, to: c.start, cls: 'conflict-marker' })
+    out.push({ from: c.start + 1, to: mid - 1, cls: 'conflict-current' })
+    if (c.base !== null) out.push({ from: c.base, to: c.base, cls: 'conflict-marker' }, { from: c.base + 1, to: c.separator - 1, cls: 'conflict-base' })
+    out.push({ from: c.separator, to: c.separator, cls: 'conflict-marker' })
+    out.push({ from: c.separator + 1, to: c.end - 1, cls: 'conflict-incoming' })
+    out.push({ from: c.end, to: c.end, cls: 'conflict-marker' })
+  }
+  return out
+}
+
+let conflictBarKey = ''
+function updateConflictBar(): void {
+  const doc = workspace.active
+  const list = doc ? conflictsOf(doc) : []
+  const rel = repoPath(doc)
+  const unresolved = !!rel && !!gitView.status?.conflicts.some((c) => c.path === rel)
+  const cur = list.length && doc ? conflictNear(list, editor.getCursor().line) : null
+  const key = `${doc?.path}|${doc?.version}|${list.indexOf(cur!)}|${unresolved}`
+  if (key === conflictBarKey) return
+  conflictBarKey = key
+  if (!doc || (!list.length && !unresolved)) {
+    conflictBar.hidden = true
+    return
+  }
+  const btn = (text: string, title: string, fn: () => void) => {
+    const b = document.createElement('button')
+    b.textContent = text
+    b.title = title
+    b.addEventListener('click', fn)
+    return b
+  }
+  const label = document.createElement('span')
+  if (cur) {
+    label.textContent = `⚠ Merge conflict ${list.indexOf(cur) + 1} of ${list.length}`
+    conflictBar.replaceChildren(
+      label,
+      btn(`Accept Current${cur.currentLabel ? ` (${cur.currentLabel})` : ''}`, 'Keep your side (green)', () => resolveCurrentConflict('current')),
+      btn(`Accept Incoming${cur.incomingLabel ? ` (${cur.incomingLabel})` : ''}`, 'Take the incoming side (blue)', () => resolveCurrentConflict('incoming')),
+      btn('Accept Both', 'Keep both, yours first', () => resolveCurrentConflict('both')),
+      btn('◀', 'Previous conflict', () => goToConflict(-1)),
+      btn('▶', 'Next conflict', () => goToConflict(1))
+    )
+  } else {
+    label.textContent = '✓ No conflicts left in this file.'
+    conflictBar.replaceChildren(label, btn('Save and Mark Resolved', 'Save the file and stage it (git add)', () => void markResolved()))
+  }
+  conflictBar.hidden = false
+}
+
+function resolveCurrentConflict(choice: Resolution): void {
+  const doc = workspace.active
+  if (!doc) return
+  const list = conflictsOf(doc)
+  const c = conflictNear(list, editor.getCursor().line)
+  if (!c) return
+  const lines = doc.buffer.getLines()
+  const keep = resolveConflict(lines, c, choice)
+  const last = lines.length - 1
+  // Replace the whole block (start..end lines, including the line break after it).
+  const edit: TextEdit = c.end < last
+    ? { start: { line: c.start, col: 0 }, end: { line: c.end + 1, col: 0 }, text: keep.length ? keep.join('\n') + '\n' : '' }
+    : c.start > 0 && !keep.length
+      ? { start: { line: c.start - 1, col: lines[c.start - 1].length }, end: { line: c.end, col: lines[c.end].length }, text: '' }
+      : { start: { line: c.start, col: 0 }, end: { line: c.end, col: lines[c.end].length }, text: keep.join('\n') }
+  applyEditsToDoc(doc, [edit])
+  editor.goTo(Math.min(c.start, doc.buffer.lineCount - 1), 0)
+  updateConflictBar()
+}
+
+function goToConflict(delta: 1 | -1): void {
+  const doc = workspace.active
+  if (!doc) return
+  const list = conflictsOf(doc)
+  if (!list.length) return
+  const line = editor.getCursor().line
+  const i = list.findIndex((c) => line >= c.start && line <= c.end)
+  const next = i === -1
+    ? (delta === 1 ? list.find((c) => c.start > line) ?? list[0] : [...list].reverse().find((c) => c.end < line) ?? list[list.length - 1])
+    : list[(i + delta + list.length) % list.length]
+  editor.goTo(next.start, 0)
+  editor.focus()
+}
+
+async function markResolved(): Promise<void> {
+  const doc = workspace.active
+  const repo = gitView.status
+  const rel = repoPath(doc)
+  if (!doc || !repo || !rel) return
+  if (doc.dirty && !(await saveActive())) return
+  await gitRun(() => window.api.gitStage(repo.root, [rel]), 'Staging…')
+  conflictBarKey = ''
+  updateConflictBar()
+}
+
+const inConflict = () => !!workspace.active && conflictsOf(workspace.active).length > 0
+commands.register({ id: 'git.acceptCurrent', title: 'Merge Conflict: Accept Current', when: inConflict, run: () => resolveCurrentConflict('current') })
+commands.register({ id: 'git.acceptIncoming', title: 'Merge Conflict: Accept Incoming', when: inConflict, run: () => resolveCurrentConflict('incoming') })
+commands.register({ id: 'git.acceptBoth', title: 'Merge Conflict: Accept Both', when: inConflict, run: () => resolveCurrentConflict('both') })
+commands.register({ id: 'git.nextConflict', title: 'Merge Conflict: Next', when: inConflict, run: () => goToConflict(1) })
+commands.register({ id: 'git.prevConflict', title: 'Merge Conflict: Previous', when: inConflict, run: () => goToConflict(-1) })
+commands.register({ id: 'git.history', title: 'Git: Show History', when: () => gitView.status !== null, run: () => { panel.show('history') } })
+commands.register({
+  id: 'git.fileHistory', title: 'Git: File History', when: () => repoPath() !== null,
+  run: () => { panel.show('history'); void historyView.showFile(repoPath()!) }
+})
+commands.register({
+  id: 'git.toggleBlame', title: 'Git: Toggle Blame (who changed each line)', when: () => gitView.status !== null,
+  run: () => {
+    blameOn = !blameOn
+    statusNote(blameOn ? 'Blame on: who last changed each line is shown next to the line numbers.' : 'Blame off.')
+    if (blameOn) void loadBlame()
+    else applyBlame()
+  }
+})
+$('sb-blame').addEventListener('click', () => commands.run('git.fileHistory'))
 
 commands.register({ id: 'git.show', title: 'Show Source Control (Git)', keys: 'Ctrl+Shift+G', run: () => { showSidebar('git'); gitView.focusMessage() } })
 commands.register({ id: 'git.diffFile', title: 'Git: Show Changes in This File', when: () => hasDocNow() && rootFolder !== null, run: () => void diffActiveFile() })
@@ -2085,6 +2302,10 @@ function updateStatus(): void {
   if (!$('outline-panel').hidden) outline.highlight(doc ? editor.getCursor() : null)
   codeTools.updateLightbulb(doc, doc ? editor.getCursor().line : null)
   updateOccurrences()
+  updateConflictBar()
+  const who = lineBlame()
+  set('sb-blame', who.length > 70 ? who.slice(0, 69) + '…' : who)
+  $('sb-blame').title = who ? `${who}\nClick for this file's history` : ''
   set('sb-debug', session?.state === 'paused' ? '🐞 Paused' : session?.active ? '🐞 Debugging' : '')
   set('sb-run', rootFolder ? `▶ ${runConfigName ?? 'Current file'}` : '')
   set('sb-python', pyEnv.statusText)

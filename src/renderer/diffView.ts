@@ -18,6 +18,8 @@ interface Shown {
   repo: Repo
   change: FileChange
   staged: boolean
+  /** Showing what a past commit changed (read-only). */
+  commit?: { sha: string; subject: string }
 }
 
 export class DiffView {
@@ -67,6 +69,14 @@ export class DiffView {
     await this.reload()
   }
 
+  /** What commit `sha` changed in `path` (read-only). */
+  async showCommitFile(repo: Repo, sha: string, subject: string, path: string): Promise<void> {
+    this.shown = { repo, change: { path, kind: 'modified' }, staged: false, commit: { sha, subject } }
+    this.el.hidden = false
+    this.el.focus({ preventScroll: true })
+    await this.reload()
+  }
+
   /** Load the diff again (after staging a hunk, or the file changed). */
   async reload(): Promise<void> {
     const shown = this.shown
@@ -75,7 +85,13 @@ export class DiffView {
     const { repo, change, staged } = shown
     let diff: FileDiff | null = null
     let note = ''
-    if (change.kind === 'untracked') {
+    if (shown.commit) {
+      const res = await window.api.gitCommitFileDiff(repo.root, shown.commit.sha, change.path)
+      if (!res.ok) note = res.error ?? "Couldn't get the diff."
+      else diff = parseDiff(res.output)[0] ?? null
+      if (res.ok && !diff) note = 'This commit made no text changes to the file.'
+      else if (diff?.binary) note = 'Binary file changed (no text to compare).'
+    } else if (change.kind === 'untracked') {
       // Not in git yet: the whole file is new.
       const res = await window.api.readTextFile(this.abs(repo, change.path)).catch(() => null)
       if (res?.kind === 'text') {
@@ -108,7 +124,9 @@ export class DiffView {
     name.textContent = change.path
     const what = document.createElement('span')
     what.className = 'diff-what'
-    what.textContent = untracked ? 'New file (not in git yet)' : staged ? 'Staged changes (compared with the last commit)' : 'Changes not staged yet'
+    what.textContent = shown.commit
+      ? `Commit ${shown.commit.sha.slice(0, 7)}: ${shown.commit.subject}`
+      : untracked ? 'New file (not in git yet)' : staged ? 'Staged changes (compared with the last commit)' : 'Changes not staged yet'
     title.append(name, what)
     const buttons = document.createElement('div')
     buttons.className = 'diff-buttons'
@@ -120,7 +138,8 @@ export class DiffView {
       buttons.append(b)
     }
     if (change.kind !== 'deleted') add('Open File', 'Open the file in the editor', () => this.hooks.openFile(this.abs(repo, change.path), diff?.hunks[0]?.newStart ? diff.hunks[0].newStart - 1 : 0))
-    if (staged) add('Unstage File', 'Take all of this file out of the next commit', () => void this.act(() => window.api.gitUnstage(repo.root, [change.path]), 'Unstaging…'))
+    if (shown.commit) { /* read-only */ }
+    else if (staged) add('Unstage File', 'Take all of this file out of the next commit', () => void this.act(() => window.api.gitUnstage(repo.root, [change.path]), 'Unstaging…'))
     else add('Stage File', 'Put all of this file in the next commit', () => void this.act(() => window.api.gitStage(repo.root, [change.path]), 'Staging…'))
     add('×', 'Close (Escape)', () => this.hide())
     head.append(title, buttons)
@@ -159,7 +178,8 @@ export class DiffView {
         h.append(b)
       }
       const patch = () => hunkPatch(file, hunk)
-      if (staged) btn('Unstage Hunk', 'Take just these lines out of the next commit', () => void this.act(() => window.api.gitApply(repo.root, patch(), { cached: true, reverse: true }), 'Unstaging…'))
+      if (shown.commit) { /* read-only: no buttons */ }
+      else if (staged) btn('Unstage Hunk', 'Take just these lines out of the next commit', () => void this.act(() => window.api.gitApply(repo.root, patch(), { cached: true, reverse: true }), 'Unstaging…'))
       else if (change.kind !== 'untracked') {
         btn('Discard Hunk', 'Throw away just these changes (can’t be undone)', () => {
           if (confirm('Discard these changes? This can’t be undone.')) void this.act(() => window.api.gitApply(repo.root, patch(), { cached: false, reverse: true }), 'Discarding…')

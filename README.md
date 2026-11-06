@@ -119,6 +119,11 @@ the app's data folder, which you can also edit by hand ("Edit Keyboard Shortcuts
   changes; click one for a colored diff where each hunk can be staged, unstaged or discarded
   on its own. Commit (or amend), switch / create branches, fetch, pull and push. Open files
   without unsaved changes reload when a switch or pull changes them.
+  Merge conflicts are shaded (yours green, incoming blue) with a bar to accept current /
+  incoming / both and then save and mark the file resolved. **History** (bottom panel)
+  draws the commit graph; click a commit for its files and diffs; Git → File History for one
+  file. Who last changed the cursor's line shows in the status bar; Git → Toggle Blame shows
+  it for every line.
 - **Ruff and Black**: if Ruff is installed in the project's Python (Quick Fix offers to
   install it), its warnings show as you type next to Pyright's, with 💡 on lines it can fix.
   Format with Ruff or Black (Settings → Formatter, optional format on save); the project's

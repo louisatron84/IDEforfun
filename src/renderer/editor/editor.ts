@@ -28,6 +28,8 @@ const PAD_TOP = 4 // space above the first line
 const PAD_LEFT = 12 // must match .editor .lines padding-left in styles.css
 const PAD_RIGHT = 24
 const GUTTER_PAD = 52 // gutter's left (breakpoint dots) + right (fold arrows) padding around the numbers
+/** Room for blame notes in the gutter, in characters. */
+const GUTTER_NOTE_CHARS = 26
 /** Extra lines drawn above/below the visible area so fast scrolling doesn't flash. */
 const OVERSCAN = 5
 
@@ -1093,7 +1095,7 @@ export class Editor {
     this.content.style.height = height
     this.content.style.width = `${PAD_LEFT + widest * this.charWidth + PAD_RIGHT + this.minimapRoom}px`
     this.gutter.style.height = height
-    this.gutter.style.width = `${String(lines.length).length * this.charWidth + GUTTER_PAD}px`
+    this.gutter.style.width = `${String(lines.length).length * this.charWidth + GUTTER_PAD + (this.gutterNotes ? GUTTER_NOTE_CHARS * this.charWidth : 0)}px`
   }
 
   /** Which screen rows are visible, plus a few extra above and below. */
@@ -1120,6 +1122,11 @@ export class Editor {
         toggle.textContent = folded ? '▸' : '▾'
         toggle.title = folded ? 'Unfold (Ctrl+Shift+])' : 'Fold (Ctrl+Shift+[)'
         num.append(toggle)
+      }
+      if (this.gutterNotes) {
+        const note = el('span', 'gutter-note')
+        note.textContent = this.gutterNotes[i] ?? ''
+        num.append(note)
       }
       if (i === this.lightbulbLine) {
         const bulb = el('span', 'lightbulb')
@@ -1189,6 +1196,27 @@ export class Editor {
     this.renderSelection()
   }
 
+  /** Whole lines shaded with a class (e.g. the two sides of a merge conflict). */
+  private lineShades: { from: number; to: number; cls: string }[] = []
+
+  setLineShades(list: { from: number; to: number; cls: string }[]): void {
+    if (!list.length && !this.lineShades.length) return
+    this.lineShades = list
+    if (this.hasDoc) this.renderSelection()
+  }
+
+  /** Text shown in the gutter before each line number (blame), or null for none. */
+  private gutterNotes: readonly string[] | null = null
+
+  setGutterNotes(notes: readonly string[] | null): void {
+    this.gutterNotes = notes
+    this.root.classList.toggle('with-notes', !!notes)
+    if (!this.hasDoc) return
+    this.updateSize()
+    this.renderLines()
+    this.renderSelection()
+  }
+
   /** Other uses of the name under the cursor (kind 3 = written to, else read). */
   private occurrences: { start: Position; end: Position; write: boolean }[] = []
 
@@ -1248,6 +1276,14 @@ export class Editor {
       const box = el('div', 'exec-line')
       box.style.transform = `translateY(${this.yOf(this.execLine)}px)`
       boxes.push(box)
+    }
+    for (const s of this.lineShades) {
+      for (let line = Math.max(s.from, firstVisible); line <= Math.min(s.to, lastVisible); line++) {
+        if (this.foldMap.isHidden(line)) continue
+        const box = el('div', `line-shade ${s.cls}`)
+        box.style.transform = `translateY(${this.yOf(line)}px)`
+        boxes.push(box)
+      }
     }
     for (const o of this.occurrences) {
       if (o.end.line < firstVisible || o.start.line > lastVisible) continue
