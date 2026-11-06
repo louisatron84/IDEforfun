@@ -73,6 +73,9 @@ describe('TaskController', () => {
     expect(tasks.current).toBe('connect')
     expect(tasks.isShown('toolbox')).toBe(true)
     expect(view.stackOf('toolbox')!.panels).not.toContain('terminal')
+    tasks.closePanel('box')
+    expect(tasks.isShown('box')).toBe(false)
+    expect(tasks.isShown('graph')).toBe(true)
   })
 
   it('reveal in Debug with the editor placed only activates it', () => {

@@ -319,7 +319,13 @@ window.addEventListener('keydown', (e) => {
 function onTaskChanged(task: TaskId): void {
   for (const b of document.querySelectorAll<HTMLButtonElement>('#task-switcher button')) b.setAttribute('aria-selected', String(b.dataset.task === task))
   if (dock.editing) editBar.fill()
+  // Box settings only show while a box is picked (layouts saved before v0.44 placed it for good).
+  if (task === 'connect' && !dock.editing) queueMicrotask(closeIdleBoxSettings)
   saveStateSoon()
+}
+
+function closeIdleBoxSettings(): void {
+  if (tasks.current === 'connect' && !boxes.selected && tasks.isShown('box')) tasks.closePanel('box')
 }
 const output = new OutputView(
   (path, line) => void openFile(path, line - 1),
@@ -2262,7 +2268,7 @@ const boxFiles: BoxFiles = {
       void tree.refreshAll()
     }
     void refreshGit()
-    projectChangedSoon()
+    if (/\.pyi?$/i.test(rel)) projectChangedSoon()
   },
   saveBoxes: async (file) => {
     if (rootFolder) await window.api.writeProjectFile(rootFolder, 'boxes.json', file)
@@ -2295,6 +2301,15 @@ const boxSettings = new BoxSettings(boxes, {
   showDiff: (current, next) => showCodeDialog({ title: 'Replace your edits with the box\'s code? (- yours, + the box\'s)', diff: codeLineDiff(current, next), ok: 'Overwrite' }),
   confirm: (message) => confirm(message),
   alert: (message) => alert(message),
+  openFile: (rel) => {
+    try {
+      const path = boxPath(rel)
+      tasks.switchTo('code')
+      void openFile(path)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err))
+    }
+  },
   liveWire: (id, on) => {
     if (on) liveBoxes.add(id)
     else liveBoxes.delete(id)
@@ -2322,6 +2337,12 @@ const graphView = new GraphView({
     select: (id) => {
       boxes.select(id)
       tasks.reveal('box')
+    },
+    clear: () => {
+      // Box settings only show while a box is picked.
+      if (!boxes.selected) return
+      boxes.select(null)
+      tasks.closePanel('box')
     },
     drop: (module) => addBox(module),
     live: () => liveBoxes
