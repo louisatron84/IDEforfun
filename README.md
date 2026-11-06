@@ -1,7 +1,7 @@
 # Forge
 a ide cus why not
 
-A hobby IDE built with Electron + TypeScript. The text editor (buffer, cursor, selection, undo, syntax highlighting, rendering) is written from scratch. The main target language is Python.
+Forge (the repository is still called IDEforfun) is a hobby IDE built with Electron + TypeScript: the place where you forge code. The text editor (buffer, cursor, selection, undo, syntax highlighting, rendering) is written from scratch. The main target language is Python.
 
 See [docs/CHECKLIST.md](docs/CHECKLIST.md) for the roadmap.
 
