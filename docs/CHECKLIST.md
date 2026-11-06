@@ -75,7 +75,7 @@ Language features (Pyright already does the analysis for most of these; they're 
 - [x] Format document / selection (Black, Ruff) (v0.33: Shift+Alt+F, Format Selection, format on save)
 - [x] Linting integration (Ruff) (v0.33: as you type, in Problems and squiggles, uses the project's Ruff config)
 - [ ] Semantic syntax highlighting (Pyright doesn't provide semantic tokens; needs basedpyright or our own analysis)
-- [ ] Language-support architecture: language integrations instead of Python-specific editor logic, so several language servers can run side by side (groundwork for Tier 6.2)
+- [x] Language-support architecture: language integrations instead of Python-specific editor logic, so several language servers can run side by side (groundwork for Tier 6.2) (v0.39: each file has a language that sets its highlighting, comment marker and Enter-indent; language servers run by id side by side and each file goes to its language's server; new JSON/JSONC, TOML, YAML and INI highlighting)
 
 Git:
 - [x] Git diff viewer (v0.35: click a changed file; colored, line numbers, Python highlighting)
@@ -170,6 +170,14 @@ Visualisations are interactive representations of real code, not a separate prog
 - [ ] Preview intermediate DataFrame contents
 - [ ] Visualise data filtering, grouping and merging
 - [ ] Export visual pipelines as ordinary Python
+
+Block library (for the pipeline graph): blocks are whole steps, not single statements, so graphs stay small and map cleanly to code.
+- [ ] Each block is an ordinary Python function; inputs and outputs come from its parameters, type hints and return value
+- [ ] Placing a block inserts a readable call (plus import); wiring blocks passes one block's result to the next
+- [ ] Built-in library of useful steps (read CSV/JSON, filter rows, group by, call API endpoint, retry, save)
+- [ ] User blocks: mark a project function (e.g. `@block` or `.ideforfun/blocks/`) and it appears in the library
+- [ ] Editing a block opens its Python; editing a built-in makes a project copy first, so library updates never overwrite it
+- [ ] A single "for each" container block instead of loop/if wiring
 
 ### 5.5 Execution visualisation
 - [ ] Live call graph while debugging

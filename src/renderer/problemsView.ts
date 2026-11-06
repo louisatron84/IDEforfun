@@ -2,7 +2,7 @@
  * The Problems tab in the bottom panel: every error and warning from the
  * language server, grouped by file. Clicking one jumps to it.
  */
-import type { Diagnostic } from './lsp/python'
+import type { Diagnostic } from './lsp/server'
 
 const SEVERITY = { 1: 'error', 2: 'warning', 3: 'info', 4: 'hint' } as const
 const ICON = { 1: '✖', 2: '⚠', 3: 'ℹ', 4: '·' } as const

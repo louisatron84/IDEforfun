@@ -162,6 +162,8 @@ export interface CallItem {
   end: Position
   nameStart: Position
   raw: unknown
+  /** Id of the language server it came from (to ask for its calls). */
+  server?: string
 }
 
 export function parseCallItem(raw: any): CallItem | null {

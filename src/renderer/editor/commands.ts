@@ -97,13 +97,15 @@ export function deleteForward(b: TextBuffer, pos: Position): Position {
   return pos
 }
 
-/** Enter: keep the indentation, plus one level after a Python block opener (`:`). */
-export function newline(b: TextBuffer, pos: Position, tabSize: number): Position {
+/** Python's rule: a block opener ends with `:` (ignoring a comment). */
+export const pythonIndentAfter = (before: string): boolean => before.replace(/#.*$/, '').trimEnd().endsWith(':')
+
+/** Enter: keep the indentation, plus one level when `indentAfter` says the line opens a block. */
+export function newline(b: TextBuffer, pos: Position, tabSize: number, indentAfter: (before: string) => boolean = pythonIndentAfter): Position {
   const lineText = b.getLine(pos.line)
   const before = lineText.slice(0, pos.col)
   let indent = leadingWhitespace(before)
-  const code = before.replace(/#.*$/, '').trimEnd()
-  if (code.endsWith(':')) indent += ' '.repeat(tabSize)
+  if (indentAfter(before)) indent += ' '.repeat(tabSize)
 
   // Text after the cursor moves down; drop its leading spaces so it lines up with the indent.
   const restSpaces = leadingWhitespace(lineText.slice(pos.col)).length

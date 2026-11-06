@@ -91,15 +91,16 @@ const api: IdeApi = {
   gitCommitDetails: (root, sha) => ipcRenderer.invoke('git:commitDetails', root, sha),
   gitCommitFileDiff: (root, sha, path) => ipcRenderer.invoke('git:commitFileDiff', root, sha, path),
   gitBlame: (root, path, contents) => ipcRenderer.invoke('git:blame', root, path, contents),
-  lspStart: () => ipcRenderer.invoke('lsp:start'),
-  lspSend: (message) => ipcRenderer.send('lsp:send', message),
+  lspStart: (server) => ipcRenderer.invoke('lsp:start', server),
+  lspStop: (server) => ipcRenderer.invoke('lsp:stop', server),
+  lspSend: (server, message) => ipcRenderer.send('lsp:send', server, message),
   onLspMessage: (listener) => {
-    const handler = (_e: Electron.IpcRendererEvent, message: unknown) => listener(message)
+    const handler = (_e: Electron.IpcRendererEvent, server: string, message: unknown) => listener(server, message)
     ipcRenderer.on('lsp:message', handler)
     return () => ipcRenderer.removeListener('lsp:message', handler)
   },
   onLspExit: (listener) => {
-    const handler = (_e: Electron.IpcRendererEvent, code: number | null) => listener(code)
+    const handler = (_e: Electron.IpcRendererEvent, server: string, code: number | null) => listener(server, code)
     ipcRenderer.on('lsp:exit', handler)
     return () => ipcRenderer.removeListener('lsp:exit', handler)
   },

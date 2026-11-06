@@ -272,6 +272,7 @@ body { display: flex; flex-direction: column; }
 .tok-string { color: var(--tok-string); }
 .tok-number { color: var(--tok-number); }
 .tok-comment { color: var(--tok-comment); font-style: italic; }
+.tok-property { color: var(--tok-function); }
 
 /* ---- tabs ---- */
 .tabs {

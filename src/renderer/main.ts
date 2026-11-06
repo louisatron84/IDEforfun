@@ -15,7 +15,9 @@ import { SettingsView } from './settingsView'
 import { Palette } from './palette'
 import { SearchView } from './searchView'
 import { LspClient } from './lsp/client'
-import { PythonLanguage, type Diagnostic } from './lsp/python'
+import { LspServer, type Diagnostic, type ServerConfig } from './lsp/server'
+import { LanguageServices } from './lsp/services'
+import { pyright } from './lsp/pyright'
 import { ProblemsView } from './problemsView'
 import { Tooltip } from './tooltip'
 import { BreakpointStore, breakpointStyle } from './debug/breakpoints'
@@ -74,7 +76,7 @@ const workspace: Workspace = new Workspace(window.api, (doc: Doc) => {
 const editorOptions = (index: number): EditorOptions => ({
   onEdit: (doc) => {
     workspace.notifyChanged()
-    python.docChanged(doc)
+    languages.docChanged(doc)
     completion.onEdit()
   },
   onKeyDown: (e) => completion.handleKey(e),
@@ -163,7 +165,7 @@ const tree = new FileTree($('file-tree'), {
   renamed: (oldPath, newPath) => {
     // The language server knows files by path: close the old ones, reopen under the new name.
     const moved = workspace.docsUnder(oldPath)
-    python.syncDocs(workspace.docs.filter((d) => !moved.includes(d)))
+    languages.syncDocs(workspace.docs.filter((d) => !moved.includes(d)))
     workspace.pathRenamed(oldPath, newPath)
     breakpoints.pathRenamed(oldPath, newPath)
     void refreshGit()
@@ -370,7 +372,7 @@ async function saveAllDirty(report: (message: string) => void): Promise<boolean>
   for (const doc of workspace.docs.filter((d) => d.dirty)) {
     try {
       await workspace.save(doc)
-      python.didSave(doc)
+      languages.didSave(doc)
     } catch (err) {
       report(`couldn't save ${doc.name} (${String(err)})`)
       return false
@@ -519,11 +521,23 @@ window.api.onDebugExit((info) => {
   session.adapterExited()
 })
 
-// ---------- Python language server (Pyright) ----------
+// ---------- Language servers (Pyright for Python; more can run side by side) ----------
 
-const lsp = new LspClient((m) => window.api.lspSend(m))
-window.api.onLspMessage((m) => lsp.handleMessage(m))
-const python = new PythonLanguage(lsp)
+/** Every language server the IDE runs, with the settings it's started with for a project. */
+const serverSetups: { config: ServerConfig; settings: (root: string) => Promise<Record<string, unknown>> }[] = [
+  {
+    config: pyright,
+    // The interpreter whose packages it should see: the configured one, or the project's venv.
+    settings: async (root) => ({ pythonPath: await window.api.resolvePythonForAnalysis(root, settings.pythonPath || undefined) })
+  }
+]
+const lspClients = new Map<string, LspClient>()
+const languages = new LanguageServices(serverSetups.map(({ config }) => {
+  const client = new LspClient((m) => window.api.lspSend(config.id, m))
+  lspClients.set(config.id, client)
+  return new LspServer(client, config)
+}))
+window.api.onLspMessage((id, m) => lspClients.get(id)?.handleMessage(m))
 const problems = new ProblemsView(
   (path, d) => void openFile(path).then((doc) => {
     if (doc) editor.select(d.start, d.end)
@@ -540,41 +554,53 @@ panel.addView('problems', 'Problems', problems.body, problems.actions)
 function showDiagnostics(): void {
   for (const ed of editors) {
     const doc = ed.currentDoc
-    ed.setSquiggles(doc ? python.diagnosticsFor(doc.path) : [])
+    ed.setSquiggles(doc ? languages.diagnosticsFor(doc.path) : [])
   }
-  const count = problems.render(python.allDiagnostics())
+  const count = problems.render(languages.allDiagnostics())
   panel.setTitle('problems', count ? `Problems (${count})` : 'Problems')
 }
-python.onDiagnostics(showDiagnostics)
-const completion = new Completion(editor, python, () => workspace.active)
+languages.onDiagnostics(showDiagnostics)
+const completion = new Completion(editor, languages, () => workspace.active)
 
-let lspRestarts = 0
-async function startLanguageServer(): Promise<void> {
-  if (!rootFolder) return
-  lsp.dispose('Python language server restarting')
-  python.stopped()
-  problems.setStatus('Starting Python language server (Pyright)…')
+/** Crash restarts per server since the folder was opened (to not loop forever). */
+const lspRestarts = new Map<string, number>()
+async function startLanguageServer(id: string): Promise<void> {
+  const setup = serverSetups.find((s) => s.config.id === id)
+  const server = languages.server(id)
+  if (!rootFolder || !setup || !server) return
+  const name = setup.config.name
+  lspClients.get(id)?.dispose(`${name} restarting`)
+  server.stopped()
+  problems.setStatus(`Starting ${name}…`)
   showDiagnostics()
   try {
-    await window.api.lspStart()
-    const py = await window.api.resolvePythonForAnalysis(rootFolder, settings.pythonPath || undefined)
-    await python.start(rootFolder, py)
-    python.syncDocs(workspace.docs.filter((d) => !d.large))
+    await window.api.lspStart(id)
+    await server.start(rootFolder, await setup.settings(rootFolder))
+    server.syncDocs(workspace.docs.filter((d) => !d.large))
     problems.setStatus('')
     outlineDoc = null
     refreshOutlineSoon(0)
   } catch (err) {
-    problems.setStatus(`Python language server failed to start: ${String(err)}`)
+    problems.setStatus(`${name} failed to start: ${String(err)}`)
   }
   showDiagnostics()
 }
-window.api.onLspExit((code) => {
-  lsp.dispose('Python language server stopped')
-  python.stopped()
+/** (Re)start every language server, e.g. for a newly opened folder. */
+function startLanguageServers(): void {
+  lspRestarts.clear()
+  for (const { config } of serverSetups) void startLanguageServer(config.id)
+}
+window.api.onLspExit((id, code) => {
+  const setup = serverSetups.find((s) => s.config.id === id)
+  if (!setup) return
+  lspClients.get(id)?.dispose(`${setup.config.name} stopped`)
+  languages.server(id)?.stopped()
   // Restart after an unexpected crash, but don't loop forever.
-  if (lspRestarts++ < 3) void startLanguageServer()
+  const n = lspRestarts.get(id) ?? 0
+  lspRestarts.set(id, n + 1)
+  if (n < 3) void startLanguageServer(id)
   else {
-    problems.setStatus(`Python language server stopped (exit code ${code}). Reopen the folder to retry.`)
+    problems.setStatus(`${setup.config.name} stopped (exit code ${code}). Reopen the folder to retry.`)
     showDiagnostics()
   }
 })
@@ -607,7 +633,7 @@ function onEditorHover(pos: { line: number; col: number } | null, e: MouseEvent)
     hideHover()
     return
   }
-  const hits = python.diagnosticsFor(doc.path).filter((d) => d.severity <= 3 && covers(d, pos))
+  const hits = languages.diagnosticsFor(doc.path).filter((d) => d.severity <= 3 && covers(d, pos))
   // Hovering anywhere on the same word (or same set of errors) keeps the same tooltip.
   const lineText = doc.buffer.getLine(pos.line)
   const onWord = isWordChar(lineText[pos.col])
@@ -634,7 +660,7 @@ function onEditorHover(pos: { line: number; col: number } | null, e: MouseEvent)
     }
     if (onWord) {
       try {
-        const md = await python.hover(doc, pos)
+        const md = await languages.hover(doc, pos)
         if (md) sections.push(...hoverSections(md))
       } catch {
         // server busy: show what we have
@@ -675,7 +701,7 @@ async function goToDefinition(pos = editor.getCursor()): Promise<void> {
   hideHover()
   let target
   try {
-    target = await python.definition(doc, pos)
+    target = await languages.definition(doc, pos)
   } catch {
     return
   }
@@ -719,8 +745,8 @@ async function findReferences(): Promise<void> {
   const doc = workspace.active
   if (!doc) return
   panel.show('references')
-  if (!python.knows(doc)) {
-    referencesView.message(doc.large ? 'This file is too large for the Python language server.' : 'Find references works in Python files, once the language server has started.')
+  if (!languages.knows(doc)) {
+    referencesView.message(noLanguageServer(doc, 'Find references'))
     return
   }
   const pos = cursorOnWord()
@@ -728,7 +754,7 @@ async function findReferences(): Promise<void> {
   referencesView.message(`Looking for references to "${name}"…`)
   let locations: Location[] = []
   try {
-    locations = await python.references(doc, pos)
+    locations = await languages.references(doc, pos)
   } catch (err) {
     referencesView.message(`Couldn't find references: ${String(err)}`)
     return
@@ -766,9 +792,9 @@ async function showLocation(loc: Location): Promise<void> {
 async function findImplementations(followed = false): Promise<void> {
   const doc = workspace.active
   if (!doc) return
-  if (!python.knows(doc)) return statusNote('Go to Implementations works in Python files, once the language server has started.')
+  if (!languages.knows(doc)) return statusNote(noLanguageServer(doc, 'Go to Implementations'))
   const pos = cursorOnWord()
-  const chain = symbolPathAt(await python.symbols(doc).catch(() => [] as DocSymbol[]), pos)
+  const chain = symbolPathAt(await languages.symbols(doc).catch(() => [] as DocSymbol[]), pos)
   const inner = chain[chain.length - 1]
   const parent = chain[chain.length - 2]
   let cls: DocSymbol | null = null
@@ -781,7 +807,7 @@ async function findImplementations(followed = false): Promise<void> {
   if (!cls) {
     // A class or method used here: look from its definition.
     if (!followed) {
-      const def = await python.definition(doc, pos).catch(() => null)
+      const def = await languages.definition(doc, pos).catch(() => null)
       if (def && (!samePath(def.path, doc.path) || def.start.line !== pos.line)) {
         const target = await openFile(def.path)
         if (target) {
@@ -797,7 +823,7 @@ async function findImplementations(followed = false): Promise<void> {
   panel.show('references')
   referencesView.message(`Looking for ${method ? `overrides of ${title}` : `subclasses of ${title}`}…`)
   const reader = makeLineReader()
-  const refs = await python.references(doc, cls.nameStart).catch(() => [] as Location[])
+  const refs = await languages.references(doc, cls.nameStart).catch(() => [] as Location[])
   const found: Location[] = []
   for (const ref of refs) {
     const text = await reader.line(ref.path, ref.start.line)
@@ -816,22 +842,31 @@ async function findImplementations(followed = false): Promise<void> {
 
 async function goToTypeDefinition(): Promise<void> {
   const doc = workspace.active
-  if (!doc || !python.knows(doc)) return
-  const locs = await python.typeDefinition(doc, cursorOnWord()).catch(() => [] as Location[])
+  if (!doc || !languages.knows(doc)) return
+  const locs = await languages.typeDefinition(doc, cursorOnWord()).catch(() => [] as Location[])
   if (!locs.length) return statusNote('No type definition found here.')
   navigationStack.push({ path: doc.path, ...editor.getCursor() })
   await showLocation(locs[0])
 }
 
+/** Why `feature` isn't available for this doc: too large, no server for its language, or not started yet. */
+function noLanguageServer(doc: Doc, feature: string): string {
+  const lang = doc.mode.language
+  if (!lang.server) return `${feature} needs a language server, and there isn't one for ${lang.name} files yet.`
+  if (doc.large) return 'This file is too large for the language server (it is skipped to stay responsive).'
+  const name = serverSetups.find((s) => s.config.id === lang.server)?.config.name ?? 'The language server'
+  return `${feature} will work once ${name} has started (it starts when a folder is opened).`
+}
+
 /** Ctrl+T: find a class / function anywhere in the project by name. */
 function goToProjectSymbol(): void {
-  if (!python.isStarted) {
-    palette.choose('The Python language server is not running (open a folder first).', [])
+  if (!languages.isStarted) {
+    palette.choose('No language server is running (open a folder first).', [])
     return
   }
   const rel = (p: string) => (rootFolder && isInside(p, rootFolder) ? p.slice(rootFolder.length).replace(/^[\\/]+/, '') : p)
   palette.search('Go to a class, function or variable anywhere in the project', async (query) => {
-    const found = await python.workspaceSymbols(query).catch(() => [])
+    const found = await languages.workspaceSymbols(query).catch(() => [])
     // Project files first (the standard library can match too).
     const inProject = (p: string) => !!rootFolder && isInside(p, rootFolder) && !/[\\/](\.?venv|site-packages)[\\/]/.test(p)
     found.sort((a, b) => Number(inProject(b.location.path)) - Number(inProject(a.location.path)))
@@ -845,7 +880,7 @@ function goToProjectSymbol(): void {
 }
 
 const callsView = new CallHierarchyView({
-  calls: (item, direction) => python.calls(item, direction),
+  calls: (item, direction) => languages.calls(item, direction),
   open: (path, pos) => void openFile(path).then((doc) => {
     if (!doc) return
     editor.goTo(pos.line, pos.col)
@@ -859,8 +894,8 @@ async function showCallHierarchy(): Promise<void> {
   const doc = workspace.active
   if (!doc) return
   panel.show('calls')
-  if (!python.knows(doc)) return callsView.message('Call hierarchy works in Python files, once the language server has started.')
-  const items = await python.prepareCallHierarchy(doc, cursorOnWord()).catch(() => [])
+  if (!languages.knows(doc)) return callsView.message(noLanguageServer(doc, 'Call hierarchy'))
+  const items = await languages.prepareCallHierarchy(doc, cursorOnWord()).catch(() => [])
   if (!items.length) return callsView.message('Put the cursor on a function or method name (its definition or a call to it).')
   callsView.show(items[0])
 }
@@ -881,7 +916,7 @@ function clearOccurrences(): void {
 /** Called on every cursor move: highlight the other uses of the name under the cursor. */
 function updateOccurrences(): void {
   const doc = workspace.active
-  if (!doc || !python.knows(doc) || editor.getSelectedText()) return clearOccurrences()
+  if (!doc || !languages.knows(doc) || editor.getSelectedText()) return clearOccurrences()
   const pos = editor.getCursor()
   const line = doc.buffer.getLine(pos.line)
   let start = pos.col
@@ -894,7 +929,7 @@ function updateOccurrences(): void {
   occurrenceKey = key
   const gen = occurrenceGeneration
   occurrenceTimer = window.setTimeout(() => {
-    void python.highlights(doc, { line: pos.line, col: start }).then((list) => {
+    void languages.highlights(doc, { line: pos.line, col: start }).then((list) => {
       if (gen !== occurrenceGeneration || workspace.active !== doc) return
       // Just the one under the cursor isn't worth highlighting.
       editor.setOccurrences(list.length > 1 ? list : [])
@@ -914,20 +949,20 @@ function applyEditsToDoc(doc: Doc, edits: TextEdit[]): void {
     }
     return at
   })
-  python.docChanged(doc)
+  languages.docChanged(doc)
 }
 
 async function renameSymbol(): Promise<void> {
   const doc = workspace.active
   if (!doc) return
-  if (!python.knows(doc)) {
-    alert('Rename works in Python files, once the language server has started.')
+  if (!languages.knows(doc)) {
+    alert(noLanguageServer(doc, 'Rename'))
     return
   }
   const pos = cursorOnWord()
-  let prep: Awaited<ReturnType<typeof python.prepareRename>> = null
+  let prep: Awaited<ReturnType<typeof languages.prepareRename>> = null
   try {
-    prep = await python.prepareRename(doc, pos)
+    prep = await languages.prepareRename(doc, pos)
   } catch { /* treated as "can't rename" */ }
   if (!prep) {
     alert("That can't be renamed. Put the cursor on a name defined in your code (a variable, function, class, parameter...).")
@@ -945,7 +980,7 @@ async function doRename(doc: Doc, pos: Position, oldName: string, newName: strin
   }
   let edits
   try {
-    edits = await python.rename(doc, pos, newName)
+    edits = await languages.rename(doc, pos, newName)
   } catch (err) {
     alert(`Rename failed: ${err instanceof Error ? err.message : String(err)}`)
     return
@@ -981,7 +1016,7 @@ async function doRename(doc: Doc, pos: Position, oldName: string, newName: strin
       failed.push(`${rel(path)} (${err instanceof Error ? err.message : String(err)})`)
     }
   }
-  python.filesChangedOnDisk(closed)
+  languages.filesChangedOnDisk(closed)
   workspace.notifyChanged()
   if (closed.length) void refreshGit()
   if (failed.length) alert(`These files couldn't be changed, so the rename is incomplete there:\n${failed.join('\n')}`)
@@ -1007,15 +1042,12 @@ async function refreshOutline(): Promise<void> {
   if ($('outline-panel').hidden) return
   const doc = workspace.active
   if (!doc) return outline.set([], 'Open a Python file to see its outline.')
-  if (!/\.pyi?$/i.test(doc.path)) return outline.set([], 'The outline is for Python files.')
-  if (!python.knows(doc)) {
-    return outline.set([], doc.large ? 'This file is too large for the Python language server.' : 'Waiting for the Python language server…')
-  }
+  if (!languages.knows(doc)) return outline.set([], noLanguageServer(doc, 'The outline'))
   if (doc === outlineDoc && doc.version === outlineVersion) return
   const gen = ++outlineGeneration
   let symbols: DocSymbol[] = []
   try {
-    symbols = await python.symbols(doc)
+    symbols = await languages.symbols(doc)
   } catch {
     return
   }
@@ -1030,11 +1062,11 @@ async function refreshOutline(): Promise<void> {
 async function goToSymbol(): Promise<void> {
   const doc = workspace.active
   if (!doc) return
-  if (!python.knows(doc)) {
-    palette.choose('Go to symbol works in Python files, once the language server has started.', [])
+  if (!languages.knows(doc)) {
+    palette.choose(noLanguageServer(doc, 'Go to symbol'), [])
     return
   }
-  const symbols = await python.symbols(doc).catch(() => [] as DocSymbol[])
+  const symbols = await languages.symbols(doc).catch(() => [] as DocSymbol[])
   const items: { label: string; detail?: string; hint?: string; run: () => void }[] = []
   const walk = (list: DocSymbol[], parent: string) => {
     for (const s of list) {
@@ -1081,7 +1113,8 @@ function applySettings(s: Settings, restartLsp = true): void {
   const pythonChanged = s.pythonPath !== settings.pythonPath
   settings = s
   if (pythonChanged && rootFolder && restartLsp) {
-    void startLanguageServer()
+    lspRestarts.delete(pyright.id)
+    void startLanguageServer(pyright.id)
     refreshPythonEnv()
   }
   const root = document.documentElement
@@ -1178,7 +1211,7 @@ workspace.subscribe(() => {
   updateLineMarkers()
   findBar.refresh()
   completion.syncDoc()
-  python.syncDocs(workspace.docs.filter((d) => !d.large))
+  languages.syncDocs(workspace.docs.filter((d) => !d.large))
   backups.sync(workspace.docs)
   saveStateSoon()
   scheduleStatus()
@@ -1218,7 +1251,7 @@ async function saveActive(): Promise<boolean> {
   if (settings.formatOnSave && /\.pyi?$/i.test(doc.path)) await codeTools.format({ doc, quiet: true })
   try {
     await workspace.save(doc)
-    python.didSave(doc)
+    languages.didSave(doc)
     if (shortcuts.path && samePath(doc.path, shortcuts.path)) void shortcuts.load()
     if (rootFolder && projectSettingsPath && samePath(doc.path, projectSettingsPath)) void loadProjectSettings(rootFolder)
     if (rootFolder && runFilePath && samePath(doc.path, runFilePath)) void loadRunFile(rootFolder)
@@ -1277,8 +1310,7 @@ async function openFolderPath(folder: string): Promise<void> {
     await tree.setRoot(folder)
     workspace.notifyChanged()
     void refreshGit()
-    lspRestarts = 0
-    void startLanguageServer()
+    startLanguageServers()
     refreshPythonEnv()
     await restoreLayout(folder)
   } finally {
@@ -1422,7 +1454,7 @@ async function offerRestore(folder: string): Promise<void> {
     }
     doc.eol = b.eol
     doc.encoding = b.encoding
-    python.docChanged(doc)
+    languages.docChanged(doc)
   }
   workspace.notifyChanged()
 }
@@ -1757,7 +1789,7 @@ commands.register({ id: 'panel.output', title: 'Show Output', run: () => panel.s
 commands.register({ id: 'nav.definition', title: 'Go to Definition', keys: 'F12', when: hasDoc, run: () => void goToDefinition(cursorOnWord()) })
 commands.register({ id: 'nav.back', title: 'Go Back', keys: 'Alt+ArrowLeft', run: () => void goBack() })
 commands.register({ id: 'panel.problems', title: 'Show Problems', keys: 'Ctrl+Shift+M', run: () => panel.show('problems') })
-commands.register({ id: 'python.restartServer', title: 'Restart Python Language Server', when: () => rootFolder !== null, run: () => { lspRestarts = 0; void startLanguageServer() } })
+commands.register({ id: 'python.restartServer', title: 'Restart Python Language Server', when: () => rootFolder !== null, run: () => { lspRestarts.delete(pyright.id); void startLanguageServer(pyright.id) } })
 commands.register({
   id: 'terminal.toggle', title: 'Toggle Terminal', keys: 'Ctrl+`',
   run: () => {
@@ -2315,15 +2347,15 @@ async function applyWorkspaceEdits(edits: FileEdits): Promise<boolean> {
       failed.push(`${path} (${err instanceof Error ? err.message : String(err)})`)
     }
   }
-  python.filesChangedOnDisk(onDisk)
+  languages.filesChangedOnDisk(onDisk)
   workspace.notifyChanged()
   if (failed.length) alert(`These files couldn't be changed:\n${failed.join('\n')}`)
   return failed.length === 0
 }
-python.applyEditHandler = applyWorkspaceEdits
+languages.applyEditHandler = applyWorkspaceEdits
 
 const codeTools = new CodeTools({
-  python,
+  languages,
   palette,
   root: () => rootFolder,
   interpreter: () => pyEnv.current?.path ?? null,
@@ -2385,12 +2417,12 @@ function updateStatus(): void {
     set('sb-indent', `Spaces: ${settings.tabSize}`)
     set('sb-encoding', encodingLabel(doc.encoding))
     set('sb-eol', doc.eol)
-    const lang = doc.path.toLowerCase().endsWith('.py') ? 'Python' : 'Plain Text'
-    set('sb-lang', doc.large ? `${lang} (large file: no error checking)` : lang)
+    const lang = doc.mode.language
+    set('sb-lang', doc.large && lang.server ? `${lang.name} (large file: no error checking)` : lang.name)
   } else {
     for (const id of ['sb-cursor', 'sb-indent', 'sb-encoding', 'sb-eol', 'sb-lang']) set(id, '')
   }
-  const all = python.allDiagnostics()
+  const all = languages.allDiagnostics()
   const errors = all.reduce((n, [, list]) => n + list.filter((d) => d.severity === 1).length, 0)
   const warnings = all.reduce((n, [, list]) => n + list.filter((d) => d.severity === 2).length, 0)
   const problemsEl = $('sb-problems')
@@ -2479,7 +2511,7 @@ $('sb-problems').addEventListener('click', () => panel.show('problems'))
 $('sb-run').addEventListener('click', () => commands.run('run.selectConfig'))
 $('sb-python').addEventListener('click', () => commands.run('python.selectInterpreter'))
 $('sb-deps').addEventListener('click', () => pyEnv.showMissing())
-python.onDiagnostics(scheduleStatus)
+languages.onDiagnostics(scheduleStatus)
 updateStatus()
 
 commands.register({

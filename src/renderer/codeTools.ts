@@ -10,14 +10,15 @@
  */
 import type { Doc } from './editor/document'
 import type { Position } from './editor/textBuffer'
-import type { CodeAction, Diagnostic, PythonLanguage } from './lsp/python'
+import type { CodeAction, Diagnostic } from './lsp/server'
+import type { LanguageServices } from './lsp/services'
 import type { FileEdits, TextEdit } from './lsp/navigation'
 import type { Palette } from './palette'
 import type { Settings } from '../shared/settings'
 import { lineDiff, parseRuffJson } from '../shared/lint'
 
 export interface CodeToolsHooks {
-  python: PythonLanguage
+  languages: LanguageServices
   palette: Palette
   root(): string | null
   /** The project's interpreter (to find Ruff / Black in it), if known. */
@@ -69,7 +70,7 @@ export class CodeTools {
     // Closed files, or linting turned off: remove their warnings.
     for (const path of [...this.shown]) {
       if (!on || !open.has(path)) {
-        this.hooks.python.clearExternalDiagnostics('ruff', path)
+        this.hooks.languages.clearExternalDiagnostics('ruff', path)
         this.shown.delete(path)
       }
     }
@@ -117,7 +118,7 @@ export class CodeTools {
         return d
       })
     if (!this.hooks.settings().lintWithRuff) return
-    this.hooks.python.setExternalDiagnostics('ruff', doc.path, list)
+    this.hooks.languages.setExternalDiagnostics('ruff', doc.path, list)
     if (list.length) this.shown.add(doc.path)
     else this.shown.delete(doc.path)
   }
@@ -125,7 +126,7 @@ export class CodeTools {
   /** Show the 💡 when the cursor's line has a Ruff fix. */
   updateLightbulb(doc: Doc | null, line: number | null): void {
     if (!doc || line === null) return this.hooks.setLightbulb(null)
-    const has = this.hooks.python.diagnosticsFor(doc.path).some((d) => d.fix && d.start.line <= line && line <= d.end.line)
+    const has = this.hooks.languages.diagnosticsFor(doc.path).some((d) => d.fix && d.start.line <= line && line <= d.end.line)
     this.hooks.setLightbulb(has ? line : null)
   }
 
@@ -135,10 +136,10 @@ export class CodeTools {
   async quickFix(): Promise<void> {
     const doc = this.hooks.active()
     if (!doc) return
-    const { palette, python } = this.hooks
+    const { palette, languages } = this.hooks
     const sel = this.hooks.selection()
     const line = sel.start.line
-    const here = python.diagnosticsFor(doc.path).filter((d) => d.start.line <= sel.end.line && line <= d.end.line)
+    const here = languages.diagnosticsFor(doc.path).filter((d) => d.start.line <= sel.end.line && line <= d.end.line)
     type Item = { label: string; detail?: string; hint?: string; run: () => void }
     const items: Item[] = []
 
@@ -158,19 +159,19 @@ export class CodeTools {
     }
     // The language server's actions (quick fixes, refactorings).
     let actions: CodeAction[] = []
-    if (python.knows(doc)) {
-      actions = await python.codeActions(doc, sel.start, sel.end, here.filter((d) => d.source !== 'Ruff')).catch(() => [])
+    if (languages.knows(doc)) {
+      actions = await languages.codeActions(doc, sel.start, sel.end, here.filter((d) => d.source !== 'Ruff')).catch(() => [])
     }
     for (const a of actions.sort((x, y) => Number(y.preferred) - Number(x.preferred))) {
       if (a.kind.startsWith('source.organizeImports')) continue // offered below
-      items.push({ label: a.title, hint: 'Pyright', run: () => void this.runAction(a) })
+      items.push({ label: a.title, hint: (a.server && languages.server(a.server)?.config.name) || '', run: () => void this.runAction(a) })
     }
     // Ignore a Ruff rule on this line.
     const ruffCodes = [...new Set(here.filter((d) => d.source === 'Ruff' && d.code).map((d) => String(d.code)))]
     for (const code of ruffCodes) {
       items.push({ label: `Ignore ${code} on this line`, detail: `adds  # noqa: ${code}`, run: () => this.addNoqa(doc, here.find((d) => d.code === code)!.start.line, code) })
     }
-    if (python.diagnosticsFor(doc.path).some((d) => d.fix?.safe)) {
+    if (languages.diagnosticsFor(doc.path).some((d) => d.fix?.safe)) {
       items.push({ label: 'Fix all auto-fixable problems in this file', detail: 'ruff check --fix', run: () => void this.fixAll() })
     }
     items.push(
@@ -187,7 +188,7 @@ export class CodeTools {
   private async runAction(a: CodeAction): Promise<void> {
     try {
       if (a.edit?.size) await this.hooks.applyFileEdits(a.edit)
-      if (a.command) await this.hooks.python.executeCommand(a.command)
+      if (a.command) await this.hooks.languages.executeCommand(a.command, a.server)
     } catch (err) {
       this.hooks.report(`"${a.title}" failed: ${err instanceof Error ? err.message : String(err)}`)
     }
@@ -286,9 +287,9 @@ export class CodeTools {
       return
     }
     // No Ruff: Pyright can sort imports (but not remove unused ones).
-    if (this.hooks.python.knows(doc)) {
+    if (this.hooks.languages.knows(doc)) {
       const end = doc.buffer.clamp({ line: Infinity, col: Infinity })
-      const actions = await this.hooks.python.codeActions(doc, { line: 0, col: 0 }, end, [], ['source.organizeImports']).catch(() => [])
+      const actions = await this.hooks.languages.codeActions(doc, { line: 0, col: 0 }, end, [], ['source.organizeImports']).catch(() => [])
       if (actions.length) {
         await this.runAction(actions[0])
         return

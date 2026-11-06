@@ -7,7 +7,7 @@
  */
 import type { Editor } from './editor/editor'
 import type { Doc } from './editor/document'
-import type { PythonLanguage } from './lsp/python'
+import type { LanguageServices } from './lsp/services'
 import { completionEdit, filterCompletions, kindIcon, wordStartAt, type CompletionItem } from './lsp/completionLogic'
 
 const MAX_SHOWN = 200
@@ -31,7 +31,7 @@ export class Completion {
 
   constructor(
     private readonly editor: Editor,
-    private readonly python: PythonLanguage,
+    private readonly languages: LanguageServices,
     private readonly activeDoc: () => Doc | null
   ) {
     this.root = document.createElement('div')
@@ -133,7 +133,7 @@ export class Completion {
     const gen = ++this.generation
     let result
     try {
-      result = await this.python.completion(doc, pos, trigger)
+      result = await this.languages.completion(doc, pos, trigger)
     } catch {
       return // server busy/restarting: just don't show anything
     }
@@ -253,7 +253,7 @@ export class Completion {
     if (item.detail || item.documentation) return
     const gen = this.generation
     this.resolveTimer = window.setTimeout(() => {
-      void this.python.resolveCompletion(item).then((full) => {
+      void this.languages.resolveCompletion(item).then((full) => {
         if (gen !== this.generation || this.shown[this.selected] !== item) return
         Object.assign(item, { detail: full.detail, documentation: full.documentation })
         render(item)

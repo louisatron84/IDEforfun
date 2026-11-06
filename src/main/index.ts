@@ -20,7 +20,7 @@ import type { Encoding } from '../shared/encoding'
 import { searchProject } from './search'
 import { gitStatus } from './git'
 import * as gitOps from './gitOps'
-import { LanguageServer, resolvePythonForAnalysis } from './languageServer'
+import { LanguageServers, resolvePythonForAnalysis } from './languageServer'
 import type { FindOptions } from '../shared/regex'
 import { PythonRunner } from './python'
 import { Terminals } from './terminals'
@@ -32,7 +32,7 @@ if (process.env['IDEFORFUN_USER_DATA']) app.setPath('userData', process.env['IDE
 
 const runner = new PythonRunner()
 const terminals = new Terminals()
-const languageServer = new LanguageServer()
+const languageServers = new LanguageServers()
 const debugAdapter = new DebugAdapter()
 const backups = new Backups(() => join(app.getPath('userData'), 'backups'))
 const userState = new UserState(() => app.getPath('userData'))
@@ -60,12 +60,12 @@ function createWindow(): void {
   win.webContents.on('did-start-loading', () => {
     testRunner.stop()
     terminals.killAll()
-    languageServer.stop()
+    languageServers.stop()
     debugAdapter.stop()
   })
   win.on('closed', () => {
     terminals.killAll()
-    languageServer.stop()
+    languageServers.stop()
     debugAdapter.stop()
   })
 
@@ -196,10 +196,11 @@ ipcMain.handle('fs:rename', (_event, path: string, newName: string) => renameEnt
 ipcMain.handle('fs:trash', (_event, path: string) => shell.trashItem(path))
 ipcMain.handle('fs:delete', (_event, path: string) => rm(path, { recursive: true }))
 ipcMain.handle('fs:listFiles', (_event, root: string) => listFiles(root))
-ipcMain.handle('lsp:start', (event) => {
-  languageServer.start(event.sender)
+ipcMain.handle('lsp:start', (event, id: string) => {
+  languageServers.start(id, event.sender)
 })
-ipcMain.on('lsp:send', (_event, message: unknown) => languageServer.send(message))
+ipcMain.handle('lsp:stop', (_event, id: string) => languageServers.stop(id))
+ipcMain.on('lsp:send', (_event, id: string, message: unknown) => languageServers.send(id, message))
 ipcMain.handle('lsp:resolvePython', (_event, root: string, configured?: string) =>
   resolvePythonForAnalysis(root, configured)
 )
@@ -351,7 +352,7 @@ app.on('before-quit', () => {
   runner.stop()
   debugAdapter.stop()
   terminals.killAll()
-  languageServer.stop()
+  languageServers.stop()
 })
 
 app.whenReady().then(() => {

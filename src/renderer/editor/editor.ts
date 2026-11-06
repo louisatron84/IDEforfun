@@ -391,6 +391,8 @@ export class Editor {
   toggleComment(): void {
     if (!this.hasDoc) return
     const b = this.buffer
+    const marker = this.doc.mode.lineComment
+    if (!marker) return
     // Several cursors on one line must toggle it once, not once per cursor.
     const done = new Set<number>()
     this.editMulti('other', (s) => {
@@ -399,7 +401,7 @@ export class Editor {
       for (let l = first; l <= last; l++) if (!done.has(l)) fresh = true
       if (!fresh) return s
       for (let l = first; l <= last; l++) done.add(l)
-      return pairs.toggleComment(b, s)
+      return marker ? pairs.toggleComment(b, s, marker) : s
     })
   }
 
@@ -588,7 +590,7 @@ export class Editor {
         })
         return true
       case 'Enter':
-        this.editMulti('newline', (s) => at((sel.isEmpty(s) && pairs.newlineBetweenBrackets(b, s.head, tab)) || cmd.newline(b, replace(s), tab)))
+        this.editMulti('newline', (s) => at((sel.isEmpty(s) && pairs.newlineBetweenBrackets(b, s.head, tab)) || cmd.newline(b, replace(s), tab, this.doc.mode.indentAfter)))
         return true
       case 'Tab': {
         if (ctrl) return false
@@ -743,7 +745,7 @@ export class Editor {
         break
       case 'Enter':
         kind = 'newline'
-        edit = () => (!hadSelection && pairs.newlineBetweenBrackets(b, pos, this._tabSize)) || cmd.newline(b, replaceSelection(), this._tabSize)
+        edit = () => (!hadSelection && pairs.newlineBetweenBrackets(b, pos, this._tabSize)) || cmd.newline(b, replaceSelection(), this._tabSize, this.doc.mode.indentAfter)
         break
       case 'Tab': {
         if (ctrl) return // leave Ctrl+Tab for future tab switching
@@ -780,7 +782,7 @@ export class Editor {
       const lines = text.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n')
       const perCursor = kind === 'paste' && lines.length === this.cursorCount
       this.editMulti(kind, (s, i) => {
-        const paired = kind === 'typing' && text.length === 1 && this.autoClose ? pairs.typeChar(this.buffer, s, text) : null
+        const paired = kind === 'typing' && text.length === 1 && this.autoClose ? pairs.typeChar(this.buffer, s, text, this.doc.mode.stringPrefixes) : null
         if (paired) return paired
         const at = sel.isEmpty(s) ? s.head : sel.deleteSelection(this.buffer, s)
         const p = this.buffer.insert(at, perCursor ? lines[i] : text)
@@ -795,7 +797,7 @@ export class Editor {
     let anchor: Position | null = null
     const next = this.history.transact(kind, this.cursor, () => {
       // Brackets and quotes: auto-close, type over closers, wrap a selection.
-      const paired = kind === 'typing' && text.length === 1 && this.autoClose ? pairs.typeChar(this.buffer, s, text) : null
+      const paired = kind === 'typing' && text.length === 1 && this.autoClose ? pairs.typeChar(this.buffer, s, text, this.doc.mode.stringPrefixes) : null
       if (paired) {
         anchor = paired.anchor
         return paired.head
