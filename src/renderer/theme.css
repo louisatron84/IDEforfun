@@ -41,6 +41,7 @@
   --heat-3: #ff6a1a;
   --heat-4: #e8431d;
   --on-heat: #1a0904;
+  --ember-shadow: #ff6a1a59;
 
   /* status */
   --err: #ff5a4e;
@@ -142,6 +143,7 @@
   --heat-3: #ffffff;
   --heat-4: #ffffff;
   --on-heat: #000000;
+  --ember-shadow: transparent;
 
   --err: #ff6b6b;
   --warn: #ffd75e;

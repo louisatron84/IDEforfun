@@ -84,3 +84,34 @@ describe('Forge fonts', () => {
     for (const name of ['@fontsource/space-grotesk', '@fontsource/jetbrains-mono']) expect(deps[name]).toMatch(/^\d+\.\d+\.\d+$/)
   })
 })
+
+describe('Smithy schematic shapes', () => {
+  const rules = cssRules(styles)
+
+  it('square corners: every border-radius is var(--radius) or 50%', () => {
+    for (const r of rules) {
+      for (const v of r.body.matchAll(/border-radius:\s*([^;]+)/g)) expect(['var(--radius)', '50%'], r.selector).toContain(v[1].trim())
+    }
+  })
+
+  it('gradients only on the wordmark and the graph grid, never on clickable things', () => {
+    const withGradient = rules.filter((r) => /gradient\(/.test(r.body)).map((r) => r.selector)
+    expect(withGradient.length).toBeGreaterThan(0)
+    // .editor .squiggle uses gradients only to draw the wavy error underline (one colour, not clickable).
+    for (const s of withGradient) expect(s).toMatch(/^(\.wordmark|\.graph-canvas|\.editor \.squiggle)$/)
+  })
+
+  it('reduced motion turns off transitions and animations', () => {
+    expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*transition: none !important[\s\S]*animation: none !important/)
+  })
+
+  it('primary buttons are solid, angled and use the heat colour', () => {
+    const btn = rules.find((r) => r.selector.split(',').map((s) => s.trim()).includes('#toolbar button'))!
+    expect(btn.body).toMatch(/background: var\(--heat-3\)/)
+    expect(btn.body).toMatch(/clip-path: polygon\(6px 0/)
+  })
+
+  it('the toolbar starts with the Forge wordmark', () => {
+    expect(read('src/renderer/index.html')).toMatch(/<header id="toolbar">\s*<span class="wordmark">Forge<\/span>/)
+  })
+})
