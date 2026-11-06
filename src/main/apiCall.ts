@@ -25,13 +25,37 @@ export async function testCall(
   if (!req) return fail('That request is not in the box.')
   const built = buildRequest(box, req, await processEnv(root))
   if ('error' in built) return fail(built.error)
-  if (!/^https?:$/.test(new URL(built.url).protocol)) return fail('Only http:// and https:// addresses can be called.')
+  let first: URL
+  try {
+    first = new URL(built.url)
+  } catch {
+    return fail(`That URL isn't valid: ${built.url}`)
+  }
+  if (!/^https?:$/.test(first.protocol)) return fail('Only http:// and https:// addresses can be called.')
 
   const max = opts.maxBytes ?? MAX_RESPONSE_BYTES
   const abort = new AbortController()
   const timer = setTimeout(() => abort.abort(), opts.timeoutMs ?? TIMEOUT_MS)
   try {
-    const res = await (opts.fetchImpl ?? fetch)(built.url, { method: built.method, headers: built.headers, body: built.body, signal: abort.signal, redirect: 'follow' })
+    // Redirects are followed by hand: the box's key is never sent to another site.
+    let url = first
+    let method = built.method
+    let body = built.body
+    let res = await (opts.fetchImpl ?? fetch)(url, { method, headers: built.headers, body, signal: abort.signal, redirect: 'manual' })
+    for (let hops = 0; res.status >= 300 && res.status < 400 && res.headers.get('location'); hops++) {
+      const next = new URL(res.headers.get('location')!, url)
+      if (hops >= 5) return fail('Too many redirects.')
+      if (next.origin !== first.origin && box.auth.kind !== 'none') {
+        return { ok: false, status: res.status, statusText: res.statusText, ms: Date.now() - started, error: `The API redirected to ${next.host}, another site, so Forge didn't send your key there. If that's right, use ${next.origin} as the URL.` }
+      }
+      if (res.status === 303 || ((res.status === 301 || res.status === 302) && method === 'POST')) {
+        method = 'GET'
+        body = undefined
+      }
+      await res.body?.cancel().catch(() => {})
+      url = next
+      res = await (opts.fetchImpl ?? fetch)(url, { method, headers: built.headers, body, signal: abort.signal, redirect: 'manual' })
+    }
     const chunks: Uint8Array[] = []
     let size = 0
     const reader = res.body?.getReader()

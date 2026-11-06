@@ -38,6 +38,12 @@ export function hasPytest(python: string): Promise<boolean> {
 
 let runCount = 0
 
+/** The command line for a test run (`discover` is a subcommand, so it comes before -v). */
+export function testArgs(req: { framework: string; ids: string[] }, xmlPath: string): string[] {
+  if (req.framework === 'pytest') return ['-m', 'pytest', '-o', 'junit_family=xunit1', `--junitxml=${xmlPath}`, '--color=no', '-q', ...req.ids]
+  return req.ids.length ? ['-m', 'unittest', '-v', ...req.ids] : ['-m', 'unittest', 'discover', '-v']
+}
+
 export class TestRunner {
   private child: ChildProcess | null = null
 
@@ -45,9 +51,7 @@ export class TestRunner {
   async run(sender: WebContents, req: TestRunRequest): Promise<TestRunResult> {
     this.stop()
     const xmlPath = join(tmpdir(), `ideforfun-pytest-${process.pid}-${++runCount}.xml`)
-    const args = req.framework === 'pytest'
-      ? ['-m', 'pytest', '-o', 'junit_family=xunit1', `--junitxml=${xmlPath}`, '--color=no', '-q', ...req.ids]
-      : ['-m', 'unittest', '-v', ...(req.ids.length ? req.ids : ['discover'])]
+    const args = testArgs(req, xmlPath)
     const started = Date.now()
     let output = ''
     const code = await new Promise<number | null | 'failed'>((resolve) => {

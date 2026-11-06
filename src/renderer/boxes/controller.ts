@@ -7,7 +7,8 @@
 import { moduleOfPath, newApiBox, normalizeBoxes, serializeBoxes, type ApiBox, type BoxesFile } from '../../shared/boxes'
 import { blockHash, generateBlock } from '../../shared/boxCode'
 import { blockState, findBlock, insertBlock, removeBlock, replaceBlock, withEol } from '../../shared/boxSync'
-import { csvPreview, defaultTicks, fieldTree, pickRecords, recordLists, rowsFor, type RecordList } from '../../shared/apiFields'
+import { csvPreview, defaultTicks, fieldKey, fieldTree, pickRecords, recordLists, rowsFor, type RecordList } from '../../shared/apiFields'
+import type { FieldNode } from '../../shared/boxes'
 import type { TestCallResult } from '../../shared/api'
 
 export type BoxState = 'unwritten' | 'ok' | 'edited' | 'missing' | 'broken' | 'detached'
@@ -16,11 +17,27 @@ export type BoxState = 'unwritten' | 'ok' | 'edited' | 'missing' | 'broken' | 'd
 export interface BoxFiles {
   /** The file's text (an open editor's text if it is open), or null if it doesn't exist. */
   read(rel: string): Promise<string | null>
-  /** Change the file (an open editor: one undoable edit, then saved). */
-  write(rel: string, text: string): Promise<void>
+  /** Change the file (an open editor: one undoable edit, then saved unless it had other unsaved edits). */
+  write(rel: string, text: string): Promise<'saved' | 'unsaved' | void>
   saveBoxes(file: BoxesFile): Promise<void>
   /** A short message in the status bar. */
   note(message: string): void
+}
+
+/** The box's code as it is now; the block Forge wrote one change earlier also counts as Forge's. */
+function codeState(text: string, box: ApiBox): 'ok' | 'edited' | 'missing' | 'broken' {
+  const s = blockState(text, box)
+  if (s !== 'edited' || !box.prevHash) return s
+  const found = findBlock(text, box.id)
+  return typeof found === 'object' && blockHash(found.text) === box.prevHash ? 'ok' : 'edited'
+}
+
+function leafKeys(tree: readonly FieldNode[], into = new Set<string>()): Set<string> {
+  for (const f of tree) {
+    if (f.kind === 'object') leafKeys(f.children, into)
+    else into.add(fieldKey(f.path))
+  }
+  return into
 }
 
 export class BoxController {
@@ -99,7 +116,12 @@ export class BoxController {
     if (!box || box.hash === null) return 'unwritten'
     if (box.detached) return 'detached'
     const text = await this.files.read(box.target.file)
-    return text === null ? 'missing' : blockState(text, box)
+    return text === null ? 'missing' : codeState(text, box)
+  }
+
+  /** Resolves once every change already asked for has been applied. */
+  idle(): Promise<void> {
+    return this.queue.then(() => {})
   }
 
   /** Commit a change made in Box settings: save it and, if the code is Forge's as written, update it. */
@@ -136,17 +158,18 @@ export class BoxController {
   private async syncCode(box: ApiBox): Promise<void> {
     if (box.hash === null || box.detached) return
     const text = await this.files.read(box.target.file)
-    if (text === null || blockState(text, box) !== 'ok') {
+    if (text === null || codeState(text, box) !== 'ok') {
       this.changed()
       return
     }
     const block = this.preview(box.id)
     const hash = blockHash(block)
     if (hash === box.hash) return
-    await this.files.write(box.target.file, replaceBlock(text, box.id, block))
+    const saved = await this.files.write(box.target.file, replaceBlock(text, box.id, block))
+    box.prevHash = box.hash
     box.hash = hash
     await this.save()
-    this.files.note(`Updated ${box.target.file} from the ${box.name} box`)
+    this.files.note(`Updated ${box.target.file} from the ${box.name} box${saved === 'unsaved' ? ' (not saved: the file has other unsaved edits)' : ''}`)
     this.changed()
   }
 
@@ -164,6 +187,7 @@ export class BoxController {
     if (found === 'broken') throw new Error(`The forge:box markers for ${box.name} in ${box.target.file} are damaged. Fix or delete them, then try again.`)
     const next = found === 'missing' ? insertBlock(text, block) : text.slice(0, found.start) + withEol(block, text) + text.slice(found.end)
     await this.files.write(box.target.file, next)
+    box.prevHash = box.hash
     box.hash = blockHash(block)
     box.detached = false
     await this.save()
@@ -222,14 +246,23 @@ export class BoxController {
           status: result.status,
           statusText: result.statusText,
           ms: result.ms,
-          error: result.error ?? (result.tooBig ? 'The response is too big.' : result.json === undefined && result.text !== undefined ? "The response isn't JSON, so there are no fields to pick." : `${result.status ?? ''} ${result.statusText ?? ''}`.trim())
+          error: result.error ?? (result.tooBig
+            ? 'The response is too big.'
+            : result.status !== undefined && (result.status < 200 || result.status >= 300)
+              ? `${result.status} ${result.statusText ?? ''}`.trim()
+              : result.json === undefined && result.text !== undefined
+                ? "The response isn't JSON, so there are no fields to pick."
+                : `${result.status ?? ''} ${result.statusText ?? ''}`.trim() || 'The test call failed.')
         }
         return
       }
       const picked = pickRecords(result.json, req.recordsPath)
       const fields = fieldTree(picked.records)
       req.recordsPath = picked.path
-      if (!previous?.fields?.length && !req.ticked.length) req.ticked = defaultTicks(fields)
+      // Keep the ticks that still exist in this response; none left: start from the defaults.
+      const keys = leafKeys(fields)
+      const kept = req.ticked.filter((k) => keys.has(k))
+      req.ticked = kept.length ? kept : defaultTicks(fields)
       req.test = { ok: true, at: Date.now(), status: result.status, statusText: result.statusText, ms: result.ms, count: picked.records.length, fields, sample: result.json }
     })
   }

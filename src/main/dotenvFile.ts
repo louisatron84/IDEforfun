@@ -26,7 +26,7 @@ export async function readDotEnv(root: string): Promise<Record<string, string>> 
 export async function setDotEnvValue(root: string, name: string, value: string): Promise<void> {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error(`"${name}" isn't a valid variable name (letters, digits and _).`)
   const text = (await readText(envPath(root))) ?? ''
-  await fs.writeFile(envPath(root), setDotEnvVar(text, name, value), 'utf8')
+  await fs.writeFile(envPath(root), setDotEnvVar(text, name, value), { encoding: 'utf8', mode: 0o600 })
 }
 
 /** The variables that have a value (names only: the window never needs the secrets). */

@@ -22,6 +22,28 @@ function setup() {
 }
 
 describe('DockView', () => {
+  it('a collapsed stack gives its space back to the rest of the split', () => {
+    const { container, view } = setup()
+    const root = defaultArrangement('code')
+    const drawer = findStack(root, 'terminal')!
+    drawer.collapsed = true
+    view.render(root)
+    const cell = (container.querySelector(`[data-stack="${drawer.id}"]`) as HTMLElement).parentElement as HTMLElement
+    expect(cell.style.flex).toBe('0 0 auto')
+  })
+
+  it('scroll positions inside panels survive a re-render', () => {
+    const { view, bodies } = setup()
+    const inner = document.createElement('div')
+    bodies.editor.append(inner)
+    view.render(defaultArrangement('code'))
+    inner.scrollTop = 240
+    inner.dispatchEvent(new Event('scroll'))
+    inner.scrollTop = 0 // what the browser does when the element is moved
+    view.render(defaultArrangement('debug'))
+    expect(inner.scrollTop).toBe(240)
+  })
+
   it('moves the same panel elements between arrangements and calls onShow when they reappear', () => {
     const { container, view, bodies, shown } = setup()
     view.render(defaultArrangement('code'))

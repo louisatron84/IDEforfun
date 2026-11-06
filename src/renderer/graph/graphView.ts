@@ -11,7 +11,7 @@ import type { ProjectGraph } from '../../shared/projectGraph'
 import { layoutGraph, type Layout } from './layout'
 import { buildView, neighbourhood, type GraphViewData, type ViewNode, type ViewOptions } from './viewModel'
 import type { ApiBox } from '../../shared/boxes'
-import { drawBoxLayer, placeBoxes } from './boxLayer'
+import { boxBounds, drawBoxLayer, panToShow, placeBoxes, type PlacedBox } from './boxLayer'
 import { BOX_DRAG_TYPE } from '../boxes/toolbox'
 
 /** Connect boxes shown on the graph. */
@@ -80,6 +80,7 @@ export class GraphView {
   private nodeEls = new Map<string, SVGGElement>()
   private edgeEls: { from: string; to: string; el: SVGPathElement }[] = []
   private boxLayer: SVGGElement | null = null
+  private placedBoxes: ReadonlyMap<string, PlacedBox> = new Map()
   private selected: string | null = null
   private hovered: string | null = null
   /** Pan and zoom. */
@@ -291,6 +292,7 @@ export class GraphView {
     const boxes = hooks.list()
     const ids = new Set(this.data.nodes.map((n) => n.id))
     const placed = placeBoxes(this.layout, boxes, this.opts.mode, ids)
+    this.placedBoxes = placed
     const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
     const layer = drawBoxLayer(this.layout, placed, boxes, { selected: hooks.selected(), live: hooks.live(), reducedMotion })
     if (this.boxLayer) this.boxLayer.replaceWith(layer)
@@ -353,8 +355,18 @@ export class GraphView {
       return this.applyView()
     }
     const pad = 30
-    const k = Math.min(1, (box.width - pad * 2) / layout.width, (box.height - pad * 2) / layout.height)
-    this.view = { k: Math.max(0.05, k), x: (box.width - layout.width * k) / 2, y: Math.max(pad, (box.height - layout.height * k) / 2) }
+    const size = boxBounds(layout, this.placedBoxes)
+    const k = Math.min(1, (box.width - pad * 2) / size.width, (box.height - pad * 2) / size.height)
+    this.view = { k: Math.max(0.05, k), x: (box.width - size.width * k) / 2, y: Math.max(pad, (box.height - size.height * k) / 2) }
+    this.applyView()
+  }
+
+  /** Pan so a box is fully in view (after Box settings opened and the canvas got narrower). */
+  revealBox(id: string): void {
+    const p = this.placedBoxes.get(id)
+    const box = this.svgEl.getBoundingClientRect()
+    if (!p || !box.width) return
+    this.view = panToShow(this.view, p, box)
     this.applyView()
   }
 
@@ -395,6 +407,7 @@ export class GraphView {
       const box = (target as Element | null)?.closest?.('.gbox')?.getAttribute('data-box')
       if (box && this.hooks.boxes) {
         this.hooks.boxes.select(box)
+        requestAnimationFrame(() => this.revealBox(box))
         return
       }
       this.hooks.boxes?.clear()

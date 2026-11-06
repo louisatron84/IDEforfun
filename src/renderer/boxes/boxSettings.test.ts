@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest'
-import type { BoxesFile } from '../../shared/boxes'
+import type { ApiBox, BoxesFile } from '../../shared/boxes'
 import type { TestCallResult } from '../../shared/api'
 import { BoxController, type BoxFiles } from './controller'
 import { BoxSettings, type BoxSettingsHooks } from './boxSettings'
@@ -22,9 +22,13 @@ function setup(result: TestCallResult = { ok: true, status: 200, statusText: 'OK
   const secrets: [string, string][] = []
   const live: [string, boolean][] = []
   const opened: string[] = []
+  const calls: ApiBox[] = []
   let confirmAnswer = true
   const hooks: BoxSettingsHooks = {
-    testCall: async () => result,
+    testCall: async (box) => {
+      calls.push(JSON.parse(JSON.stringify(box)))
+      return result
+    },
     envNames: async () => secrets.map(([n]) => n),
     setSecret: async (name, value) => void secrets.push([name, value]),
     envIgnored: async () => true,
@@ -38,7 +42,7 @@ function setup(result: TestCallResult = { ok: true, status: 200, statusText: 'OK
   }
   const view = new BoxSettings(ctrl, hooks)
   document.body.replaceChildren(view.body)
-  return { ctrl, view, files, saved, secrets, live, opened, setConfirm: (v: boolean) => (confirmAnswer = v) }
+  return { ctrl, view, files, saved, secrets, live, opened, calls, setConfirm: (v: boolean) => (confirmAnswer = v) }
 }
 
 const q = <T extends Element = HTMLElement>(sel: string) => document.querySelector(sel) as T | null
@@ -109,6 +113,21 @@ describe('Box settings', () => {
     await flush()
     q<HTMLButtonElement>('[data-action="open-csv"]')!.click()
     expect(opened).toEqual(['api_data.csv'])
+  })
+
+  it('Test call right after typing a value uses that value', async () => {
+    const { ctrl, calls } = setup()
+    ctrl.add(null)
+    await flush()
+    commit('req.url', 'https://x.org/users/{id}')
+    await flush()
+    const arg = q<HTMLInputElement>('[data-key="arg.id"]')!
+    arg.value = '7'
+    arg.dispatchEvent(new Event('change', { bubbles: true }))
+    // no waiting: the click comes straight after leaving the field
+    q<HTMLButtonElement>('[data-action="test"]')!.click()
+    await flush()
+    expect(calls[0].requests[0].testArgs).toEqual({ id: '7' })
   })
 
   it('a failed test call says why', async () => {
