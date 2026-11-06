@@ -84,10 +84,41 @@ def _forge_trace():
             limit -= 1
         return None
 
-    # ---------- the profile hook: counts caller -> callee ----------
+    # ---------- the profile hook: counts caller -> callee, and records recursion ----------
     state = {"calls": {}}
+    # Recursion trees: each thread's stack of project calls is followed; when a
+    # function calls itself (directly or further down), the calls of it form a
+    # tree: arguments in, value returned. Capped per tree and per run.
+    stacks = {}
+    trees = {}
+    tree_dirty = set()
+    tree_seq = [0]
+    MAX_TREE = 300
+    MAX_TREES = 5
+
+    def short(v, n=24):
+        try:
+            r = repr(v)
+        except Exception:
+            r = "<%s>" % type(v).__name__
+        return r if len(r) <= n else r[:n - 1] + "\u2026"
+
+    def args_of(frame):
+        code = frame.f_code
+        names = code.co_varnames[:code.co_argcount + code.co_kwonlyargcount]
+        local = frame.f_locals
+        return ", ".join(short(local.get(name)) for name in names[:4] if name not in ("self", "cls"))
 
     def profile(frame, event, arg):
+        if event == "return":
+            stack = stacks.get(threading.get_ident())
+            if stack and stack[-1][1] is frame:
+                entry = stack.pop()
+                if entry[2] is not None:
+                    tree = trees[entry[3]]
+                    tree["nodes"][entry[2]][2] = short(arg, 40)
+                    tree_dirty.add(entry[3])
+            return
         if event != "call":
             return
         to = ident(frame.f_code)
@@ -98,6 +129,34 @@ def _forge_trace():
             calls = state["calls"]
             key = (caller, to)
             calls[key] = calls.get(key, 0) + 1
+        stack = stacks.setdefault(threading.get_ident(), [])
+        entry = [to, frame, None, None]  # id, frame, node in its tree, tree key
+        for i in range(len(stack) - 1, max(-1, len(stack) - 200), -1):
+            outer = stack[i]
+            if outer[0] != to:
+                continue
+            if outer[3] is None:
+                if len(trees) >= MAX_TREES:
+                    break
+                tree_seq[0] += 1
+                key = "%s#%d" % (to, tree_seq[0])
+                trees[key] = {"key": key, "func": to, "nodes": [[-1, args_of(outer[1]), None]], "total": 1}
+                outer[2], outer[3] = 0, key
+            tree = trees[outer[3]]
+            tree["total"] += 1
+            # Past the cap (or under a call past it), calls are counted but not drawn.
+            entry[3] = outer[3]
+            if outer[2] is not None and len(tree["nodes"]) < MAX_TREE:
+                tree["nodes"].append([outer[2], args_of(frame), None])
+                entry[2] = len(tree["nodes"]) - 1
+            tree_dirty.add(outer[3])
+            break
+        stack.append(entry)
+
+    def send_trees():
+        for key in list(tree_dirty):
+            tree_dirty.discard(key)
+            send({"t": "rec", "tree": trees[key]})
 
     # ---------- network: every request and connection the program makes ----------
     # Hooks http.client (which urllib and requests/urllib3 use), httpx, aiohttp
@@ -520,6 +579,7 @@ def _forge_trace():
 
     def flush():
         send_net()
+        send_trees()
         calls, state["calls"] = state["calls"], {}
         frame = sys._current_frames().get(main_id)
         at = project_frame(frame, 256)

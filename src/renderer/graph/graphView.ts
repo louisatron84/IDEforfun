@@ -36,6 +36,8 @@ export interface GraphHooks {
   boxes?: GraphBoxHooks
   /** While debugging: a function's variables at each pause (for its details), or null. */
   debugHistory?(node: string): HTMLElement | null
+  /** From the last traced run (recursion trees): shown in a node's details, or null. */
+  runDetails?(node: string): HTMLElement | null
 }
 
 const SVG = 'http://www.w3.org/2000/svg'
@@ -76,6 +78,9 @@ export class GraphView {
   private readonly focusChip: HTMLButtonElement
   private readonly status: HTMLSpanElement
   private readonly canvas: HTMLDivElement
+  /** Replay of the last traced run: ▶, a slider and a speed. */
+  private readonly replayBox: HTMLSpanElement
+  private replay: { count: number; show(i: number): void; done(): void; timer: number | null; at: number } | null = null
   /** Debugging: the paused node, the stack's nodes, and the variables card beside the paused node. */
   private debugAt: string | null = null
   private debugStack: string[] = []
@@ -145,12 +150,15 @@ export class GraphView {
       return b
     }
     this.status = el('span', 'graph-status')
+    this.replayBox = el('span', 'graph-replay')
+    this.replayBox.hidden = true
     bar.append(
       title, seg, this.focusChip, this.search,
       toggle('Tests', 'Show test files', 'showTests'),
       toggle('Packages', 'Show the packages each module imports (standard library and installed)', 'showExternal'),
       toggle('Web APIs', 'Show the web addresses the code calls (requests, httpx, aiohttp)', 'showHosts'),
       this.status,
+      this.replayBox,
       button('Fit', 'Fit the graph in view (F)', () => this.fit()),
       button('⟳', 'Analyse the project again', () => void this.refresh()),
     )
@@ -444,6 +452,71 @@ export class GraphView {
     this.sparkLayer.append(spark)
     ;(move as SVGAnimationElement).beginElement?.()
     setTimeout(() => spark.remove(), 550)
+  }
+
+  /** Redraw the side panel (something it shows changed, e.g. a recursion tree arrived). */
+  refreshSide(): void {
+    this.renderSide()
+  }
+
+  /**
+   * After a traced run: replay it on the graph. `show(i)` draws update i of
+   * `count`; `done()` clears the glow when it finishes or is stopped.
+   */
+  setReplay(count: number, show: (i: number) => void, done: () => void): void {
+    this.stopReplay()
+    this.replay = count > 1 ? { count, show, done, timer: null, at: 0 } : null
+    this.replayBox.hidden = !this.replay
+    if (!this.replay) return this.replayBox.replaceChildren()
+    const play = el('button', 'graph-button', '▶ Replay')
+    play.title = 'Play the last run again on the graph'
+    const slider = el('input', 'graph-replay-slider')
+    slider.type = 'range'
+    slider.min = '0'
+    slider.max = String(count - 1)
+    slider.value = '0'
+    slider.setAttribute('aria-label', 'Position in the run')
+    const speed = el('select', 'graph-replay-speed')
+    speed.setAttribute('aria-label', 'Replay speed')
+    for (const [v, t] of [['0.25', '¼×'], ['0.5', '½×'], ['1', '1×'], ['2', '2×'], ['4', '4×']]) speed.append(new Option(t, v))
+    speed.value = '1'
+    const r = this.replay
+    const step = () => {
+      r.show(r.at)
+      slider.value = String(r.at)
+      if (r.at >= r.count - 1) {
+        this.stopReplay()
+        return
+      }
+      r.at++
+      r.timer = window.setTimeout(step, 100 / Number(speed.value))
+    }
+    play.addEventListener('click', () => {
+      if (r.timer !== null) return this.stopReplay()
+      if (r.at >= r.count - 1) r.at = 0
+      play.textContent = '■ Stop'
+      step()
+    })
+    slider.addEventListener('input', () => {
+      if (r.timer !== null) {
+        window.clearTimeout(r.timer)
+        r.timer = null
+        play.textContent = '▶ Replay'
+      }
+      r.at = Number(slider.value)
+      r.show(r.at)
+    })
+    this.replayBox.replaceChildren(play, slider, speed)
+  }
+
+  private stopReplay(): void {
+    const r = this.replay
+    if (!r) return
+    if (r.timer !== null) window.clearTimeout(r.timer)
+    r.timer = null
+    const play = this.replayBox.querySelector('button')
+    if (play) play.textContent = '▶ Replay'
+    r.done()
   }
 
   /** The analysed project (null until the first scan). */
@@ -817,6 +890,8 @@ export class GraphView {
         ...this.section('Code that never runs', g.unreachable.filter((u) => u.module === m.id).map((u) =>
           this.item(u.func ?? 'top level', describeUnreachable(u), () => this.openAt(m.id, u.line - 1), 'warn')))
       )
+      const run = this.hooks.runDetails?.(m.id)
+      if (run) out.push(...this.section('Last run', [run]))
     } else if (n.kind === 'external' || n.kind === 'host') {
       out.push(...this.section(n.kind === 'host' ? 'Called from' : 'Imported by', links(nb.in)))
       if (n.kind === 'host') {
@@ -828,6 +903,8 @@ export class GraphView {
       if (n.unused) out.push(el('div', 'graph-side-warn', 'Nothing in the project seems to use this (it may still be used dynamically, or from outside).'))
       const history = this.hooks.debugHistory?.(n.id)
       if (history) out.push(...this.section('While debugging', [history]))
+      const run = this.hooks.runDetails?.(n.id)
+      if (run) out.push(...this.section('Last run', [run]))
       const qual = n.id.slice(n.id.indexOf(':') + 1)
       for (const u of g.unreachable.filter((x) => x.module === n.module && x.func === qual)) {
         const warn = el('button', 'graph-side-warn graph-side-link', `Code that never runs: ${describeUnreachable(u)}`)

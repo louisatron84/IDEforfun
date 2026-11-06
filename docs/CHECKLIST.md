@@ -185,15 +185,15 @@ Block library (for the pipeline graph): blocks are whole steps, not single state
 - [ ] A single "for each" container block instead of loop/if wiring
 
 ### 5.5 Execution visualisation
-- [ ] Live call graph while debugging
-- [ ] Animated function execution
-- [ ] Visualise recursion trees
-- [x] Show current execution position on the graph (v0.45, during ▶ Run; not yet while debugging)
-- [ ] Display live variable values on nodes
-- [ ] Track variable changes over time
-- [ ] Visualise object relationships
-- [ ] Inspect object properties without opening debugger panels
-- [ ] Compare variable states between execution points
+- [x] Live call graph while debugging (v0.46: at each pause the paused function glows, the stack and its calls are marked, calls not seen before get a spark)
+- [x] Animated function execution (v0.45 live during ▶ Run; v0.46: ▶ Replay of the last traced run with a slider and speed)
+- [x] Visualise recursion trees (v0.46: the tracer records the calls of a recursive function (arguments in, value returned); Last run in the node's details opens the tree)
+- [x] Show current execution position on the graph (v0.45, during ▶ Run; v0.46 while debugging too)
+- [x] Display live variable values on nodes (v0.46: a card beside the paused function)
+- [x] Track variable changes over time (v0.46: History in the function's details, changes marked)
+- [x] Visualise object relationships (v0.46: Objects on the card: boxes and reference arrows from a helper run in the paused frame)
+- [x] Inspect object properties without opening debugger panels (v0.46: objects open in place on the card)
+- [x] Compare variable states between execution points (v0.46: compare any two pauses: changed, new, gone)
 - [ ] Someday (research): execution timeline with step-back (Python can't run backwards, so this means recording everything as it runs)
 
 ## Tier 6: Advanced capabilities (someday)

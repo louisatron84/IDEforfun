@@ -84,6 +84,15 @@ const FILES: Record<string, string> = {
     'print(len(fetch_users()), login(), missing(), refused())',
     'raw()'
   ].join('\n'),
+  'rec.py': [
+    'def fib(n):',
+    '    return n if n < 2 else fib(n - 1) + fib(n - 2)',
+    'def deep(n):',
+    '    return 0 if n == 0 else deep(n - 1)',
+    'def plain(x):',
+    '    return x + 1',
+    'print(fib(4), deep(400), plain(1))'
+  ].join('\n'),
   'libs.py': [
     'import asyncio, sys',
     'import requests, httpx, aiohttp',
@@ -255,6 +264,24 @@ describe.skipIf(!python)('run tracer (real Python)', () => {
     } finally {
       server.close()
     }
+  })
+
+  it('records recursion as a tree of calls: arguments in, value returned (capped)', async () => {
+    const r = await run([join(root, 'rec.py')])
+    expect(r.stdout).toBe('3 0 2\n')
+    type Tree = { key: string; func: string; nodes: [number, string, string | null][]; total: number }
+    const trees = new Map<string, Tree>()
+    for (const m of r.messages as { t: string; tree?: Tree }[]) if (m.t === 'rec') trees.set(m.tree!.key, m.tree!)
+    const all = [...trees.values()].sort((a, b) => Number(a.key.split('#')[1]) - Number(b.key.split('#')[1]))
+    expect(all.map((t) => t.func)).toEqual(['rec:fib', 'rec:deep'])
+    const fib = all[0]
+    expect(fib.total).toBe(9)
+    expect(fib.nodes[0]).toEqual([-1, '4', '3'])
+    expect(fib.nodes[1]).toEqual([0, '3', '2'])
+    expect(fib.nodes.filter((n) => n[0] === 0).map((n) => n[1])).toEqual(['3', '2'])
+    const deep = all[1]
+    expect(deep.total).toBe(401)
+    expect(deep.nodes.length).toBe(300)
   })
 
   it('no connection: the program still runs, untraced', async () => {

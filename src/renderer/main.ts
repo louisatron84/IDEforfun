@@ -64,6 +64,8 @@ import { GROUP_ROWS, historyView as debugHistoryView, valueCard } from './graph/
 import { drawObjectGraph } from './graph/objectGraph'
 import { objectGraphExpression, parseObjectGraph } from '../shared/objectGraph'
 import { funcLabel } from '../shared/network'
+import { drawRecursionTree, parseRec, RecursionStore } from './graph/recursionTree'
+import type { TraceTick } from './graph/liveRun'
 import { NetLog, parseNet, stateOf } from '../shared/network'
 import { HistoryView } from './historyView'
 import { conflictNear, findConflicts, resolveConflict, type Conflict, type Resolution } from '../shared/conflicts'
@@ -1959,6 +1961,17 @@ window.api.onRunTrace((e) => {
     netLog.begin(e.runId)
     sparkedNet.clear()
     networkView.setRunning(true)
+    recursion.begin(e.runId)
+    replayTicks = []
+    graphView.setReplay(0, () => {}, () => {})
+    return
+  }
+  const rec = parseRec(e.message)
+  if (rec) {
+    if (recursion.runId === e.runId) {
+      recursion.add(rec)
+      recursionChanged()
+    }
     return
   }
   const net = parseNet(e.message)
@@ -1974,8 +1987,13 @@ window.api.onRunTrace((e) => {
     return
   }
   const tick = parseTrace(e.message)
-  if (tick === 'end') return endRunOnGraph()
+  if (tick === 'end') {
+    endRunOnGraph()
+    offerReplay()
+    return
+  }
   if (!tick) return
+  if (replayTicks.length < 6000) replayTicks.push(tick)
   const frame = planFrame(tick, graphView.runView(), boxes.boxes)
   graphView.showRun(frame)
   const lit = new Set(frame.boxes)
@@ -1985,6 +2003,49 @@ window.api.onRunTrace((e) => {
     graphView.redrawBoxes()
   }
 })
+/** The last traced run's updates, to replay on the graph. */
+let replayTicks: TraceTick[] = []
+function offerReplay(): void {
+  const ticks = replayTicks
+  graphView.setReplay(ticks.length, (i) => graphView.showRun(planFrame(ticks[i], graphView.runView(), boxes.boxes)), () => graphView.endRun())
+}
+
+/** The last traced run's recursion trees (shown in a function's details on the Graph). */
+const recursion = new RecursionStore()
+let recursionRedraw = 0
+function recursionChanged(): void {
+  // Trees update many times a second while the program recurses: redraw the details at most twice a second.
+  if (recursionRedraw) return
+  recursionRedraw = window.setTimeout(() => {
+    recursionRedraw = 0
+    graphView.refreshSide()
+  }, 500)
+}
+
+/** A node's recursion trees from the last run: a line per tree, which opens its drawing. */
+function recursionDetails(node: string): HTMLElement | null {
+  const funcs = node.includes(':') ? [node] : recursion.funcs().filter((f) => f.slice(0, f.indexOf(':')) === node)
+  const trees = funcs.flatMap((f) => recursion.forFunc(f))
+  if (!trees.length) return null
+  const box = document.createElement('div')
+  box.className = 'graph-run-details'
+  for (const t of trees) {
+    const name = t.func.slice(t.func.indexOf(':') + 1).split('.').pop() ?? t.func
+    const b = document.createElement('button')
+    b.className = 'graph-button'
+    const depth = t.nodes.reduce((d, n, i, all) => {
+      let k = 0
+      for (let j = i; all[j].parent >= 0; j = all[j].parent) k++
+      return Math.max(d, k + 1)
+    }, 0)
+    b.textContent = `Recursion tree: ${name}(${t.nodes[0].args}), ${t.total} calls, ${depth} deep`
+    b.title = t.total > t.nodes.length ? `Shows the first ${t.nodes.length} calls` : 'Every call, with its arguments and what it returned'
+    b.addEventListener('click', () => graphView.showOverlay(`Recursion: ${name}(${t.nodes[0].args})${t.total > t.nodes.length ? ` (first ${t.nodes.length} of ${t.total} calls)` : ''}`, drawRecursionTree(t, name)))
+    box.append(b)
+  }
+  return box
+}
+
 function endRunOnGraph(): void {
   graphView.endRun()
   networkView.setRunning(false)
@@ -2490,6 +2551,7 @@ commands.register({ id: 'panel.network', title: 'Show Network (web requests whil
 const graphView = new GraphView({
   scan: () => scanProjectGraph(),
   debugHistory: (node) => debugHistoryView(debugTrail, node),
+  runDetails: (node) => recursionDetails(node),
   boxes: {
     list: () => boxes.boxes,
     selected: () => boxes.selected,
