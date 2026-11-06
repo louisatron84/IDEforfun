@@ -71,6 +71,7 @@ import { DataLog, parseDataMessage, summaryText } from '../shared/dataSummary'
 import { builtinBlocks, projectBlocks } from '../shared/blocks'
 import { moduleOfPath } from '../shared/boxes'
 import { suggestTools } from '../shared/suggest'
+import { showProjectMap } from './projectMap'
 import { envKeys } from '../shared/openapi'
 import { addImport, generateClient, generatedState, importLine } from '../shared/openapiCode'
 import type { TraceTick } from './graph/liveRun'
@@ -2675,6 +2676,33 @@ async function showDataFlow(node: string): Promise<void> {
   tasks.reveal('pipeline')
   pipelineView.show(s.qual)
 }
+/** Visual navigation: the project's files as a map (sized by lines, grouped by folder). */
+async function openProjectMap(): Promise<void> {
+  if (!rootFolder) return void statusNote('Open a project folder first (Ctrl+O).')
+  const g = projectGraph && projectGraphFolder === rootFolder ? projectGraph : (await scanProjectGraph()).graph
+  if (!g) return void statusNote("Couldn't read the project for the map (is Python installed?).")
+  const problems = new Map<string, number>()
+  for (const [path, list] of languages.allDiagnostics()) {
+    const rel = projectRel(path)
+    const n = list.filter((d) => d.severity <= 2).length
+    if (rel && n) problems.set(rel, n)
+  }
+  const repo = gitView.status
+  const changed = new Set(repo ? [...repo.staged, ...repo.unstaged, ...repo.conflicts].map((c) => c.path) : [])
+  const active = workspace.active ? projectRel(workspace.active.path) : null
+  showProjectMap({
+    files: g.modules.map((m) => ({ path: m.path, lines: m.lines })),
+    current: active,
+    problems,
+    changed,
+    recent: workspace.docs.map((d) => projectRel(d.path)).filter((p): p is string => !!p),
+    open: (rel) => {
+      tasks.switchTo('code')
+      openRel(rel, 0)
+    }
+  })
+}
+commands.register({ id: 'nav.projectMap', title: 'Project Map (find a file visually)', keys: 'Ctrl+Alt+M', run: () => void openProjectMap() })
 commands.register({ id: 'view.pipeline', title: 'Show Pipeline (data flow of a function)', run: () => panel.show('pipeline') })
 
 // ---------- Network panel: the web requests a traced run makes ----------

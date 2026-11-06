@@ -108,7 +108,7 @@ Best started once a first graph view exists (5.1), so the layout is designed aro
 - [x] Context-aware interface that surfaces relevant tools for the current task (v0.46: suggestions in the top bar from what you're doing: Network for a file calling web APIs, Pipeline for tables, Tests, Debug it after a failed run, Problems, Git)
 - [x] Customisable information density (v0.46: Settings → Density: Compact, Normal or Roomy panels and bars (the editor and terminal follow the font size))
 - [x] Animated transitions between workspace states (v0.46: switching task, and moving / adding / closing panels (Settings → Animations; off with reduced motion))
-- [ ] Visual navigation through projects
+- [x] Visual navigation through projects (v0.46: Project Map (Ctrl+Alt+M): every Python file sized by its lines, grouped by folder; open, problem, changed and recent files marked; type to find, click to open)
 - [x] Consistent visual language for graphs, code, debugging and terminal (v0.42: Forge look: Molten / Plain themes, Smithy schematic shapes, bundled fonts)
 - [x] Forge task workspace: Code / Connect / Debug / Run, movable panels, Edit Layout mode (Part 2 of docs/superpowers/specs/2026-11-06-forge-design.md) (v0.43: Forge task workspace); Where you are and In this file panels
 - [x] Live run feedback on the graph (v0.45: traced ▶ Run with the Graph in view; Settings → Runs on the graph): while the program runs, sparks travel along the connections and the running boxes glow (Molten); a dot and a highlight in Plain. Needs runtime tracing of calls (see 5.2 / 5.5). Requested 2026-11-06

@@ -1860,3 +1860,29 @@ button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 .suggestion { background: none; color: var(--fg-muted); border: 1px dashed var(--line-strong); border-radius: var(--radius); padding: 1px 8px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
 .suggestion::before { content: '→ '; color: var(--heat-2); }
 .suggestion:hover { color: var(--fg); border-style: solid; background: var(--bg-hover); }
+
+/* ---------- Project map (visual navigation) ---------- */
+.project-map-overlay { position: fixed; inset: 0; z-index: 50; background: var(--overlay); display: flex; align-items: center; justify-content: center; }
+.project-map { width: min(1100px, 94vw); height: min(760px, 88vh); display: flex; flex-direction: column; background: var(--bg-panel); border: 1px solid var(--line-strong); border-radius: var(--radius); box-shadow: var(--shadow); }
+.project-map-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.project-map-filter { flex: 0 1 260px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius); padding: 3px 8px; font: inherit; }
+.project-map-legend { display: flex; gap: 10px; margin-left: auto; color: var(--fg-muted); font-size: 12px; }
+.pm-key::before { content: ''; display: inline-block; width: 10px; height: 10px; margin-right: 4px; border: 2px solid var(--border); vertical-align: -1px; }
+.pm-key.current::before { border-color: var(--accent); }
+.pm-key.problem::before { border-color: var(--err); }
+.pm-key.changed::before { border-color: var(--warn); }
+.pm-key.recent::before { border-color: var(--info); border-style: dashed; }
+.project-map-close { background: none; border: 0; color: var(--fg-muted); font: inherit; cursor: pointer; }
+.project-map-board { position: relative; flex: 1; margin: 8px; overflow: hidden; }
+.project-map-note { padding: 0 12px 8px; color: var(--fg-muted); font-size: 12px; }
+.pm-group { position: absolute; border: 1px solid var(--line-strong); box-sizing: border-box; pointer-events: none; }
+.pm-group-label { position: absolute; left: 4px; top: 1px; font-size: 11px; font-weight: 600; color: var(--fg-muted); white-space: nowrap; overflow: hidden; max-width: calc(100% - 8px); }
+.pm-file { position: absolute; box-sizing: border-box; display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 1px; padding: 2px 4px; overflow: hidden; text-align: left; font: inherit; font-size: 11px; color: var(--fg); background: color-mix(in srgb, var(--accent) var(--pm-mix, 20%), var(--raised)); border: 1px solid var(--bg-panel); cursor: pointer; }
+.pm-file:hover { outline: 2px solid var(--fg); outline-offset: -2px; z-index: 1; }
+.pm-file.recent { border: 2px dashed var(--info); }
+.pm-file.changed { border: 2px solid var(--warn); }
+.pm-file.problem { border: 2px solid var(--err); }
+.pm-file.current { border: 3px solid var(--accent); z-index: 1; }
+.pm-file.dim { opacity: 0.25; }
+.pm-name { font-family: var(--font-code); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.pm-lines { color: var(--fg-muted); white-space: nowrap; }
