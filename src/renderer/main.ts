@@ -32,6 +32,9 @@ import { PythonEnv, type PythonTool } from './pythonEnv'
 import { TestView } from './testView'
 import { WelcomePage } from './welcome'
 import { CodeTools } from './codeTools'
+import { GitView } from './gitView'
+import { DiffView } from './diffView'
+import { lineDiff } from '../shared/lint'
 import { ReferencesView } from './referencesView'
 import { CallHierarchyView } from './callHierarchyView'
 import { OutlineView } from './outlineView'
@@ -1075,6 +1078,7 @@ let lastActiveDoc: Doc | null = null
 workspace.subscribe(() => {
   if (workspace.active !== lastActiveDoc) {
     if (workspace.active) welcomeForced = false // a file was opened or picked
+    if (workspace.active) diffView.hide() // a file was picked: close the diff over it
     lastActiveDoc = workspace.active
   }
   updateWelcome()
@@ -1693,8 +1697,16 @@ let gitBusy = false
 async function refreshGit(): Promise<void> {
   if (!rootFolder || gitBusy) return
   gitBusy = true
+  const folder = rootFolder
   try {
-    tree.setGitStatus(await window.api.gitStatus(rootFolder))
+    const [status, repo] = await Promise.all([window.api.gitStatus(folder), window.api.gitRepo(folder)])
+    if (rootFolder !== folder) return
+    tree.setGitStatus(status)
+    gitView.setStatus(repo)
+    const branch = $('sb-branch')
+    branch.textContent = repo ? `⎇ ${repo.detached ? 'detached' : repo.branch ?? ''}${repo.ahead ? ` ↑${repo.ahead}` : ''}${repo.behind ? ` ↓${repo.behind}` : ''}` : ''
+    // The diff on screen may be out of date (files edited, staged elsewhere...).
+    if (diffView.isVisible) void diffView.reload()
   } finally {
     gitBusy = false
   }
@@ -1704,6 +1716,122 @@ window.addEventListener('focus', () => void refreshGit())
 window.setInterval(() => {
   if (document.hasFocus()) void refreshGit()
 }, 5000)
+
+// ---------- Source Control (git) ----------
+
+/**
+ * Files changed on disk by git (switch branch, pull, discard): reload the open
+ * ones that have no unsaved changes, changing only the lines that differ.
+ */
+async function reloadCleanDocs(): Promise<void> {
+  for (const doc of workspace.docs) {
+    if (doc.dirty) continue
+    const res = await window.api.readTextFile(doc.path).catch(() => null)
+    if (!res || res.kind !== 'text' || doc.dirty) continue
+    const now = doc.buffer.getLines().join('\n')
+    const disk = res.text.replace(/\r\n?/g, '\n')
+    const edit = lineDiff(now, disk)
+    if (!edit) continue
+    applyEditsToDoc(doc, [edit])
+    doc.eol = res.text.includes('\r\n') ? 'CRLF' : 'LF'
+    doc.markSaved()
+  }
+  workspace.notifyChanged()
+}
+
+/** Run a git action from the Git or diff view: show progress and errors, then refresh. */
+async function gitRun(action: () => Promise<{ ok: boolean; error?: string; output: string }>, busyText: string): Promise<boolean> {
+  gitView.setBusy(busyText)
+  let res: { ok: boolean; error?: string; output: string }
+  try {
+    res = await action()
+  } catch (err) {
+    res = { ok: false, output: '', error: String(err) }
+  }
+  gitView.setBusy('')
+  if (!res.ok) alert(`Git: ${res.error ?? 'it failed'}`)
+  else if (/Pull|Fetch|Push/.test(busyText) && res.output) statusNote(res.output.split('\n').filter(Boolean).pop() ?? '')
+  // Switching, pulling and discarding change files on disk.
+  if (res.ok && /Switch|Pull|Discard|Creat/.test(busyText)) await reloadCleanDocs()
+  await refreshGit()
+  void tree.refreshAll()
+  return res.ok
+}
+
+const gitView = new GitView({
+  folder: () => rootFolder,
+  openDiff: (repo, change, staged) => void diffView.show(repo, change, staged),
+  openFile: (path) => void openFile(path),
+  run: gitRun,
+  trash: async (paths) => {
+    for (const p of paths) {
+      try {
+        await window.api.trashEntry(p)
+      } catch {
+        await window.api.deletePermanently(p)
+      }
+    }
+  },
+  pickBranch: () => void pickBranch(),
+  refresh: () => void refreshGit()
+})
+$('git-panel').append(gitView.root)
+
+const diffView = new DiffView({
+  openFile: (path, line) => void openFile(path, line).then(() => diffView.hide()),
+  run: gitRun,
+  closed: () => editor.focus()
+})
+$('groups').append(diffView.el)
+
+/** Switch to a branch, create one, or check out a remote branch. */
+async function pickBranch(): Promise<void> {
+  const repo = gitView.status
+  if (!repo) return
+  const list = await window.api.gitBranches(repo.root)
+  const local = list.filter((b) => !b.remote)
+  const localNames = new Set(local.map((b) => b.name))
+  const remote = list.filter((b) => b.remote && !localNames.has(b.name.slice(b.name.indexOf('/') + 1)))
+  const sw = (name: string, opts: { create: boolean; remote: boolean }) => {
+    void gitRun(() => window.api.gitSwitch(repo.root, name, opts), opts.create ? 'Creating branch…' : 'Switching branch…')
+  }
+  palette.choose(`Switch branch (now on ${repo.branch ?? 'a detached HEAD'})`, [
+    { label: '+ Create new branch…', detail: `from ${repo.branch ?? 'HEAD'}`, run: () => setTimeout(() => palette.prompt('Name for the new branch, e.g. feature/login', (name) => sw(name.trim(), { create: true, remote: false }), '', 'Create branch')) },
+    ...local.map((b) => ({
+      label: b.name,
+      detail: b.upstream ? `tracks ${b.upstream}` : undefined,
+      hint: b.current ? '✓ current' : undefined,
+      run: () => { if (!b.current) sw(b.name, { create: false, remote: false }) }
+    })),
+    ...remote.map((b) => ({ label: b.name, detail: 'remote branch: check it out locally', hint: 'remote', run: () => sw(b.name, { create: false, remote: true }) }))
+  ])
+}
+
+/** Diff of the active file (unstaged changes first, else staged ones). */
+async function diffActiveFile(): Promise<void> {
+  const doc = workspace.active
+  await refreshGit()
+  const repo = gitView.status
+  if (!doc || !repo) return statusNote(repo ? 'Open a file first.' : "This folder isn't a git repository.")
+  const rel = doc.path.slice(repo.root.length).replace(/^[\\/]+/, '').replace(/\\/g, '/')
+  const same = (p: string) => (/^[a-zA-Z]:/.test(repo.root) ? p.toLowerCase() === rel.toLowerCase() : p === rel)
+  const unstaged = repo.unstaged.find((c) => same(c.path))
+  const staged = repo.staged.find((c) => same(c.path))
+  if (unstaged) return diffView.show(repo, unstaged, false)
+  if (staged) return diffView.show(repo, staged, true)
+  statusNote(doc.dirty ? 'No changes on disk yet: save the file to compare it.' : 'This file has no changes since the last commit.')
+}
+
+commands.register({ id: 'git.show', title: 'Show Source Control (Git)', keys: 'Ctrl+Shift+G', run: () => { showSidebar('git'); gitView.focusMessage() } })
+commands.register({ id: 'git.diffFile', title: 'Git: Show Changes in This File', when: () => hasDocNow() && rootFolder !== null, run: () => void diffActiveFile() })
+commands.register({ id: 'git.commit', title: 'Git: Commit', when: () => gitView.status !== null, run: () => { showSidebar('git'); void gitView.commit() } })
+commands.register({ id: 'git.branch', title: 'Git: Switch Branch…', when: () => gitView.status !== null, run: () => void pickBranch() })
+commands.register({ id: 'git.pull', title: 'Git: Pull', when: () => gitView.status !== null, run: () => void gitRun(() => window.api.gitSync(gitView.status!.root, 'pull'), 'Pulling…') })
+commands.register({ id: 'git.push', title: 'Git: Push', when: () => gitView.status !== null, run: () => void gitRun(() => window.api.gitSync(gitView.status!.root, 'push'), 'Pushing…') })
+commands.register({ id: 'git.fetch', title: 'Git: Fetch', when: () => gitView.status !== null, run: () => void gitRun(() => window.api.gitSync(gitView.status!.root, 'fetch'), 'Fetching…') })
+commands.register({ id: 'git.stageAll', title: 'Git: Stage All Changes', when: () => !!gitView.status?.unstaged.length, run: () => void gitRun(() => window.api.gitStage(gitView.status!.root, gitView.status!.unstaged.map((c) => c.path)), 'Staging…') })
+commands.register({ id: 'git.init', title: 'Git: Initialize Repository', when: () => rootFolder !== null && gitView.status === null, run: () => void gitRun(() => window.api.gitInit(rootFolder!), 'Creating repository…') })
+$('sb-branch').addEventListener('click', () => void pickBranch())
 
 // ---------- sidebar: Files | Search ----------
 
@@ -1716,10 +1844,13 @@ const searchView = new SearchView(
 )
 $('search-panel').append(searchView.root)
 
-function showSidebar(view: 'files' | 'search' | 'outline'): void {
+type SidebarView = 'files' | 'search' | 'outline' | 'git'
+function showSidebar(view: SidebarView): void {
   $('file-tree').hidden = view !== 'files'
   $('search-panel').hidden = view !== 'search'
   $('outline-panel').hidden = view !== 'outline'
+  $('git-panel').hidden = view !== 'git'
+  if (view === 'git') void refreshGit()
   for (const b of document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs button')) {
     b.setAttribute('aria-selected', String(b.dataset.view === view))
   }
@@ -1727,7 +1858,7 @@ function showSidebar(view: 'files' | 'search' | 'outline'): void {
 }
 for (const b of document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs button')) {
   b.addEventListener('click', () => {
-    showSidebar(b.dataset.view as 'files' | 'search' | 'outline')
+    showSidebar(b.dataset.view as SidebarView)
     if (b.dataset.view === 'search') searchView.focus()
   })
 }

@@ -25,10 +25,12 @@
           <button role="tab" data-view="files" aria-selected="true" title="Files">Files</button>
           <button role="tab" data-view="search" aria-selected="false" title="Search in project (Ctrl+Shift+F)">Search</button>
           <button role="tab" data-view="outline" aria-selected="false" title="Outline of the open file">Outline</button>
+          <button role="tab" data-view="git" aria-selected="false" title="Source control (Ctrl+Shift+G)">Git</button>
         </div>
         <div id="file-tree" class="sidebar-view"></div>
         <div id="search-panel" class="sidebar-view" hidden></div>
         <div id="outline-panel" class="sidebar-view" hidden></div>
+        <div id="git-panel" class="sidebar-view" hidden></div>
       </aside>
       <main id="editor-pane">
         <div id="groups">
@@ -40,6 +42,7 @@
       </main>
     </div>
     <footer id="statusbar" aria-label="Status bar">
+      <button id="sb-branch" class="sb-item" title="Git branch: click to switch or create one"></button>
       <button id="sb-problems" class="sb-item" title="Problems (Ctrl+Shift+M)"></button>
       <span id="sb-debug" class="sb-item"></span>
       <button id="sb-deps" class="sb-item warn" title="Packages the project needs that aren't installed: click to install"></button>

@@ -52,6 +52,7 @@ your terminal has `ELECTRON_RUN_AS_NODE` set. Clear it first: `$env:ELECTRON_RUN
 | Ctrl+\ / Ctrl+1 / Ctrl+2 | Split the editor (same file on both sides, own cursors) / focus left / focus right |
 | Ctrl+F / Ctrl+H | Find / find and replace (Alt+C case, Alt+W word, Alt+R regex) |
 | Ctrl+Shift+F / Ctrl+Shift+E | Search the whole project / back to the file tree |
+| Ctrl+Shift+G | Source control (Git tab): changes, diffs, stage, commit (Ctrl+Enter), branches, pull / push |
 | Ctrl+Space | Autocomplete (also pops up as you type) |
 | F12 or Ctrl+click / Alt+← | Go to definition / go back |
 | Shift+F12 | Find all references (References tab in the bottom panel) |
@@ -114,6 +115,10 @@ the app's data folder, which you can also edit by hand ("Edit Keyboard Shortcuts
   from `requirements.txt` or the project's `pyproject.toml`, or save what's installed to
   `requirements.txt`. If the project needs packages that aren't installed, the status
   bar says so (⚠ n missing packages); click it to install them. pip runs in the Output panel.
+- **Git** (Git tab, Git menu, ⎇ in the status bar): changed files grouped as conflicts / staged /
+  changes; click one for a colored diff where each hunk can be staged, unstaged or discarded
+  on its own. Commit (or amend), switch / create branches, fetch, pull and push. Open files
+  without unsaved changes reload when a switch or pull changes them.
 - **Ruff and Black**: if Ruff is installed in the project's Python (Quick Fix offers to
   install it), its warnings show as you type next to Pyright's, with 💡 on lines it can fix.
   Format with Ruff or Black (Settings → Formatter, optional format on save); the project's

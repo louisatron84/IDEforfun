@@ -189,6 +189,23 @@ export function buildMenu(state: MenuState = { keys: {}, recent: [] }): Menu {
       ]
     },
     {
+      label: '&Git',
+      submenu: [
+        cmd('Source Control', 'git.show', 'CmdOrCtrl+Shift+G'),
+        cmd('Show Changes in This File', 'git.diffFile'),
+        sep,
+        cmd('Commit', 'git.commit'),
+        cmd('Stage All Changes', 'git.stageAll'),
+        sep,
+        cmd('Switch Branch…', 'git.branch'),
+        cmd('Fetch', 'git.fetch'),
+        cmd('Pull', 'git.pull'),
+        cmd('Push', 'git.push'),
+        sep,
+        cmd('Initialize Repository', 'git.init')
+      ]
+    },
+    {
       label: '&Terminal',
       submenu: [
         cmd('New Terminal', 'terminal.new', 'CmdOrCtrl+Shift+`'),

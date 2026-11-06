@@ -2,8 +2,16 @@ import type { ProjectSettings, Settings } from './settings'
 import type { KeyOverrides } from './keybindings'
 import type { WorkspaceState } from './projectState'
 import type { TestFile } from './tests'
+import type { Branch, RepoStatus } from './git'
 import type { FindOptions } from './regex'
 import type { Encoding, TextFileResult } from './encoding'
+
+/** What a git command gave back: its output, or what went wrong. */
+export interface GitResult {
+  ok: boolean
+  output: string
+  error?: string
+}
 
 /** What a tool (Ruff / Black) gave back: its output, or why it couldn't run. */
 export interface ToolResult {
@@ -191,6 +199,22 @@ export interface IdeApi {
 
   /** Git status of files under a folder; null if it isn't a git repository. */
   gitStatus(folder: string): Promise<GitStatusMap | null>
+  /** The repository containing a folder: its root, branch and changes (null if none). */
+  gitRepo(folder: string): Promise<(RepoStatus & { root: string }) | null>
+  /** Unified diff of one file (repo-relative path), staged or not. */
+  gitDiff(root: string, path: string, staged: boolean): Promise<GitResult>
+  gitStage(root: string, paths: string[]): Promise<GitResult>
+  gitUnstage(root: string, paths: string[]): Promise<GitResult>
+  /** Throw away unstaged changes to tracked files. */
+  gitDiscard(root: string, paths: string[]): Promise<GitResult>
+  /** Apply a one-hunk patch to the index (stage / unstage) or the working tree (discard). */
+  gitApply(root: string, patch: string, opts: { cached: boolean; reverse: boolean }): Promise<GitResult>
+  gitCommit(root: string, message: string, opts: { amend: boolean; all: boolean }): Promise<GitResult>
+  gitLastMessage(root: string): Promise<string>
+  gitBranches(root: string): Promise<Branch[]>
+  gitSwitch(root: string, name: string, opts: { create: boolean; remote: boolean }): Promise<GitResult>
+  gitSync(root: string, action: 'fetch' | 'pull' | 'push'): Promise<GitResult>
+  gitInit(folder: string): Promise<GitResult>
 
   /** Start (or restart) the Python language server. */
   lspStart(): Promise<void>

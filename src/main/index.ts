@@ -19,6 +19,7 @@ import type { BackupData, RunSpec } from '../shared/api'
 import type { Encoding } from '../shared/encoding'
 import { searchProject } from './search'
 import { gitStatus } from './git'
+import * as gitOps from './gitOps'
 import { LanguageServer, resolvePythonForAnalysis } from './languageServer'
 import type { FindOptions } from '../shared/regex'
 import { PythonRunner } from './python'
@@ -203,6 +204,27 @@ ipcMain.handle('lsp:resolvePython', (_event, root: string, configured?: string) 
   resolvePythonForAnalysis(root, configured)
 )
 ipcMain.handle('git:status', (_event, folder: string) => gitStatus(folder))
+const paths = (p: unknown): string[] => (Array.isArray(p) ? p.filter((x): x is string => typeof x === 'string' && x.length > 0) : [])
+ipcMain.handle('git:repo', (_event, folder: string) => gitOps.repoStatus(folder))
+ipcMain.handle('git:diff', (_event, root: string, path: string, staged: boolean) => gitOps.fileDiff(root, path, !!staged))
+ipcMain.handle('git:stage', (_event, root: string, p: unknown) => gitOps.stage(root, paths(p)))
+ipcMain.handle('git:unstage', (_event, root: string, p: unknown) => gitOps.unstage(root, paths(p)))
+ipcMain.handle('git:discard', (_event, root: string, p: unknown) => gitOps.discard(root, paths(p)))
+ipcMain.handle('git:apply', (_event, root: string, patchText: string, opts: { cached: boolean; reverse: boolean }) =>
+  gitOps.applyPatch(root, String(patchText), { cached: !!opts?.cached, reverse: !!opts?.reverse })
+)
+ipcMain.handle('git:commit', (_event, root: string, message: string, opts: { amend: boolean; all: boolean }) =>
+  gitOps.commit(root, String(message), { amend: !!opts?.amend, all: !!opts?.all })
+)
+ipcMain.handle('git:lastMessage', (_event, root: string) => gitOps.lastCommitMessage(root))
+ipcMain.handle('git:branches', (_event, root: string) => gitOps.branches(root))
+ipcMain.handle('git:switch', (_event, root: string, name: string, opts: { create: boolean; remote: boolean }) =>
+  gitOps.switchBranch(root, String(name), { create: !!opts?.create, remote: !!opts?.remote })
+)
+ipcMain.handle('git:sync', (_event, root: string, action: string) =>
+  action === 'fetch' || action === 'pull' || action === 'push' ? gitOps.sync(root, action) : { ok: false, output: '', error: 'unknown action' }
+)
+ipcMain.handle('git:init', (_event, folder: string) => gitOps.init(folder))
 ipcMain.handle('search:project', (_event, root: string, query: string, opts: FindOptions) =>
   searchProject(root, query, opts)
 )

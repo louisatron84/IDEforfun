@@ -78,10 +78,10 @@ Language features (Pyright already does the analysis for most of these; they're 
 - [ ] Language-support architecture: language integrations instead of Python-specific editor logic, so several language servers can run side by side (groundwork for Tier 6.2)
 
 Git:
-- [ ] Git diff viewer
-- [ ] Stage/unstage individual hunks
-- [ ] Commit interface
-- [ ] Branch switching and creation
+- [x] Git diff viewer (v0.35: click a changed file; colored, line numbers, Python highlighting)
+- [x] Stage/unstage individual hunks (v0.35: Stage / Unstage / Discard Hunk in the diff)
+- [x] Commit interface (v0.35: Git tab, Ctrl+Enter, amend, stage-all offer; fetch / pull / push)
+- [x] Branch switching and creation (v0.35: ⎇ in the status bar or Git tab; local, new and remote branches)
 - [ ] Merge conflict resolution
 - [ ] Git history and file blame, with a graph view
 
