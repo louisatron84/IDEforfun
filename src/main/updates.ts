@@ -67,7 +67,10 @@ export class Updates {
 
   private async getUpdater() {
     if (this.updater) return this.updater
-    const { autoUpdater } = await import('electron-updater')
+    // electron-updater is CommonJS: in the bundled app the import comes back wrapped under `default`.
+    const mod = (await import('electron-updater')) as typeof import('electron-updater') & { default?: typeof import('electron-updater') }
+    const autoUpdater = mod.autoUpdater ?? mod.default?.autoUpdater
+    if (!autoUpdater) throw new Error('The updater could not be loaded.')
     autoUpdater.autoDownload = false
     autoUpdater.autoInstallOnAppQuit = true
     autoUpdater.on('download-progress', (p) => this.set({ ...this.base(), kind: 'downloading', percent: Math.round(p.percent) }))
