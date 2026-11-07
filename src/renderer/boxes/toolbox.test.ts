@@ -5,12 +5,16 @@ import { BOX_DRAG_TYPE, Toolbox } from './toolbox'
 describe('Toolbox', () => {
   it('API is enabled and adds a box; the others are coming later', () => {
     let added = 0
-    const tb = new Toolbox({ add: () => added++ })
+    let openApi = 0
+    const tb = new Toolbox({ add: () => added++, addOpenApi: () => openApi++ })
     const items = [...tb.body.querySelectorAll('button')]
-    expect(items.map((b) => b.dataset.type)).toEqual(['api', 'database', 'file', 'schedule'])
+    expect(items.map((b) => b.dataset.type)).toEqual(['api', 'openapi', 'database', 'file', 'schedule'])
     items[0].click()
     expect(added).toBe(1)
-    for (const b of items.slice(1)) {
+    items[1].click()
+    expect(openApi).toBe(1)
+    expect(added).toBe(1)
+    for (const b of items.slice(2)) {
       expect(b.disabled).toBe(true)
       expect(b.textContent).toContain('coming later')
     }

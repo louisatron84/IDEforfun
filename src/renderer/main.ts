@@ -32,7 +32,7 @@ import { pyright } from './lsp/pyright'
 import { ProblemsView } from './problemsView'
 import { Tooltip } from './tooltip'
 import { BreakpointStore, breakpointStyle } from './debug/breakpoints'
-import { DebugSession, type ChildConfig, type ExceptionFilter, type PauseInfo, type StackFrame } from './debug/session'
+import { DebugSession, type ChildConfig, type ExceptionFilter, type PauseInfo, type StackFrame, type Variable } from './debug/session'
 import { DebugView } from './debug/debugView'
 import { Completion } from './completion'
 import { hoverSections } from './lsp/markdown'
@@ -57,7 +57,27 @@ import { BoxSettings } from './boxes/boxSettings'
 import { Toolbox } from './boxes/toolbox'
 import { lineDiff as codeLineDiff, showCodeDialog } from './boxes/codeDialog'
 import { serializeBoxes } from '../shared/boxes'
-import { parseTrace, planFrame } from './graph/liveRun'
+import { parseTrace, planFrame, planNetSpark } from './graph/liveRun'
+import { NetworkView } from './networkView'
+import { DebugTrail, frameNode } from './graph/debugTrail'
+import { GROUP_ROWS, historyView as debugHistoryView, valueCard } from './graph/debugCards'
+import { drawObjectGraph } from './graph/objectGraph'
+import { objectGraphExpression, parseObjectGraph } from '../shared/objectGraph'
+import { funcLabel } from '../shared/network'
+import { drawRecursionTree, parseRec, RecursionStore } from './graph/recursionTree'
+import { showOpenApiDialog } from './boxes/openApiDialog'
+import { PipelineView } from './pipeline/pipelineView'
+import { DataLog, parseDataMessage, summaryText } from '../shared/dataSummary'
+import { builtinBlocks, projectBlocks } from '../shared/blocks'
+import { moduleOfPath } from '../shared/boxes'
+import { suggestTools } from '../shared/suggest'
+import { showProjectMap } from './projectMap'
+import { FloatingPanels } from './dock/floating'
+import type { UpdateState } from '../shared/api'
+import { envKeys } from '../shared/openapi'
+import { addImport, generateClient, generatedState, importLine } from '../shared/openapiCode'
+import type { TraceTick } from './graph/liveRun'
+import { NetLog, parseNet, stateOf } from '../shared/network'
 import { HistoryView } from './historyView'
 import { conflictNear, findConflicts, resolveConflict, type Conflict, type Resolution } from '../shared/conflicts'
 import { timeAgo, type BlameLine } from '../shared/history'
@@ -99,6 +119,7 @@ const editorOptions = (index: number): EditorOptions => ({
   onEdit: (doc) => {
     workspace.notifyChanged()
     languages.docChanged(doc)
+    semanticSoon(doc)
     completion.onEdit()
   },
   onKeyDown: (e) => completion.handleKey(e),
@@ -276,8 +297,16 @@ let tasks: TaskController
 const dock = new DockView($('dock'), {
   changed: (root) => tasks.changed(root),
   closePanel: (id) => { tasks.closePanel(id); editBar.fill() },
-  drop: (p, s, z) => tasks.drop(p, s, z)
+  drop: (p, s, z) => tasks.drop(p, s, z),
+  floatPanel: (id) => floatingPanels.float(id)
 })
+/** Panels in their own OS windows (the ⧉ button on a panel's tab strip). */
+const floatingPanels = new FloatingPanels(dock, {
+  removeFromLayout: (id) => tasks.closePanel(id),
+  placeBack: (id) => tasks.addPanel(id),
+  note: (message) => statusNote(message)
+})
+window.addEventListener('beforeunload', () => floatingPanels.closeAll())
 tasks = new TaskController(dock, {
   saved: {},
   save: (layouts) => void window.api.saveLayouts(layouts).catch(() => {}),
@@ -320,6 +349,7 @@ window.addEventListener('keydown', (e) => {
 function onTaskChanged(task: TaskId): void {
   for (const b of document.querySelectorAll<HTMLButtonElement>('#task-switcher button')) b.setAttribute('aria-selected', String(b.dataset.task === task))
   if (dock.editing) editBar.fill()
+  suggestionsSoon()
   // Box settings only show while a box is picked (layouts saved before v0.44 placed it for good).
   if (task === 'connect' && !dock.editing) queueMicrotask(closeIdleBoxSettings)
   saveStateSoon()
@@ -531,6 +561,7 @@ async function startDebugging(given?: LaunchSpec): Promise<void> {
   lastDebugSpec = spec
 
   processes = []
+  debugTrail = new DebugTrail()
   const s = addDebugProcess(0, (spec.program ?? spec.module ?? 'program').split(/[\\/]/).pop() ?? 'program')
   rootSession = s
   session = s
@@ -571,6 +602,7 @@ function addDebugProcess(id: number, name: string): DebugSession {
       renderProcesses()
       if (session !== s) return
       debugView.setState(state)
+      if (state === 'running') graphView.debugRunning()
       if (state === 'running' && pausedAt) {
         pausedAt = null
         updateLineMarkers()
@@ -630,6 +662,7 @@ async function debugProcessEnded(s: DebugSession, code: number | null): Promise<
   }
   // The program ended: stop its child processes too, then the adapter.
   tasks.endDebug()
+  graphView.endDebug()
   const children = processes.filter((x) => x !== p)
   processes = []
   session = s
@@ -670,6 +703,64 @@ async function onPaused(info: PauseInfo): Promise<void> {
   panel.show('debug')
   const frame = debugView.currentFrame
   if (frame) await showFrame(frame)
+  void showPauseOnGraph(info)
+}
+
+// ---------- the Graph while debugging (5.5) ----------
+/** This debug session's pauses: the stacks, the calls seen, each pause's variables. */
+let debugTrail = new DebugTrail()
+
+/** Record a pause, and show it on the Graph: the stack, new calls, and the paused function's variables beside it. */
+async function showPauseOnGraph(info: PauseInfo): Promise<void> {
+  const s = session
+  const g = graphView.projectGraph
+  const top = info.frames[0]
+  if (!s || !g || !rootFolder || !top) return
+  const stack = info.frames.map((f) => frameNode(f, g, rootFolder!))
+  let vars: Variable[] = []
+  try {
+    const scopes = await s.scopes(top.id)
+    const locals = scopes.find((x) => /local/i.test(x.name)) ?? scopes[0]
+    if (locals) vars = await s.variables(locals.ref)
+  } catch {
+    // running again already
+  }
+  if (s.state !== 'paused') return
+  const stop = debugTrail.addStop({
+    reason: info.reason,
+    stack,
+    vars: Object.fromEntries(vars.filter((v) => !GROUP_ROWS.has(v.name)).map((v) => [v.name, v.value]))
+  })
+  if (!tasks.isShown('graph')) return
+  const at = stop.stack[0] ?? null
+  const label = at ? funcLabel(at) : top.name
+  const card = at
+    ? valueCard({
+        title: `${label} · pause #${stop.n}`,
+        vars,
+        expand: (ref) => s.variables(ref),
+        actions: [
+          { label: 'Objects', title: 'How the objects in its variables point to each other', run: () => void showObjects(s, top.id, label) },
+          { label: 'History', title: 'Its variables at each pause, and compare two pauses', run: () => graphView.reveal(graphView.runView().mode === 'calls' ? at : at.startsWith('module:') ? at.slice(7) : at.slice(0, at.indexOf(':'))) }
+        ]
+      })
+    : null
+  graphView.showDebug({ at, stack: stop.stack, newEdges: stop.newEdges, card })
+}
+
+/** Object relationships: evaluate Forge's helper in the paused frame and draw what it finds. */
+async function showObjects(s: DebugSession, frameId: number, label: string): Promise<void> {
+  let text = ''
+  try {
+    text = (await s.evaluate(objectGraphExpression(), frameId, 'clipboard')).result
+  } catch (err) {
+    graphView.showOverlay(`Objects in ${label}`, document.createTextNode(`Couldn't look at the objects: ${err instanceof Error ? err.message : String(err)}`))
+    return
+  }
+  const og = parseObjectGraph(text)
+  if (!og) return graphView.showOverlay(`Objects in ${label}`, document.createTextNode(`Couldn't read the objects (${text.slice(0, 200)})`))
+  if (!og.nodes.length) return graphView.showOverlay(`Objects in ${label}`, document.createTextNode('Its variables only hold simple values (numbers, text...), no objects to draw.'))
+  graphView.showOverlay(`Objects in ${label} (variables on the left; arrows are references)`, drawObjectGraph(og))
 }
 
 /** Open a stack frame's file at its line and mark it as the paused line. */
@@ -764,6 +855,8 @@ async function startLanguageServer(id: string): Promise<void> {
     problems.setStatus('')
     outlineDoc = null
     refreshOutlineSoon(0)
+    // Give the server a moment to analyse, then colour the open files.
+    for (const doc of workspace.docs) semanticSoon(doc, 1500)
   } catch (err) {
     problems.setStatus(`${name} failed to start: ${String(err)}`)
   }
@@ -1216,6 +1309,24 @@ let outlineGeneration = 0
 let outlineDoc: Doc | null = null
 let outlineVersion = -1
 
+/** Semantic highlighting: ask the language server what each name is, a moment after edits stop. */
+const semanticTimers = new Map<Doc, number>()
+function semanticSoon(doc: Doc | null, delay = 450): void {
+  if (!doc || doc.large) return
+  window.clearTimeout(semanticTimers.get(doc))
+  semanticTimers.set(doc, window.setTimeout(async () => {
+    semanticTimers.delete(doc)
+    const version = doc.version
+    const tokens = await languages.semanticTokens(doc).catch(() => null)
+    if (doc.version !== version) return semanticSoon(doc) // edited meanwhile: ask again
+    doc.highlighter.setSemantic(tokens)
+    for (const ed of editors) ed.repaintText()
+  }, delay))
+}
+
+/** The file the Pipeline view last read (switching files refreshes it sooner). */
+let lastPipelineDoc: unknown = null
+
 function refreshOutlineSoon(delay = 500): void {
   window.clearTimeout(outlineTimer)
   outlineTimer = window.setTimeout(() => void refreshOutline(), delay)
@@ -1306,6 +1417,9 @@ function applySettings(s: Settings, restartLsp = true): void {
   root.style.setProperty('--line-height', `${Math.round(s.fontSize * 1.45)}px`)
   root.style.setProperty('--tab-size', String(s.tabSize))
   root.dataset.theme = s.theme
+  root.dataset.density = s.density
+  root.dataset.animations = s.animations ? 'on' : 'off'
+  floatingPanels.syncLook()
   for (const ed of editors) ed.refreshLayout(s.tabSize)
   terminal.applyTheme(s.fontSize)
   codeTools.sync(workspace.docs) // Ruff warnings on or off (only called once everything is set up)
@@ -1379,6 +1493,9 @@ workspace.subscribe(() => {
   }
   updateWelcome()
   refreshOutlineSoon(workspace.active === outlineDoc ? 600 : 50)
+  if (workspace.active !== lastPipelineDoc) semanticSoon(workspace.active, 60)
+  refreshPipelineSoon(workspace.active === lastPipelineDoc ? 900 : 60)
+  lastPipelineDoc = workspace.active
   if (gitView.status) refreshBlameSoon(blame?.doc === workspace.active ? 1500 : 150)
   refreshFilePanels()
   syncGroups()
@@ -1756,8 +1873,8 @@ commands.register({ id: 'find.close', title: 'Close Find', keys: 'Escape', when:
 const parentDir = (path: string) => path.replace(/[\\/][^\\/]*$/, '')
 let lastRunId = 0
 
-/** Run the selected run configuration, or the open file (Ctrl+F5). */
-async function runCurrentFile(): Promise<void> {
+/** Run the selected run configuration, or the open file (Ctrl+F5). `traceData`: also record a function's values line by line. */
+async function runCurrentFile(traceData?: string): Promise<void> {
   panel.show('output')
   const spec = launchSpec()
   if ('error' in spec) {
@@ -1773,8 +1890,9 @@ async function runCurrentFile(): Promise<void> {
   // Auto-save before running, so Python sees what's in the editor.
   if (!(await saveAllDirty((m) => output.error(`Run cancelled: ${m}`)))) return
   // With the Graph in view (and the setting on), the run shows where it's at on it.
-  const trace = settings.showRunsOnGraph && tasks.isShown('graph')
-  await window.api.runPython({ ...spec, root: rootFolder ?? spec.cwd, python: settings.pythonPath || undefined, trace })
+  // With the Network panel in view, the run reports its web requests there too.
+  const trace = (settings.showRunsOnGraph && tasks.isShown('graph')) || tasks.isShown('network')
+  await window.api.runPython({ ...spec, root: rootFolder ?? spec.cwd, python: settings.pythonPath || undefined, trace: trace || !!traceData, ...(traceData ? { traceData } : {}) })
   editor.focus()
 }
 
@@ -1882,11 +2000,57 @@ let lastExit: { runId: number; code: number | null } | null = null
 // ---------- live run feedback (a traced run's updates) ----------
 /** Boxes whose function is running (lit like during a Test call). */
 const runBoxes = new Set<string>()
+/** Requests already sparked on the Graph (a record is re-sent as its body arrives). */
+const sparkedNet = new Set<number>()
 window.api.onRunTrace((e) => {
   if (e.runId < lastRunId) return
+  if ((e.message as { t?: unknown } | null)?.t === 'hello') {
+    netLog.begin(e.runId)
+    sparkedNet.clear()
+    networkView.setRunning(true)
+    recursion.begin(e.runId)
+    dataLog.begin(e.runId)
+    replayTicks = []
+    graphView.setReplay(0, () => {}, () => {})
+    return
+  }
+  const data = parseDataMessage(e.message)
+  if (data) {
+    if (dataLog.runId === e.runId) {
+      dataLog.add(data)
+      pipelineView.dataChanged()
+      if (data.kind === 'io') recursionChanged()
+    }
+    return
+  }
+  const rec = parseRec(e.message)
+  if (rec) {
+    if (recursion.runId === e.runId) {
+      recursion.add(rec)
+      recursionChanged()
+    }
+    return
+  }
+  const net = parseNet(e.message)
+  if (net) {
+    if (netLog.runId !== e.runId) return
+    netLog.upsert(net)
+    networkView.update()
+    if (stateOf(net) !== 'pending' && !sparkedNet.has(net.id) && settings.showRunsOnGraph && tasks.isShown('graph')) {
+      sparkedNet.add(net.id)
+      const spark = planNetSpark(net, graphView.runView(), boxes.boxes)
+      if (spark) graphView.showNet(spark)
+    }
+    return
+  }
   const tick = parseTrace(e.message)
-  if (tick === 'end') return endRunOnGraph()
+  if (tick === 'end') {
+    endRunOnGraph()
+    offerReplay()
+    return
+  }
   if (!tick) return
+  if (replayTicks.length < 6000) replayTicks.push(tick)
   const frame = planFrame(tick, graphView.runView(), boxes.boxes)
   graphView.showRun(frame)
   const lit = new Set(frame.boxes)
@@ -1896,8 +2060,70 @@ window.api.onRunTrace((e) => {
     graphView.redrawBoxes()
   }
 })
+/** The last traced run's updates, to replay on the graph. */
+let replayTicks: TraceTick[] = []
+function offerReplay(): void {
+  const ticks = replayTicks
+  graphView.setReplay(ticks.length, (i) => graphView.showRun(planFrame(ticks[i], graphView.runView(), boxes.boxes)), () => graphView.endRun())
+}
+
+/** The last traced run's recursion trees (shown in a function's details on the Graph). */
+const recursion = new RecursionStore()
+let recursionRedraw = 0
+function recursionChanged(): void {
+  // Trees update many times a second while the program recurses: redraw the details at most twice a second.
+  if (recursionRedraw) return
+  recursionRedraw = window.setTimeout(() => {
+    recursionRedraw = 0
+    graphView.refreshSide()
+  }, 500)
+}
+
+/** A node's recursion trees from the last run: a line per tree, which opens its drawing. */
+function recursionDetails(node: string): HTMLElement | null {
+  const funcs = node.includes(':') ? [node] : recursion.funcs().filter((f) => f.slice(0, f.indexOf(':')) === node)
+  const trees = funcs.flatMap((f) => recursion.forFunc(f))
+  const io = node.includes(':') ? dataLog.io(node) : undefined
+  if (!trees.length && !io) return null
+  const box = document.createElement('div')
+  box.className = 'graph-run-details'
+  if (io) {
+    // What went in and what came out (its first calls in the last traced run).
+    for (const call of io.calls) {
+      const line = document.createElement('div')
+      line.className = 'graph-io'
+      const ins = Object.entries(call.in).map(([k, v]) => `${k} = ${summaryText(v)}`).join(', ')
+      line.textContent = `${ins || '(no inputs)'} → ${call.out ? summaryText(call.out) : 'raised / no value'}`
+      line.title = line.textContent
+      box.append(line)
+    }
+    if (io.total > io.calls.length) {
+      const more = document.createElement('div')
+      more.className = 'graph-io-more'
+      more.textContent = `Called ${io.total} times (the first ${io.calls.length} shown)`
+      box.append(more)
+    }
+  }
+  for (const t of trees) {
+    const name = t.func.slice(t.func.indexOf(':') + 1).split('.').pop() ?? t.func
+    const b = document.createElement('button')
+    b.className = 'graph-button'
+    const depth = t.nodes.reduce((d, n, i, all) => {
+      let k = 0
+      for (let j = i; all[j].parent >= 0; j = all[j].parent) k++
+      return Math.max(d, k + 1)
+    }, 0)
+    b.textContent = `Recursion tree: ${name}(${t.nodes[0].args}), ${t.total} calls, ${depth} deep`
+    b.title = t.total > t.nodes.length ? `Shows the first ${t.nodes.length} calls` : 'Every call, with its arguments and what it returned'
+    b.addEventListener('click', () => graphView.showOverlay(`Recursion: ${name}(${t.nodes[0].args})${t.total > t.nodes.length ? ` (first ${t.nodes.length} of ${t.total} calls)` : ''}`, drawRecursionTree(t, name)))
+    box.append(b)
+  }
+  return box
+}
+
 function endRunOnGraph(): void {
   graphView.endRun()
+  networkView.setRunning(false)
   if (runBoxes.size) {
     runBoxes.clear()
     graphView.redrawBoxes()
@@ -1943,7 +2169,7 @@ commands.register({
     void runCurrentFile()
   }
 })
-commands.register({ id: 'run.file', title: 'Run Python File (without debugging)', keys: 'Ctrl+F5', when: canLaunch, run: runCurrentFile })
+commands.register({ id: 'run.file', title: 'Run Python File (without debugging)', keys: 'Ctrl+F5', when: canLaunch, run: () => void runCurrentFile() })
 commands.register({ id: 'run.selectConfig', title: 'Select Run Configuration…', when: () => rootFolder !== null, run: pickRunConfig })
 commands.register({ id: 'run.editConfigs', title: 'Edit Run Configurations and Tasks (run.json)', when: () => rootFolder !== null, run: () => void editRunFile() })
 commands.register({ id: 'tasks.run', title: 'Run Task…', keys: 'Ctrl+Shift+B', when: () => rootFolder !== null, run: pickTask })
@@ -2334,7 +2560,45 @@ function addBox(module: string | null): void {
   tasks.reveal('box')
 }
 
-const toolbox = new Toolbox({ add: () => addBox(null) })
+const toolbox = new Toolbox({ add: () => addBox(null), addOpenApi: () => void addApiFromOpenApi() })
+
+/** "Add API from OpenAPI…": generate a client module from a description, its .env keys, and (if asked) its import. */
+async function addApiFromOpenApi(): Promise<void> {
+  const root = rootFolder
+  if (!root) return void alert('Open a project folder first (Ctrl+O).')
+  const active = workspace.active?.path ?? null
+  const currentFile = active && /\.py$/i.test(active) && isInside(active, root) ? active.slice(root.length).replace(/^[\\/]+/, '').replace(/\\/g, '/') : null
+  const c = await showOpenApiDialog({
+    load: (source) => window.api.loadOpenApi(source),
+    pick: () => window.api.pickOpenApiFile(),
+    currentFile,
+    preview: (title, code) => showCodeDialog({ title, code, ok: 'Close' })
+  })
+  if (!c || rootFolder !== root) return
+  const code = generateClient(c.spec, c.chosen)
+  const existing = await boxFiles.read(c.file)
+  if (existing !== null && existing.trim()) {
+    const state = generatedState(existing)
+    if (!state && !confirm(`${c.file} already exists, and Forge didn't write it. Replace it with the generated client?`)) return
+    if (state?.edited && !(await showCodeDialog({ title: `${c.file} was edited since Forge generated it. Replace your edits? (- yours, + new)`, diff: codeLineDiff(existing, code), ok: 'Replace' }))) return
+  }
+  try {
+    await boxFiles.write(c.file, code)
+    // Settings it reads: added to .env for you to fill in (existing values are kept).
+    const have = new Set(await window.api.envNames(root))
+    for (const key of envKeys(c.spec)) if (!have.has(key)) await window.api.setEnvValue(root, key, key.endsWith('_BASE_URL') ? c.spec.baseUrl : '')
+    if (c.importInto) {
+      const names = [...c.chosen]
+      const line = names.length <= 6 ? importLine(c.file, names) : `import ${c.file.replace(/\.py$/, '').split('/').join('.')} as ${c.spec.slug}`
+      const text = await boxFiles.read(c.importInto)
+      if (text !== null) await boxFiles.write(c.importInto, addImport(text, line))
+    }
+    statusNote(`Wrote ${c.file}: ${c.chosen.size} function${c.chosen.size === 1 ? '' : 's'} for ${c.spec.title}. Fill in its settings in .env.`)
+  } catch (err) {
+    alert(`Couldn't write the client: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+commands.register({ id: 'api.addOpenApi', title: 'Add API from OpenAPI Description…', run: () => void addApiFromOpenApi() })
 const boxSettings = new BoxSettings(boxes, {
   // The last response stays in the window: only the box's settings are sent.
   testCall: (box, requestId) => window.api.apiTestCall(rootFolder ?? '', serializeBoxes([box]).boxes[0], requestId),
@@ -2377,8 +2641,152 @@ async function loadBoxes(folder: string): Promise<void> {
   void boxSettings.refreshEnv()
 }
 
+// ---------- Pipeline: a function's data flow, blocks, and values from a run (5.4) ----------
+const dataLog = new DataLog()
+function projectRel(path: string): string | null {
+  return rootFolder && isInside(path, rootFolder) ? path.slice(rootFolder.length).replace(/^[\\/]+/, '').replace(/\\/g, '/') : null
+}
+function openRel(rel: string, line: number): void {
+  if (!rootFolder) return
+  const sep = rootFolder.includes('\\') ? '\\' : '/'
+  void openFile(rootFolder.replace(/[\\/]+$/, '') + sep + rel.split('/').join(sep), line)
+}
+const pipelineView = new PipelineView({
+  current: () => {
+    const doc = workspace.active
+    const rel = doc ? projectRel(doc.path) : null
+    if (!doc || !rel || !/\.pyw?$/i.test(rel)) return null
+    return { rel, text: doc.getText(), module: moduleOfPath(rel) }
+  },
+  readFlow: (text, func) => (rootFolder ? window.api.readDataflow(rootFolder, text, func, settings.pythonPath || undefined) : Promise.resolve({ functions: [], error: 'Open a project folder first.' })),
+  read: (rel) => boxFiles.read(rel),
+  write: (rel, text) => boxFiles.write(rel, text),
+  blocks: () => [...builtinBlocks(), ...(graphView.projectGraph ? projectBlocks(graphView.projectGraph) : [])],
+  openAt: (rel, line) => openRel(rel, line),
+  runWithData: (func) => void runCurrentFile(func),
+  ask: (placeholder, initial, verb) => new Promise((resolve) => palette.prompt(placeholder, (text) => resolve(text), initial, verb)),
+  note: (message) => statusNote(message),
+  data: dataLog
+})
+panel.addView('pipeline', 'Pipeline', pipelineView.body, pipelineView.actions, () => void pipelineView.refresh())
+let pipelineTimer = 0
+function refreshPipelineSoon(delay = 700): void {
+  window.clearTimeout(pipelineTimer)
+  pipelineTimer = window.setTimeout(() => {
+    if (tasks.isShown('pipeline')) void pipelineView.refresh()
+  }, delay)
+}
+/** From the Graph: open the function's file and show its data flow. */
+async function showDataFlow(node: string): Promise<void> {
+  const g = graphView.projectGraph
+  const module = node.slice(0, node.indexOf(':'))
+  const m = g?.modules.find((x) => x.id === module)
+  const s = m?.symbols.find((x) => x.id === node)
+  if (!m || !s) return
+  openRel(m.path, s.line - 1)
+  tasks.reveal('pipeline')
+  pipelineView.show(s.qual)
+}
+/** Visual navigation: the project's files as a map (sized by lines, grouped by folder). */
+async function openProjectMap(): Promise<void> {
+  if (!rootFolder) return void statusNote('Open a project folder first (Ctrl+O).')
+  const g = projectGraph && projectGraphFolder === rootFolder ? projectGraph : (await scanProjectGraph()).graph
+  if (!g) return void statusNote("Couldn't read the project for the map (is Python installed?).")
+  const problems = new Map<string, number>()
+  for (const [path, list] of languages.allDiagnostics()) {
+    const rel = projectRel(path)
+    const n = list.filter((d) => d.severity <= 2).length
+    if (rel && n) problems.set(rel, n)
+  }
+  const repo = gitView.status
+  const changed = new Set(repo ? [...repo.staged, ...repo.unstaged, ...repo.conflicts].map((c) => c.path) : [])
+  const active = workspace.active ? projectRel(workspace.active.path) : null
+  showProjectMap({
+    files: g.modules.map((m) => ({ path: m.path, lines: m.lines })),
+    current: active,
+    problems,
+    changed,
+    recent: workspace.docs.map((d) => projectRel(d.path)).filter((p): p is string => !!p),
+    open: (rel) => {
+      tasks.switchTo('code')
+      openRel(rel, 0)
+    }
+  })
+}
+// ---------- Updates: a newer Forge on GitHub Releases ----------
+let updateState: UpdateState | null = null
+window.api.onUpdateState((s) => showUpdateState(s))
+function showUpdateState(s: UpdateState): void {
+  updateState = s
+  const b = $('sb-update') as HTMLButtonElement
+  if (s.kind === 'available') {
+    b.hidden = false
+    b.textContent = `⬆ Forge ${s.latest}`
+    b.title = s.selfUpdate ? 'A new version of Forge: click to see what\'s new and install it' : 'A new version of Forge: click to see what\'s new and download it'
+    if (s.manual) void offerUpdate()
+  } else if (s.kind === 'downloading') {
+    b.hidden = false
+    b.textContent = `⬇ Update ${s.percent}%`
+    b.title = 'Downloading the update'
+  } else if (s.kind === 'ready') {
+    b.hidden = false
+    b.textContent = '⟳ Restart to update'
+    b.title = `Forge ${s.latest ?? ''} is downloaded: restart to finish (or it installs when you quit)`
+  } else {
+    b.hidden = true
+    if (s.kind === 'checking' && s.manual) statusNote('Checking for updates…')
+    if (s.kind === 'none' && s.manual) statusNote(`Forge ${s.current} is the newest version.`)
+    if (s.kind === 'error' && 'manual' in s && s.manual) statusNote(`Couldn't check for updates: ${s.message}`)
+  }
+}
+async function offerUpdate(): Promise<void> {
+  const s = updateState
+  if (s?.kind !== 'available') return
+  const ok = await showCodeDialog({
+    title: `Forge ${s.latest} is available (you have ${s.current})`,
+    code: s.notes.trim() || 'See the release page for what\'s new.',
+    ok: s.selfUpdate ? 'Download and install' : 'Open the download page'
+  })
+  if (ok) await window.api.downloadUpdate()
+}
+$('sb-update').addEventListener('click', () => {
+  if (updateState?.kind === 'available') void offerUpdate()
+  else if (updateState?.kind === 'ready' && confirm('Restart Forge now to finish updating? (If anything is unsaved, you\'ll be asked first.)')) void window.api.installUpdate()
+})
+commands.register({ id: 'help.checkUpdates', title: 'Check for Updates…', run: () => void window.api.checkForUpdates(true) })
+// A quiet look a little after starting (Settings → Updates turns it off).
+window.setTimeout(() => {
+  if (settings.checkForUpdates) void window.api.checkForUpdates(false).catch(() => {})
+}, 15_000)
+
+commands.register({ id: 'nav.projectMap', title: 'Project Map (find a file visually)', keys: 'Ctrl+Alt+M', run: () => void openProjectMap() })
+commands.register({ id: 'view.pipeline', title: 'Show Pipeline (data flow of a function)', run: () => panel.show('pipeline') })
+
+// ---------- Network panel: the web requests a traced run makes ----------
+const netLog = new NetLog()
+const networkView = new NetworkView(netLog, {
+  openFunc: (func) => {
+    if (graphView.openTraced(func)) return
+    // The Graph hasn't scanned yet: open the module's file by its name.
+    const module = func.startsWith('module:') ? func.slice(7) : func.slice(0, func.indexOf(':'))
+    if (!rootFolder) return
+    const sep = rootFolder.includes('\\') ? '\\' : '/'
+    tasks.switchTo('code')
+    void openFile(rootFolder.replace(/[\\/]+$/, '') + sep + module.split('.').join(sep) + '.py', 0)
+  },
+  clear: () => {
+    netLog.clear()
+    networkView.update()
+  }
+})
+panel.addView('network', 'Network', networkView.body, networkView.actions)
+commands.register({ id: 'panel.network', title: 'Show Network (web requests while running)', run: () => panel.show('network') })
+
 const graphView = new GraphView({
   scan: () => scanProjectGraph(),
+  debugHistory: (node) => debugHistoryView(debugTrail, node),
+  runDetails: (node) => recursionDetails(node),
+  showDataFlow: (node) => void showDataFlow(node),
   boxes: {
     list: () => boxes.boxes,
     selected: () => boxes.selected,
@@ -2878,7 +3286,45 @@ function scheduleStatus(): void {
   })
 }
 
+/** Context-aware tools: a few suggestions in the top bar, worked out a moment after things change. */
+let suggestTimer = 0
+function suggestionsSoon(): void {
+  window.clearTimeout(suggestTimer)
+  suggestTimer = window.setTimeout(renderSuggestions, 400)
+}
+function renderSuggestions(): void {
+  const doc = workspace.active
+  const python = doc && /\.pyw?$/i.test(doc.path) && !doc.large ? doc : null
+  const repo = gitView.status
+  const list = suggestTools({
+    task: tasks.current,
+    file: python ? { path: python.path, text: python.getText() } : null,
+    debug: session?.state ?? 'idle',
+    lastRunFailed: !!lastExit && lastExit.runId === lastRunId && lastExit.code !== 0 && lastExit.code !== null,
+    problems: python ? languages.diagnosticsFor(python.path).filter((d) => d.severity <= 2).length : 0,
+    changes: repo ? new Set([...repo.staged, ...repo.unstaged, ...repo.conflicts].map((c) => c.path)).size : 0,
+    shown: (panel) => tasks.isShown(panel)
+  })
+  const box = $('suggestions')
+  const key = list.map((s) => s.id + s.label).join('|')
+  if (box.dataset.key === key) return
+  box.dataset.key = key
+  box.replaceChildren(...list.map((s) => {
+    const b = document.createElement('button')
+    b.className = 'suggestion'
+    b.textContent = s.label
+    b.title = s.why
+    b.addEventListener('click', () => {
+      if (s.panel) panel.show(s.panel)
+      else if (s.command) commands.run(s.command)
+      suggestionsSoon()
+    })
+    return b
+  }))
+}
+
 function updateStatus(): void {
+  suggestionsSoon()
   const doc = workspace.active
   const set = (id: string, text: string) => {
     const el = $(id)

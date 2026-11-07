@@ -7,13 +7,13 @@
  * right side lists the findings: import cycles, possibly unused functions,
  * routes, web APIs called, environment variables.
  */
-import type { ProjectGraph } from '../../shared/projectGraph'
+import { describeUnreachable, type ProjectGraph } from '../../shared/projectGraph'
 import { layoutGraph, type Layout } from './layout'
 import { buildView, neighbourhood, type GraphViewData, type ViewNode, type ViewOptions } from './viewModel'
 import type { ApiBox } from '../../shared/boxes'
 import { boxBounds, drawBoxLayer, panToShow, placeBoxes, type PlacedBox } from './boxLayer'
 import { BOX_DRAG_TYPE } from '../boxes/toolbox'
-import type { RunFrame, RunView } from './liveRun'
+import type { NetSpark, RunFrame, RunView } from './liveRun'
 
 /** Connect boxes shown on the graph. */
 export interface GraphBoxHooks {
@@ -34,6 +34,12 @@ export interface GraphHooks {
   /** Open a module's file (relative path) at a 0-based line. */
   openModule(path: string, line: number): void
   boxes?: GraphBoxHooks
+  /** While debugging: a function's variables at each pause (for its details), or null. */
+  debugHistory?(node: string): HTMLElement | null
+  /** From the last traced run (recursion trees): shown in a node's details, or null. */
+  runDetails?(node: string): HTMLElement | null
+  /** Open a function's data flow (the Pipeline view). */
+  showDataFlow?(node: string): void
 }
 
 const SVG = 'http://www.w3.org/2000/svg'
@@ -73,6 +79,16 @@ export class GraphView {
   private readonly modeButtons: Record<'modules' | 'calls', HTMLButtonElement>
   private readonly focusChip: HTMLButtonElement
   private readonly status: HTMLSpanElement
+  private readonly canvas: HTMLDivElement
+  /** Replay of the last traced run: ▶, a slider and a speed. */
+  private readonly replayBox: HTMLSpanElement
+  private replay: { count: number; show(i: number): void; done(): void; timer: number | null; at: number } | null = null
+  /** Debugging: the paused node, the stack's nodes, and the variables card beside the paused node. */
+  private debugAt: string | null = null
+  private debugStack: string[] = []
+  private card: HTMLElement | null = null
+  /** A panel over the canvas (object relationships, recursion tree). */
+  private overlay: HTMLElement | null = null
   private graph: ProjectGraph | null = null
   private loading = false
   private opts: ViewOptions = { mode: 'modules', focus: null, showExternal: false, showTests: false, showHosts: true, query: '' }
@@ -136,12 +152,15 @@ export class GraphView {
       return b
     }
     this.status = el('span', 'graph-status')
+    this.replayBox = el('span', 'graph-replay')
+    this.replayBox.hidden = true
     bar.append(
       title, seg, this.focusChip, this.search,
       toggle('Tests', 'Show test files', 'showTests'),
       toggle('Packages', 'Show the packages each module imports (standard library and installed)', 'showExternal'),
       toggle('Web APIs', 'Show the web addresses the code calls (requests, httpx, aiohttp)', 'showHosts'),
       this.status,
+      this.replayBox,
       button('Fit', 'Fit the graph in view (F)', () => this.fit()),
       button('⟳', 'Analyse the project again', () => void this.refresh()),
     )
@@ -149,6 +168,7 @@ export class GraphView {
     // ----- canvas + side -----
     const body = el('div', 'graph-body')
     const canvas = el('div', 'graph-canvas')
+    this.canvas = canvas
     this.svgEl = svg('svg', {}, 'graph-svg')
     const defs = svg('defs')
     for (const [id, cls] of [['g-arrow', 'arrow'], ['g-arrow-cyc', 'arrow cyc'], ['g-arrow-out', 'arrow out'], ['g-arrow-in', 'arrow in']]) {
@@ -288,6 +308,7 @@ export class GraphView {
     this.sparkLayer = svg('g', {}, 'graph-sparks')
     this.world.replaceChildren(edgeLayer, this.sparkLayer, nodeLayer)
     if (this.runGlow) this.nodeEls.get(this.runGlow)?.classList.add('run-at')
+    this.markDebug()
     this.boxLayer = null
     this.redrawBoxes()
   }
@@ -351,6 +372,7 @@ export class GraphView {
 
   private applyView(): void {
     this.world.setAttribute('transform', `translate(${this.view.x},${this.view.y}) scale(${this.view.k})`)
+    this.placeCard()
   }
 
   /** Fit the whole graph in view (not bigger than 100%). */
@@ -391,18 +413,222 @@ export class GraphView {
     }
     const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
     if (reducedMotion) return
-    for (const s of frame.sparks) {
-      const forward = this.edgeEls.find((e) => e.from === s.from && e.to === s.to)
-      const edge = forward ?? this.edgeEls.find((e) => e.from === s.to && e.to === s.from)
-      const d = edge?.el.getAttribute('d')
-      if (!d) continue
-      const spark = svg('circle', { r: 3.5 }, 'run-spark')
-      const move = svg('animateMotion', { dur: '0.5s', fill: 'freeze', path: d, begin: 'indefinite', ...(forward ? {} : { keyPoints: '1;0', keyTimes: '0;1', calcMode: 'linear' }) })
-      spark.append(move)
-      this.sparkLayer.append(spark)
-      ;(move as SVGAnimationElement).beginElement?.()
-      setTimeout(() => spark.remove(), 550)
+    for (const s of frame.sparks) this.sparkAlong(s.from, s.to)
+  }
+
+  /** A web request finished: a spark from the code to the API (green ok, red failed), and a ring where it lands. */
+  showNet(s: NetSpark): void {
+    if (!this.layout) return
+    const centre = (r: { x: number; y: number; width: number; height: number } | undefined) => (r ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null)
+    const a = centre(this.layout.nodes.get(s.from))
+    if (!a) return
+    const b = s.to === null ? null : 'node' in s.to ? centre(this.layout.nodes.get(s.to.node)) : centre(this.placedBoxes.get(s.to.box))
+    const cls = s.ok ? 'net-ok' : 'net-failed'
+    const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+    const ring = (p: { x: number; y: number }, delay: number) => {
+      const c = svg('circle', { cx: p.x, cy: p.y, r: 6 }, `net-ring ${cls}`)
+      setTimeout(() => {
+        this.world.append(c) // above the nodes and boxes
+        setTimeout(() => c.remove(), 700)
+      }, delay)
     }
+    if (!b || reducedMotion) return ring(b ?? a, 0)
+    const spark = svg('circle', { r: 4 }, `net-spark ${cls}`)
+    const move = svg('animateMotion', { dur: '0.45s', fill: 'freeze', path: `M${a.x},${a.y} L${b.x},${b.y}`, begin: 'indefinite' })
+    spark.append(move)
+    this.sparkLayer.append(spark)
+    ;(move as SVGAnimationElement).beginElement?.()
+    setTimeout(() => spark.remove(), 500)
+    ring(b, 420)
+  }
+
+  /** A spark along the drawn edge between two nodes (backwards if the edge goes the other way). */
+  private sparkAlong(from: string, to: string): void {
+    const forward = this.edgeEls.find((e) => e.from === from && e.to === to)
+    const edge = forward ?? this.edgeEls.find((e) => e.from === to && e.to === from)
+    const d = edge?.el.getAttribute('d')
+    if (!d) return
+    const spark = svg('circle', { r: 3.5 }, 'run-spark')
+    const move = svg('animateMotion', { dur: '0.5s', fill: 'freeze', path: d, begin: 'indefinite', ...(forward ? {} : { keyPoints: '1;0', keyTimes: '0;1', calcMode: 'linear' }) })
+    spark.append(move)
+    this.sparkLayer.append(spark)
+    ;(move as SVGAnimationElement).beginElement?.()
+    setTimeout(() => spark.remove(), 550)
+  }
+
+  /** Redraw the side panel (something it shows changed, e.g. a recursion tree arrived). */
+  refreshSide(): void {
+    this.renderSide()
+  }
+
+  /**
+   * After a traced run: replay it on the graph. `show(i)` draws update i of
+   * `count`; `done()` clears the glow when it finishes or is stopped.
+   */
+  setReplay(count: number, show: (i: number) => void, done: () => void): void {
+    this.stopReplay()
+    this.replay = count > 1 ? { count, show, done, timer: null, at: 0 } : null
+    this.replayBox.hidden = !this.replay
+    if (!this.replay) return this.replayBox.replaceChildren()
+    const play = el('button', 'graph-button', '▶ Replay')
+    play.title = 'Play the last run again on the graph'
+    const slider = el('input', 'graph-replay-slider')
+    slider.type = 'range'
+    slider.min = '0'
+    slider.max = String(count - 1)
+    slider.value = '0'
+    slider.setAttribute('aria-label', 'Position in the run')
+    const speed = el('select', 'graph-replay-speed')
+    speed.setAttribute('aria-label', 'Replay speed')
+    for (const [v, t] of [['0.25', '¼×'], ['0.5', '½×'], ['1', '1×'], ['2', '2×'], ['4', '4×']]) speed.append(new Option(t, v))
+    speed.value = '1'
+    const r = this.replay
+    const step = () => {
+      r.show(r.at)
+      slider.value = String(r.at)
+      if (r.at >= r.count - 1) {
+        this.stopReplay()
+        return
+      }
+      r.at++
+      r.timer = window.setTimeout(step, 100 / Number(speed.value))
+    }
+    play.addEventListener('click', () => {
+      if (r.timer !== null) return this.stopReplay()
+      if (r.at >= r.count - 1) r.at = 0
+      play.textContent = '■ Stop'
+      step()
+    })
+    slider.addEventListener('input', () => {
+      if (r.timer !== null) {
+        window.clearTimeout(r.timer)
+        r.timer = null
+        play.textContent = '▶ Replay'
+      }
+      r.at = Number(slider.value)
+      r.show(r.at)
+    })
+    this.replayBox.replaceChildren(play, slider, speed)
+  }
+
+  private stopReplay(): void {
+    const r = this.replay
+    if (!r) return
+    if (r.timer !== null) window.clearTimeout(r.timer)
+    r.timer = null
+    const play = this.replayBox.querySelector('button')
+    if (play) play.textContent = '▶ Replay'
+    r.done()
+  }
+
+  /** The analysed project (null until the first scan). */
+  get projectGraph(): ProjectGraph | null {
+    return this.graph
+  }
+
+  /**
+   * Paused in the debugger: the paused function glows, the stack's nodes and
+   * the calls between them are marked, calls not seen before get a spark,
+   * and `card` (its variables) sits beside the paused node.
+   */
+  showDebug(p: { at: string | null; stack: string[]; newEdges: [string, string][]; card: HTMLElement | null }): void {
+    this.clearDebugMarks()
+    this.debugAt = p.at
+    this.debugStack = p.stack
+    this.markDebug()
+    if (this.statusBeforeRun === null) {
+      this.statusBeforeRun = this.status.textContent ?? ''
+      this.status.classList.add('running')
+    }
+    this.status.textContent = '⏸ Paused (debugging)'
+    const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (!reducedMotion) for (const [a, b] of p.newEdges) this.sparkAlong(this.debugView(a), this.debugView(b))
+    this.card?.remove()
+    this.card = p.card
+    if (p.card) {
+      this.canvas.append(p.card)
+      this.placeCard()
+    }
+  }
+
+  /** Running again (step / continue): the marks stay until the next pause, the card goes. */
+  debugRunning(): void {
+    this.card?.remove()
+    this.card = null
+    if (this.statusBeforeRun !== null) this.status.textContent = '● Running (debugging)'
+  }
+
+  /** The debug session ended. */
+  endDebug(): void {
+    this.clearDebugMarks()
+    this.debugAt = null
+    this.debugStack = []
+    this.card?.remove()
+    this.card = null
+    if (this.statusBeforeRun !== null) {
+      this.status.textContent = this.statusBeforeRun
+      this.status.classList.remove('running')
+      this.statusBeforeRun = null
+    }
+  }
+
+  /** A traced id as this view shows it (the module in the Modules view). */
+  private debugView(id: string): string {
+    if (this.opts.mode === 'calls') return id
+    return id.startsWith('module:') ? id.slice(7) : id.slice(0, id.indexOf(':'))
+  }
+
+  private markDebug(): void {
+    if (!this.debugAt && !this.debugStack.length) return
+    const stack = this.debugStack.map((id) => this.debugView(id))
+    stack.forEach((id, i) => this.nodeEls.get(id)?.classList.add(i === 0 ? 'debug-at' : 'debug-stack'))
+    for (let i = stack.length - 1; i > 0; i--) {
+      const from = stack[i]
+      const to = stack[i - 1]
+      for (const e of this.edgeEls) if ((e.from === from && e.to === to) || (e.from === to && e.to === from)) e.el.classList.add('debug-edge')
+    }
+  }
+
+  private clearDebugMarks(): void {
+    for (const g of this.nodeEls.values()) g.classList.remove('debug-at', 'debug-stack')
+    for (const e of this.edgeEls) e.el.classList.remove('debug-edge')
+  }
+
+  /** Keep the variables card beside the paused node as the graph pans and zooms. */
+  private placeCard(): void {
+    if (!this.card) return
+    const id = this.debugAt ? this.debugView(this.debugAt) : null
+    const p = id ? this.layout?.nodes.get(id) : undefined
+    if (!p) {
+      this.card.style.display = 'none'
+      return
+    }
+    this.card.style.display = ''
+    this.card.style.left = `${Math.round(this.view.x + (p.x + p.width) * this.view.k + 10)}px`
+    this.card.style.top = `${Math.round(this.view.y + p.y * this.view.k)}px`
+  }
+
+  /** A panel over the canvas (object relationships, a recursion tree); Esc or ✕ closes it. */
+  showOverlay(title: string, content: Node): void {
+    this.closeOverlay()
+    const panel = el('div', 'graph-overlay')
+    const head = el('div', 'graph-overlay-head')
+    const close = el('button', 'graph-button', '✕')
+    close.title = 'Close (Esc)'
+    close.addEventListener('click', () => this.closeOverlay())
+    head.append(el('span', '', title), close)
+    const body = el('div', 'graph-overlay-body')
+    body.append(content)
+    panel.append(head, body)
+    for (const ev of ['pointerdown', 'wheel', 'dblclick']) panel.addEventListener(ev, (e) => e.stopPropagation())
+    this.canvas.append(panel)
+    this.overlay = panel
+    this.el.focus()
+  }
+
+  closeOverlay(): void {
+    this.overlay?.remove()
+    this.overlay = null
   }
 
   /** The traced run ended: the glow fades and the status line comes back. */
@@ -520,7 +746,8 @@ export class GraphView {
     if (e.key === 'Escape') {
       e.stopPropagation()
       e.preventDefault()
-      if (typing && this.search.value) {
+      if (this.overlay) this.closeOverlay()
+      else if (typing && this.search.value) {
         this.search.value = ''
         this.setOptions({ query: '' })
       } else if (this.selected) this.select(null)
@@ -545,7 +772,7 @@ export class GraphView {
   }
 
   /** Select a node and bring it into view. */
-  private reveal(id: string): void {
+  reveal(id: string): void {
     const p = this.layout?.nodes.get(id)
     if (!p) return
     const box = this.svgEl.getBoundingClientRect()
@@ -560,6 +787,19 @@ export class GraphView {
     const n = this.data.nodes.find((x) => x.id === id)
     const m = n?.module ? this.graph?.modules.find((x) => x.id === n.module) : undefined
     if (n && m) this.hooks.openModule(m.path, n.line ?? 0)
+  }
+
+  /** Open the code for a traced id (`module:qual` or `module:<module>`); false if the graph doesn't know it yet. */
+  openTraced(id: string): boolean {
+    const g = this.graph
+    if (!g) return false
+    const isModule = id.startsWith('module:')
+    const module = isModule ? id.slice(7) : id.slice(0, id.indexOf(':'))
+    const m = g.modules.find((x) => x.id === module)
+    if (!m) return false
+    const s = isModule ? undefined : m.symbols.find((x) => x.id === id)
+    this.hooks.openModule(m.path, s ? s.line - 1 : 0)
+    return true
   }
 
   private openAt(module: string, line: number): void {
@@ -598,6 +838,8 @@ export class GraphView {
       ...this.section('Import cycles', g.cycles.map((c) => this.item(c.join(' ⇄ '), '', () => this.revealModule(c[0]), 'warn')), 'None: no modules import each other in a loop.'),
       ...this.section('Possibly unused', g.unused.map((s) => this.item(`${s.module}.${s.qual}`, `${s.kind}, line ${s.line}`, () => this.openAt(s.module, s.line - 1))),
         'Every function and class is used somewhere.'),
+      ...this.section('Code that never runs', g.unreachable.map((u) => this.item(short(u.module, u.func), describeUnreachable(u), () => this.openAt(u.module, u.line - 1))),
+        'None found.'),
       ...this.section('Web routes', g.routes.map((r) => this.item(`${r.methods.join(' ')} ${r.path}`, short(r.module, r.func), () => this.openAt(r.module, r.line - 1)))),
       ...this.section('Web APIs called', g.http.map((h) => this.item(`${h.method} ${h.url ?? '(address built at run time)'}`, `${h.library} · ${short(h.module, h.func)}`, () => this.openAt(h.module, h.line - 1)))),
       ...this.section('Environment variables', g.env.map((e) => this.item(e.name, e.uses.map((u) => short(u.module, u.func)).join(', ') + (e.uses.every((u) => u.default) ? ' · has a default' : ''),
@@ -625,6 +867,7 @@ export class GraphView {
       actions.append(b)
     }
     if (n.module) action('Open', () => this.open(n.id))
+    if (n.module && this.hooks.showDataFlow && (n.kind === 'function' || n.kind === 'method')) action('Data flow', () => this.hooks.showDataFlow!(n.id))
     const out: HTMLElement[] = [head, sub, actions]
     const nb = neighbourhood(this.data.edges, n.id)
     const label = (id: string) => this.data.nodes.find((x) => x.id === id)?.label ?? id
@@ -635,6 +878,11 @@ export class GraphView {
       action('Show its calls', () => this.setOptions({ mode: 'calls', focus: m.id, query: '' }))
       sub.textContent = `${m.path} · ${n.detail}`
       if (m.error) out.push(el('div', 'graph-side-warn', m.error))
+      if (m.generated) {
+        out.push(el('div', m.generated.edited ? 'graph-side-warn' : 'graph-side-intro', m.generated.edited
+          ? 'Generated by Forge from an OpenAPI description, and edited by hand since. Generating it again asks before replacing your edits.'
+          : 'Generated by Forge from an OpenAPI description (Add API from OpenAPI). Edit it freely: Forge will notice.'))
+      }
       if (n.cyclic) {
         const cycle = g.cycles.find((c) => c.includes(m.id))!
         out.push(el('div', 'graph-side-warn', `Import cycle: ${cycle.join(' ⇄ ')}`))
@@ -646,8 +894,12 @@ export class GraphView {
           this.item(s.qual, `${s.kind}, line ${s.line}`, () => this.openAt(m.id, s.line - 1), g.unused.some((u) => u.id === s.id) ? 'dim' : ''))),
         ...this.section('Routes', m.routes.map((r) => this.item(`${r.methods.join(' ')} ${r.path}`, r.func, () => this.openAt(m.id, r.line - 1)))),
         ...this.section('Web APIs called', m.http.map((h) => this.item(`${h.method} ${h.url ?? '(built at run time)'}`, h.library, () => this.openAt(m.id, h.line - 1)))),
-        ...this.section('Environment variables', m.env.map((e) => this.item(e.name, `line ${e.line}`, () => this.openAt(m.id, e.line - 1))))
+        ...this.section('Environment variables', m.env.map((e) => this.item(e.name, `line ${e.line}`, () => this.openAt(m.id, e.line - 1)))),
+        ...this.section('Code that never runs', g.unreachable.filter((u) => u.module === m.id).map((u) =>
+          this.item(u.func ?? 'top level', describeUnreachable(u), () => this.openAt(m.id, u.line - 1), 'warn')))
       )
+      const run = this.hooks.runDetails?.(m.id)
+      if (run) out.push(...this.section('Last run', [run]))
     } else if (n.kind === 'external' || n.kind === 'host') {
       out.push(...this.section(n.kind === 'host' ? 'Called from' : 'Imported by', links(nb.in)))
       if (n.kind === 'host') {
@@ -657,6 +909,16 @@ export class GraphView {
       }
     } else {
       if (n.unused) out.push(el('div', 'graph-side-warn', 'Nothing in the project seems to use this (it may still be used dynamically, or from outside).'))
+      const history = this.hooks.debugHistory?.(n.id)
+      if (history) out.push(...this.section('While debugging', [history]))
+      const run = this.hooks.runDetails?.(n.id)
+      if (run) out.push(...this.section('Last run', [run]))
+      const qual = n.id.slice(n.id.indexOf(':') + 1)
+      for (const u of g.unreachable.filter((x) => x.module === n.module && x.func === qual)) {
+        const warn = el('button', 'graph-side-warn graph-side-link', `Code that never runs: ${describeUnreachable(u)}`)
+        warn.addEventListener('click', () => this.openAt(u.module, u.line - 1))
+        out.push(warn)
+      }
       out.push(...this.section('Calls', links(nb.out)), ...this.section('Called by', links(nb.in)))
     }
     return out

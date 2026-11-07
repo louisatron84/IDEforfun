@@ -19,6 +19,7 @@
         <button role="tab" data-task="debug" title="Debug (Ctrl+Alt+3)">Debug</button>
         <button role="tab" data-task="run" title="Run: output and tests (Ctrl+Alt+4)">Run</button>
       </nav>
+      <span id="suggestions" aria-label="Suggested tools"></span>
       <span class="spacer"></span>
       <span id="project-label"><span id="folder-name" class="muted">No folder open</span><span id="project-branch" class="muted"></span></span>
       <button id="run-button" title="Run (F5 / Ctrl+F5)">▶ Run</button>
@@ -47,6 +48,7 @@
       <button id="sb-python" class="sb-item"></button>
       <button id="sb-run" class="sb-item" title="What Run (F5) starts: click to pick a run configuration"></button>
       <span class="spacer"></span>
+      <button id="sb-update" class="sb-item hot" hidden></button>
       <span id="sb-note" class="sb-item" role="status"></span>
       <button id="sb-cursor" class="sb-item" title="Go to line (Ctrl+G)"></button>
       <button id="sb-indent" class="sb-item" title="Indentation: change in Settings (Ctrl+,)"></button>

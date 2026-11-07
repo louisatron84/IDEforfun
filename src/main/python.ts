@@ -55,7 +55,7 @@ export class PythonRunner {
 
     // Shown on the Graph: the program starts through the tracer, which reports where it's at.
     this.closeTrace()
-    if (spec.trace) {
+    if (spec.trace || spec.traceData) {
       const id = runId
       this.trace = await openTraceServer((message) => {
         if (!sender.isDestroyed()) sender.send('run:trace', { runId: id, message })
@@ -95,7 +95,7 @@ export class PythonRunner {
       const startedAt = Date.now()
       const target = spec.module ? ['-m', spec.module] : [spec.program ?? '']
       const trace = this.trace
-      const extra = trace ? traceEnv(spec.root || spec.cwd, trace.port, trace.token) : {}
+      const extra = trace ? { ...traceEnv(spec.root || spec.cwd, trace.port, trace.token), ...(spec.traceData ? { FORGE_TRACE_DATA: spec.traceData } : {}) } : {}
       const child = spawn(python, trace ? traceCommand(target, spec.args) : ['-u', ...target, ...spec.args], {
         cwd: spec.cwd,
         env: processEnvSync(spec.root || spec.cwd, { PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1', ...spec.env, ...extra }),

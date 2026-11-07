@@ -137,6 +137,15 @@ const api: IdeApi = {
   readProjectFile: (root, name) => ipcRenderer.invoke('project:readFile', root, name),
   writeProjectFile: (root, name, value) => ipcRenderer.invoke('project:writeFile', root, name, value),
   apiTestCall: (root, box, requestId) => ipcRenderer.invoke('box:testCall', root, box, requestId),
+  loadOpenApi: (source) => ipcRenderer.invoke('openapi:load', source),
+  checkForUpdates: (manual) => ipcRenderer.invoke('update:check', manual),
+  downloadUpdate: () => ipcRenderer.invoke('update:download'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  onUpdateState: (listener) => {
+    ipcRenderer.on('update:state', (_e, state) => listener(state))
+  },
+  readDataflow: (root, source, func, python) => ipcRenderer.invoke('dataflow:read', root, source, func, python),
+  pickOpenApiFile: () => ipcRenderer.invoke('openapi:pick'),
   envNames: (root) => ipcRenderer.invoke('env:names', root),
   setEnvValue: (root, name, value) => ipcRenderer.invoke('env:set', root, name, value),
   envIgnored: (root) => ipcRenderer.invoke('env:ignored', root),

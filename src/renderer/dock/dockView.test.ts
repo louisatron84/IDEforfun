@@ -22,6 +22,37 @@ function setup() {
 }
 
 describe('DockView', () => {
+  it('a floating panel counts as shown, is left where it is by redraws, and comes back hidden', () => {
+    const { view, bodies } = setup()
+    const elsewhere = document.createElement('div')
+    document.body.append(elsewhere)
+    let focused = 0
+    view.setFloating('outline', () => focused++)
+    elsewhere.append(bodies.outline)
+    view.render(defaultArrangement('code'))
+    expect(bodies.outline.parentElement).toBe(elsewhere)
+    expect(view.isShown('outline')).toBe(true)
+    view.focusFloating('outline')
+    expect(focused).toBe(1)
+    view.setFloating('outline', null)
+    expect(view.isFloating('outline')).toBe(false)
+    expect(bodies.outline.parentElement).not.toBe(elsewhere)
+    expect(bodies.outline.hidden).toBe(true)
+  })
+
+  it('panels other than the editor and terminal get a ⧉ button when floating is possible', () => {
+    document.body.innerHTML = ''
+    const container = document.createElement('div')
+    document.body.append(container)
+    const floated: string[] = []
+    const view = new DockView(container, { changed: vi.fn(), closePanel: vi.fn(), drop: vi.fn(), floatPanel: (id) => floated.push(id) })
+    for (const id of PANEL_IDS) view.register({ id, title: id, body: document.createElement('div') })
+    view.render(defaultArrangement('code'))
+    const buttons = [...container.querySelectorAll<HTMLButtonElement>('.dock-float')]
+    expect(buttons.length).toBe(3) // files, where and infile; not the editor or the terminal
+    buttons[0].click()
+    expect(floated).toEqual(['files'])
+  })
   it('a collapsed stack gives its space back to the rest of the split', () => {
     const { container, view } = setup()
     const root = defaultArrangement('code')

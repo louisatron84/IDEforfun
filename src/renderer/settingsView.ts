@@ -210,6 +210,25 @@ export class SettingsView {
     const runGraphRow = this.row('Runs on the graph', "When you Run with the Graph in view, show where the program is at (the run is a little slower)", runGraph)
     runGraphRow.querySelector('label')!.htmlFor = runGraph.id
 
+    const densityRow = this.row('Density', 'How much fits in the panels: Compact shows more, Roomy is larger and easier to read (the editor follows the font size)',
+      this.segmented('density', [['compact', 'Compact'], ['normal', 'Normal'], ['roomy', 'Roomy']], s.density, (v) => this.update({ density: v as Settings['density'] })))
+
+    const anim = document.createElement('input')
+    anim.type = 'checkbox'
+    anim.id = 'setting-animations'
+    anim.checked = s.animations
+    anim.addEventListener('change', () => this.update({ animations: anim.checked }))
+    const animRow = this.row('Animations', 'Animate switching tasks and moving panels (off anyway if your system asks for less motion)', anim)
+    animRow.querySelector('label')!.htmlFor = anim.id
+
+    const upd = document.createElement('input')
+    upd.type = 'checkbox'
+    upd.id = 'setting-updates'
+    upd.checked = s.checkForUpdates
+    upd.addEventListener('change', () => this.update({ checkForUpdates: upd.checked }))
+    const updRow = this.row('Updates', 'Look for a new version of Forge when it starts (it asks before downloading anything)', upd)
+    updRow.querySelector('label')!.htmlFor = upd.id
+
     const rows: HTMLElement[] = [header]
     if (this.projectNote) {
       const note = document.createElement('p')
@@ -217,7 +236,7 @@ export class SettingsView {
       note.textContent = this.projectNote
       rows.push(note)
     }
-    rows.push(fontRow, themeRow, tabRow, pyRow, shellRow, fmtRow, fosRow, lintRow, dbgRow, dbgTaskRow, runGraphRow, reopenRow)
+    rows.push(fontRow, themeRow, densityRow, animRow, tabRow, pyRow, shellRow, fmtRow, fosRow, lintRow, dbgRow, dbgTaskRow, runGraphRow, reopenRow, updRow)
 
     if (this.links.length) {
       const linkRow = document.createElement('div')

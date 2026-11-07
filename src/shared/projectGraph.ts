@@ -13,6 +13,7 @@
 
 export interface RawImport { module: string; names: string[]; alias: string | null; level: number; line: number }
 export interface RawCall { name: string; line: number }
+export interface RawParamSig { name: string; annotation: string | null; default: string | null }
 export interface RawDef {
   name: string
   /** Dotted path inside the module: "Client.get"; "<module>" for top-level code. */
@@ -24,11 +25,21 @@ export interface RawDef {
   /** Names (and attribute names) the code reads. */
   refs: string[]
   decorators: string[]
+  /** Functions: the parameters (name, annotation and default as written), return annotation and first docstring line. */
+  params?: RawParamSig[]
+  returns?: string | null
+  doc?: string
   bases?: string[]
 }
 export interface RawRoute { methods: string[]; path: string; func: string; line: number; framework: string; owner: string | null }
 export interface RawHttp { library: string; method: string; url: string | null; line: number; func: string | null }
 export interface RawEnv { name: string; line: number; func: string | null; default: boolean }
+/**
+ * Statements that can never run. `reason`: what stops the code before them
+ * (return, raise, break, continue, 'branches' when every branch of an
+ * if/else or try stops, 'constant' for `if False:` and the like).
+ */
+export interface RawUnreachable { line: number; endLine: number; func: string | null; reason: 'return' | 'raise' | 'break' | 'continue' | 'branches' | 'constant' }
 export interface RawFile {
   /** Relative to the project, with / separators. */
   path: string
@@ -39,11 +50,15 @@ export interface RawFile {
   routes: RawRoute[]
   http: RawHttp[]
   env: RawEnv[]
+  /** Missing from scans by older versions of the script. */
+  unreachable?: RawUnreachable[]
   lines: number
   error?: string
   all?: string[]
   /** Has an `if __name__ == "__main__":` block. */
   main?: boolean
+  /** A client Forge generated (from an OpenAPI description), and whether it was edited by hand since. */
+  generated?: { kind: 'openapi'; slug: string; edited: boolean }
 }
 export interface RawScan { root: string; python: string; truncated: boolean; files: RawFile[] }
 
@@ -59,6 +74,10 @@ export interface SymbolNode {
   line: number
   endLine: number
   decorators: string[]
+  /** Functions: the parameters (name, annotation and default as written), return annotation and first docstring line. */
+  params?: RawParamSig[]
+  returns?: string | null
+  doc?: string
 }
 
 export interface ModuleNode {
@@ -69,6 +88,7 @@ export interface ModuleNode {
   isTest: boolean
   /** Runs as a program (`if __name__ == "__main__":`). */
   isEntry: boolean
+  generated?: RawFile['generated']
   lines: number
   error?: string
   symbols: SymbolNode[]
@@ -108,11 +128,27 @@ export interface ProjectGraph {
   cycles: string[][]
   /** Functions, methods and classes nothing in the project seems to use. */
   unused: SymbolNode[]
+  /** Code that can never run, by module then line. */
+  unreachable: (RawUnreachable & { module: string })[]
   routes: (RawRoute & { module: string })[]
   http: HttpUse[]
   env: { name: string; uses: { module: string; line: number; func: string | null; default: boolean }[] }[]
   errors: { module: string; path: string; error: string }[]
   truncated: boolean
+}
+
+/** "lines 13–14, after a return": where some unreachable code is and why it can't run. */
+export function describeUnreachable(u: RawUnreachable): string {
+  const where = u.line === u.endLine ? `line ${u.line}` : `lines ${u.line}–${u.endLine}`
+  const why = {
+    return: 'after a return',
+    raise: 'after a raise',
+    break: 'after a break',
+    continue: 'after a continue',
+    branches: 'every branch above it stops',
+    constant: 'its condition is always false'
+  }[u.reason]
+  return `${where}, ${why}`
 }
 
 export const isTestPath = (path: string): boolean =>
@@ -156,11 +192,13 @@ export function buildGraph(scan: RawScan): ProjectGraph {
     isPackage: f.isPackage,
     isTest: isTestPath(f.path),
     isEntry: !!f.main,
+    ...(f.generated ? { generated: f.generated } : {}),
     lines: f.lines,
     ...(f.error ? { error: f.error } : {}),
     symbols: f.defs.filter((d) => d.kind !== 'module').map((d) => ({
       id: `${f.module}:${d.qual}`, module: f.module, qual: d.qual, name: d.name, kind: d.kind as SymbolNode['kind'],
-      line: d.line, endLine: d.endLine, decorators: d.decorators
+      line: d.line, endLine: d.endLine, decorators: d.decorators,
+      ...(d.params ? { params: d.params, returns: d.returns ?? null, doc: d.doc ?? '' } : {})
     })),
     routes: f.routes,
     http: f.http,
@@ -305,6 +343,7 @@ export function buildGraph(scan: RawScan): ProjectGraph {
     calls,
     cycles,
     unused,
+    unreachable: scan.files.flatMap((f) => (f.unreachable ?? []).map((u) => ({ ...u, module: f.module }))).sort((a, b) => a.module.localeCompare(b.module) || a.line - b.line),
     routes,
     http,
     env: [...envMap].map(([name, uses]) => ({ name, uses })).sort((a, b) => a.name.localeCompare(b.name)),

@@ -1,7 +1,7 @@
 # Reads every Python file of a project with the `ast` module and prints what the
 # IDE's project graph needs as JSON: modules, imports, classes and functions with
 # the calls and names they use, web routes (Flask, FastAPI), outgoing HTTP calls
-# (requests, httpx, aiohttp) and environment variables.
+# (requests, httpx, aiohttp), environment variables and code that can never run.
 #
 # Run as:  python - <project folder>   (this script on stdin, JSON on stdout)
 # Only reads files; never imports or runs the project's code.
@@ -18,6 +18,9 @@ SKIP_DIRS = {
 MAX_FILES = 3000
 MAX_BYTES = 2_000_000
 HTTP_LIBS = {'requests', 'httpx', 'aiohttp'}
+URLLIB_CALLS = {'urllib.request.urlopen', 'request.urlopen', 'urlopen'}
+import re as _re
+BASE_URL_NAME = _re.compile(r'^(BASE|API|ROOT|SERVER)_?(URL|ADDRESS|ENDPOINT)$|^BASE$', _re.I)
 HTTP_METHODS = {'get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'request', 'stream'}
 ROUTE_METHODS = {'get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'route', 'api_route', 'websocket'}
 
@@ -61,6 +64,7 @@ class FileScan(ast.NodeVisitor):
         self.http = []
         self.env = []
         self.all_names = None
+        self.base_url = None  # a module-level BASE_URL = "https://..."
         self.stack = []  # enclosing defs (dicts)
         self.module_def = {'name': '<module>', 'qual': '<module>', 'kind': 'module', 'line': 1, 'endLine': 1, 'calls': [], 'refs': set(), 'decorators': []}
         self.http_aliases = {}  # local name -> library ('requests', 'httpx', 'aiohttp')
@@ -101,6 +105,12 @@ class FileScan(ast.NodeVisitor):
         }
         if kind == 'class':
             d['bases'] = [b for b in (dotted(x) for x in node.bases) if b]
+        else:
+            # The signature and first docstring line: pipeline blocks are made from these.
+            d['params'] = signature(node)
+            d['returns'] = unparse(node.returns)
+            doc = ast.get_docstring(node)
+            d['doc'] = doc.strip().split('\n')[0][:200] if doc else ''
         self.defs.append(d)
         for dec in node.decorator_list:
             self.visit(dec)
@@ -158,6 +168,15 @@ class FileScan(ast.NodeVisitor):
         self.generic_visit(node)
 
     def _http(self, node, name):
+        if name in URLLIB_CALLS:
+            # urllib.request.urlopen(url_or_request): the method is usually only known at run time.
+            url = const_str(node.args[0]) if node.args else None
+            method = 'HTTP'
+            for kw in node.keywords:
+                if kw.arg == 'method' and const_str(kw.value):
+                    method = const_str(kw.value).upper()
+            self.http.append({'library': 'urllib', 'method': method, 'url': url, 'line': node.lineno, 'func': self.current_qual()})
+            return
         parts = name.split('.')
         lib = self.http_aliases.get(parts[0])
         method = parts[-1].lower()
@@ -217,7 +236,21 @@ class FileScan(ast.NodeVisitor):
                 if lib and created.split('.')[-1][:1].isupper():
                     self.http_aliases[name_node.id] = lib
 
+    def _base_url(self, node):
+        """BASE_URL = "https://..." or os.environ.get("X_BASE_URL", "https://...") at the top of a module."""
+        if self.current is not self.module_def:
+            return
+        if not any(isinstance(t, ast.Name) and BASE_URL_NAME.search(t.id) for t in node.targets):
+            return
+        value = node.value
+        url = const_str(value)
+        if url is None and isinstance(value, ast.Call) and dotted(value.func) in ('os.getenv', 'getenv', 'os.environ.get', 'environ.get') and len(value.args) >= 2:
+            url = const_str(value.args[1])
+        if url and url.lower().startswith(('http://', 'https://')):
+            self.base_url = url
+
     def visit_Assign(self, node):
+        self._base_url(node)
         # __all__ = ["a", "b"]: names the module exports.
         if any(isinstance(t, ast.Name) and t.id == '__all__' for t in node.targets) and isinstance(node.value, (ast.List, ast.Tuple)):
             self.all_names = [s for s in (const_str(e) for e in node.value.elts) if s]
@@ -232,6 +265,136 @@ class FileScan(ast.NodeVisitor):
         self.generic_visit(node)
 
     visit_AsyncWith = visit_With
+
+
+# ---------- code that can never run ----------
+
+STOP_REASONS = ((ast.Return, 'return'), (ast.Raise, 'raise'), (ast.Break, 'break'), (ast.Continue, 'continue'))
+
+
+def bool_const(test):
+    """True or False when a condition is written as a constant, else None."""
+    if isinstance(test, ast.Constant) and type(test.value) is bool:
+        return test.value
+    return None
+
+
+def block_stops(stmts):
+    """Why this block never carries on to the statement after it, or None if it might."""
+    for st in stmts:
+        reason = stmt_stops(st)
+        if reason:
+            return reason
+    return None
+
+
+def stmt_stops(st):
+    for kind, reason in STOP_REASONS:
+        if isinstance(st, kind):
+            return reason
+    if isinstance(st, ast.If) and st.orelse and block_stops(st.body) and block_stops(st.orelse):
+        return 'branches'
+    if isinstance(st, ast.Try) or type(st).__name__ == 'TryStar':
+        if st.finalbody and block_stops(st.finalbody):
+            return block_stops(st.finalbody)
+        # Only if no handler can fall through. (A `with` is never counted: its
+        # context manager may swallow an exception.)
+        if (block_stops(st.body) or block_stops(st.orelse)) and all(block_stops(h.body) for h in st.handlers):
+            return 'branches'
+    return None
+
+
+def find_unreachable(tree):
+    """Runs of statements that can never run, with the function they're in."""
+    found = []
+
+    def note(stmts, func, reason):
+        found.append({'line': stmts[0].lineno, 'endLine': stmts[-1].end_lineno, 'func': func, 'reason': reason})
+
+    def block(stmts, func):
+        for i, st in enumerate(stmts):
+            visit(st, func)
+            reason = stmt_stops(st)
+            if reason and i + 1 < len(stmts):
+                note(stmts[i + 1:], func, reason)
+                return
+
+    def visit(st, func):
+        if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            block(st.body, st.name if func is None else func + '.' + st.name)
+            return
+        if isinstance(st, (ast.If, ast.While)):
+            value = bool_const(st.test)
+            if value is False:
+                note(st.body, func, 'constant')
+                if st.orelse:
+                    block(st.orelse, func)
+                return
+            if value is True and isinstance(st, ast.If) and st.orelse:
+                block(st.body, func)
+                note(st.orelse, func, 'constant')
+                return
+        for field in ('body', 'orelse', 'finalbody'):
+            sub = getattr(st, field, None)
+            if isinstance(sub, list) and sub and isinstance(sub[0], ast.stmt):
+                block(sub, func)
+        for handler in getattr(st, 'handlers', None) or []:
+            block(handler.body, func)
+        for case in getattr(st, 'cases', None) or []:
+            block(case.body, func)
+
+    block(tree.body, None)
+    return sorted(found, key=lambda u: u['line'])
+
+
+def unparse(node):
+    """Source text of an annotation or default (None if absent or the Python is too old to say)."""
+    if node is None or not hasattr(ast, 'unparse'):
+        return None
+    try:
+        text = ast.unparse(node)
+    except Exception:
+        return None
+    return text if len(text) <= 80 else text[:79] + '…'
+
+
+def signature(fn):
+    a = fn.args
+    positional = a.posonlyargs + a.args if hasattr(a, 'posonlyargs') else a.args
+    defaults = [None] * (len(positional) - len(a.defaults)) + list(a.defaults)
+    out = [{'name': p.arg, 'annotation': unparse(p.annotation), 'default': unparse(d)} for p, d in zip(positional, defaults)]
+    if a.vararg is not None:
+        out.append({'name': '*' + a.vararg.arg, 'annotation': unparse(a.vararg.annotation), 'default': None})
+    out += [{'name': p.arg, 'annotation': unparse(p.annotation), 'default': unparse(d)} for p, d in zip(a.kwonlyargs, a.kw_defaults)]
+    if a.kwarg is not None:
+        out.append({'name': '**' + a.kwarg.arg, 'annotation': unparse(a.kwarg.annotation), 'default': None})
+    return out[:16]
+
+
+def fnv_utf16(text):
+    """FNV-1a over UTF-16 code units (like Forge's blockHash in TypeScript)."""
+    import struct
+    data = text.encode('utf-16-le')
+    h = 0x811c9dc5
+    for (unit,) in struct.iter_unpack('<H', data):
+        h ^= unit
+        h = (h * 0x01000193) & 0xffffffff
+    return '%08x' % h
+
+
+def generated_mark(source):
+    """A client Forge generated (first line `# forge:openapi <slug> <hash>`): which, and whether it was edited since."""
+    if not source.startswith(b'# forge:openapi '):
+        return None
+    try:
+        text = source.decode('utf-8').replace('\r\n', '\n')
+    except UnicodeDecodeError:
+        return None
+    first, _, rest = text.partition('\n')
+    parts = first.split()
+    if len(parts) != 4:
+        return None
+    return {'kind': 'openapi', 'slug': parts[2], 'edited': fnv_utf16(rest) != parts[3]}
 
 
 def module_name(rel):
@@ -263,10 +426,19 @@ def scan_file(root, rel):
     s = FileScan()
     s.module_def['endLine'] = entry['lines']
     s.visit(tree)
+    # Calls whose address is built at run time from the module's BASE_URL go to that host.
+    if s.base_url:
+        for h in s.http:
+            if h['url'] is None:
+                h['url'] = s.base_url
+    generated = generated_mark(source)
+    if generated:
+        entry['generated'] = generated
     defs = [s.module_def] + s.defs
     for d in defs:
         d['refs'] = sorted(d['refs'])
     entry.update(imports=s.imports, defs=defs, routes=s.routes, http=s.http, env=s.env)
+    entry['unreachable'] = find_unreachable(tree)
     if s.all_names is not None:
         entry['all'] = s.all_names
     entry['main'] = any(

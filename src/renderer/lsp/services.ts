@@ -8,6 +8,7 @@
  */
 import type { Doc } from '../editor/document'
 import type { Position } from '../editor/textBuffer'
+import type { SemToken } from '../editor/semantic'
 import type { CompletionItem } from './completionLogic'
 import type { CallItem, DocSymbol, FileEdits, Location, WorkspaceSymbol } from './navigation'
 import { pathKey, type CodeAction, type Diagnostic, type LspServer } from './server'
@@ -95,6 +96,10 @@ export class LanguageServices {
 
   async rename(doc: Doc, pos: Position, newName: string): Promise<FileEdits> {
     return this.serverFor(doc)?.rename(doc, pos, newName) ?? new Map()
+  }
+
+  async semanticTokens(doc: Doc): Promise<Map<number, SemToken[]> | null> {
+    return this.serverFor(doc)?.semanticTokens(doc) ?? null
   }
 
   async symbols(doc: Doc): Promise<DocSymbol[]> {

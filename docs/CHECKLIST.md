@@ -50,6 +50,7 @@ to real source code or runtime behaviour.
 - [x] Run configurations (arguments, environment variables and working directory) (v0.27: file or module, for Run and Debug, picked in the status bar)
 - [x] Python environment management (create, select and manage virtual environments) (v0.28: 🐍 in the status bar, finds venvs and installed Pythons, creates .venv, saved per project)
 - [x] Dependency management integration (pip, requirements.txt, pyproject.toml) (v0.28: Python Packages…, missing-package warning, install/upgrade/uninstall, freeze)
+- [x] Updates (v0.46: the installed app checks GitHub Releases after starting or from Help → Check for Updates, asks, downloads in the background and restarts into the new version; the portable version opens the download page; see docs/RELEASING.md)
 - [x] Test runner integration (pytest, unittest) (v0.29)
   - [x] Test discovery and running individual tests (reads test files; ▶ per test / file, Run Test at Cursor)
   - [x] Test results panel with navigation to failures (Tests tab: ✓ ✗ per test, click to the failing line, full traceback)
@@ -74,7 +75,7 @@ Language features (Pyright already does the analysis for most of these; they're 
 - [x] Code actions and quick fixes (v0.33: Ctrl+. / 💡: Ruff fixes, Pyright code actions, # noqa, fix all)
 - [x] Format document / selection (Black, Ruff) (v0.33: Shift+Alt+F, Format Selection, format on save)
 - [x] Linting integration (Ruff) (v0.33: as you type, in Problems and squiggles, uses the project's Ruff config)
-- [ ] Semantic syntax highlighting (Pyright doesn't provide semantic tokens; needs basedpyright or our own analysis)
+- [x] Semantic syntax highlighting (Pyright doesn't provide semantic tokens; needs basedpyright or our own analysis) (v0.46: the bundled server is now basedpyright (Pyright plus semantic tokens; checks set to Pyright's 'standard'); parameters, properties, classes, modules and constants coloured by what they are, over the tokenizer's colours)
 - [x] Language-support architecture: language integrations instead of Python-specific editor logic, so several language servers can run side by side (groundwork for Tier 6.2) (v0.39: each file has a language that sets its highlighting, comment marker and Enter-indent; language servers run by id side by side and each file goes to its language's server; new JSON/JSONC, TOML, YAML and INI highlighting)
 
 Git:
@@ -103,12 +104,12 @@ Best started once a first graph view exists (5.1), so the layout is designed aro
 - [x] Design a distinctive workspace layout (v0.43: Forge task workspace)
 - [x] Rethink how files, terminals, graphs and debugging coexist (v0.43: tasks Code / Connect / Debug / Run, each with its own arrangement)
 - [x] Customisable workspace panels (v0.43: Edit Layout mode: move, close, add back, reset)
-- [ ] Dockable panels and floating windows (v0.43: docking done, drag tabs to any side or into another panel; floating windows not yet)
+- [x] Dockable panels and floating windows (v0.43: docking done, drag tabs to any side or into another panel; v0.46: ⧉ on a panel opens it in its own OS window, Back to the dock or closing the window returns it; the editor and terminal stay docked)
 - [x] Multiple workspace layouts (coding, debugging and visualisation) (v0.43: Forge task workspace)
-- [ ] Context-aware interface that surfaces relevant tools for the current task
-- [ ] Customisable information density
-- [ ] Animated transitions between workspace states
-- [ ] Visual navigation through projects
+- [x] Context-aware interface that surfaces relevant tools for the current task (v0.46: suggestions in the top bar from what you're doing: Network for a file calling web APIs, Pipeline for tables, Tests, Debug it after a failed run, Problems, Git)
+- [x] Customisable information density (v0.46: Settings → Density: Compact, Normal or Roomy panels and bars (the editor and terminal follow the font size))
+- [x] Animated transitions between workspace states (v0.46: switching task, and moving / adding / closing panels (Settings → Animations; off with reduced motion))
+- [x] Visual navigation through projects (v0.46: Project Map (Ctrl+Alt+M): every Python file sized by its lines, grouped by folder; open, problem, changed and recent files marked; type to find, click to open)
 - [x] Consistent visual language for graphs, code, debugging and terminal (v0.42: Forge look: Molten / Plain themes, Smithy schematic shapes, bundled fonts)
 - [x] Forge task workspace: Code / Connect / Debug / Run, movable panels, Edit Layout mode (Part 2 of docs/superpowers/specs/2026-11-06-forge-design.md) (v0.43: Forge task workspace); Where you are and In this file panels
 - [x] Live run feedback on the graph (v0.45: traced ▶ Run with the Graph in view; Settings → Runs on the graph): while the program runs, sparks travel along the connections and the running boxes glow (Molten); a dot and a highlight in Plain. Needs runtime tracing of calls (see 5.2 / 5.5). Requested 2026-11-06
@@ -130,29 +131,29 @@ Visualisations are interactive representations of real code, not a separate prog
 - [x] Highlight a node's dependencies and dependants (hover or select: uses in blue, used by in orange)
 - [x] Filter graph by type, file or relationship (v0.41: Modules / Calls, one module's calls, name filter, tests / packages / web APIs toggles)
 - [x] Detect circular imports (red edges; listed in the findings)
-- [ ] Identify unused functions and potentially unreachable code where statically determinable (v0.41: possibly unused functions/classes listed and struck through; unreachable code still to do)
+- [x] Identify unused functions and potentially unreachable code where statically determinable (v0.41: possibly unused functions/classes listed and struck through; v0.46: "Code that never runs" in the Graph findings, on modules and on functions: after return / raise / break / continue, after an if/else or try whose branches all stop, and under `if False:`)
 
 ### 5.2 Live network visualisation
-- [ ] Runtime instrumentation for `requests`, `httpx` and `aiohttp`
-- [ ] Capture socket-level connections where appropriate
-- [ ] Stream runtime events to the IDE
-- [ ] Animated network graph
-- [ ] Display HTTP method, URL, status and response time
-- [ ] Click a connection to inspect request/response details
-- [ ] Request history and filtering
-- [ ] Group requests by host and originating function
-- [ ] Identify failed requests and slow endpoints
-- [ ] Timeline showing when requests occurred
-- [ ] Compare network activity between runs
+- [x] Runtime instrumentation for `requests`, `httpx` and `aiohttp` (v0.46: the run tracer hooks http.client (urllib, requests/urllib3), httpx (sync and async) and aiohttp; secrets masked before they leave the program)
+- [x] Capture socket-level connections where appropriate (v0.46: other TCP connections (databases, websockets...) as CONNECT host:port)
+- [x] Stream runtime events to the IDE (v0.46: net records over the trace socket, re-sent as they fill in)
+- [x] Animated network graph (v0.46: a spark from the code to the web API node or API box, green ok / red failed)
+- [x] Display HTTP method, URL, status and response time (v0.46: Network panel)
+- [x] Click a connection to inspect request/response details (v0.46: headers and the first 4 KB of each body)
+- [x] Request history and filtering (v0.46: this run and the last; filter by text, failed or slow)
+- [x] Group requests by host and originating function (v0.46)
+- [x] Identify failed requests and slow endpoints (v0.46: red, and slow (1 s+) marked; Failed / Slow filters)
+- [x] Timeline showing when requests occurred (v0.46: bars on lanes above the list)
+- [x] Compare network activity between runs (v0.46: endpoint by endpoint: new, gone, failing, slower, faster, more / fewer calls)
 
 ### 5.3 Visual API integration
 - [x] Drag from a file/function to an unconnected API (v0.44: drag the API box from the Toolbox onto a module)
-- [ ] Generate client modules and imports
+- [x] Generate client modules and imports (v0.46: Add API from OpenAPI writes a client module and can add its import to the open file)
 - [x] Generate `.env` keys (v0.44: API box)
-- [ ] OpenAPI / Swagger support
-  - [ ] Generate functions for individual endpoints
-  - [ ] Generate request and response models
-  - [ ] Generate authentication handling
+- [x] OpenAPI / Swagger support (v0.46: OpenAPI 3 and Swagger 2, JSON or YAML, from an address or a file (Toolbox → OpenAPI client))
+  - [x] Generate functions for individual endpoints (v0.46: pick the endpoints; typed parameters)
+  - [x] Generate request and response models (v0.46: a dataclass per schema, with from_dict / to_dict)
+  - [x] Generate authentication handling (v0.46: API key, bearer token or user name and password, from .env)
 - [x] Support APIs without specifications (v0.44: API box)
   - [x] Generate base URL configuration
   - [x] Generate authentication configuration
@@ -160,40 +161,40 @@ Visualisations are interactive representations of real code, not a separate prog
 - [x] Preview generated code before applying changes (v0.44: API box)
 - [x] Ensure visual changes generate normal, readable Python (v0.44: standard library only)
 - [x] When removing a visual connection, offer to remove associated code (v0.44: API box)
-- [ ] Detect changes to generated code and update graph relationships
+- [x] Detect changes to generated code and update graph relationships (v0.46: the scan marks generated clients and whether they were edited (and regenerating asks first); urllib calls built from a module's BASE_URL link to that host)
 - [ ] Later: AI-assisted API documentation interpretation and integration
 
 ### 5.4 Data-flow visualisation
-- [ ] Trace data between functions
-- [ ] Visualise function inputs and outputs
-- [ ] Show where variables originate
-- [ ] Show transformations applied to data
-- [ ] Highlight data dependencies
-- [ ] Interactive pipeline graph
-- [ ] Pandas DataFrame pipeline visualisation
-- [ ] Inspect DataFrame shapes, columns and types
-- [ ] Preview intermediate DataFrame contents
-- [ ] Visualise data filtering, grouping and merging
-- [ ] Export visual pipelines as ordinary Python
+- [x] Trace data between functions (v0.46: traced runs record what goes into and comes out of each function (first two calls), and Run with data records each line of one function)
+- [x] Visualise function inputs and outputs (v0.46: Last run in a function's Graph details; inputs on the Pipeline's input boxes)
+- [x] Show where variables originate (v0.46: Pipeline view: wires from where each value was set; Where its data comes from)
+- [x] Show transformations applied to data (v0.46: each step shows what it made and what changed (rows, columns, groups))
+- [x] Highlight data dependencies (v0.46: hover or select a step: what it depends on and what depends on it)
+- [x] Interactive pipeline graph (v0.46: Pipeline panel (Connect task, or Data flow on a function in the Graph))
+- [x] Pandas DataFrame pipeline visualisation (v0.46)
+- [x] Inspect DataFrame shapes, columns and types (v0.46)
+- [x] Preview intermediate DataFrame contents (v0.46: the first rows of each step's table)
+- [x] Visualise data filtering, grouping and merging (v0.46: 1,204 → 873 rows, 100 rows → 4 groups, columns added / removed)
+- [x] Export visual pipelines as ordinary Python (v0.46: pipelines are ordinary Python; Export writes a script with the built-in blocks copied in)
 
 Block library (for the pipeline graph): blocks are whole steps, not single statements, so graphs stay small and map cleanly to code.
-- [ ] Each block is an ordinary Python function; inputs and outputs come from its parameters, type hints and return value
-- [ ] Placing a block inserts a readable call (plus import); wiring blocks passes one block's result to the next
-- [ ] Built-in library of useful steps (read CSV/JSON, filter rows, group by, call API endpoint, retry, save)
-- [ ] User blocks: mark a project function (e.g. `@block` or `.ideforfun/blocks/`) and it appears in the library
-- [ ] Editing a block opens its Python; editing a built-in makes a project copy first, so library updates never overwrite it
-- [ ] A single "for each" container block instead of loop/if wiring
+- [x] Each block is an ordinary Python function; inputs and outputs come from its parameters, type hints and return value (v0.46)
+- [x] Placing a block inserts a readable call (plus import); wiring blocks passes one block's result to the next (v0.46: click a data input to take it from another step; click a setting to change it)
+- [x] Built-in library of useful steps (read CSV/JSON, filter rows, group by, call API endpoint, retry, save) (v0.46: forge_blocks.py (pandas): read CSV / JSON, call API, filter, select, rename, add column, sort, group, merge, de-duplicate, fill missing, retry, save CSV / JSON)
+- [x] User blocks: mark a project function (e.g. `@block` or `.ideforfun/blocks/`) and it appears in the library (v0.46: @block, or any function in a blocks.py)
+- [x] Editing a block opens its Python; editing a built-in makes a project copy first, so library updates never overwrite it (v0.46: a built-in is copied into the project's blocks.py first)
+- [x] A single "for each" container block instead of loop/if wiring (v0.46: For each… runs a block on every item (or row) of a step's result)
 
 ### 5.5 Execution visualisation
-- [ ] Live call graph while debugging
-- [ ] Animated function execution
-- [ ] Visualise recursion trees
-- [x] Show current execution position on the graph (v0.45, during ▶ Run; not yet while debugging)
-- [ ] Display live variable values on nodes
-- [ ] Track variable changes over time
-- [ ] Visualise object relationships
-- [ ] Inspect object properties without opening debugger panels
-- [ ] Compare variable states between execution points
+- [x] Live call graph while debugging (v0.46: at each pause the paused function glows, the stack and its calls are marked, calls not seen before get a spark)
+- [x] Animated function execution (v0.45 live during ▶ Run; v0.46: ▶ Replay of the last traced run with a slider and speed)
+- [x] Visualise recursion trees (v0.46: the tracer records the calls of a recursive function (arguments in, value returned); Last run in the node's details opens the tree)
+- [x] Show current execution position on the graph (v0.45, during ▶ Run; v0.46 while debugging too)
+- [x] Display live variable values on nodes (v0.46: a card beside the paused function)
+- [x] Track variable changes over time (v0.46: History in the function's details, changes marked)
+- [x] Visualise object relationships (v0.46: Objects on the card: boxes and reference arrows from a helper run in the paused frame)
+- [x] Inspect object properties without opening debugger panels (v0.46: objects open in place on the card)
+- [x] Compare variable states between execution points (v0.46: compare any two pauses: changed, new, gone)
 - [ ] Someday (research): execution timeline with step-back (Python can't run backwards, so this means recording everything as it runs)
 
 ## Tier 6: Advanced capabilities (someday)

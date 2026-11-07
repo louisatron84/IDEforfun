@@ -9,16 +9,24 @@
 import type { Token } from './tokenizer'
 import { TextBuffer } from './textBuffer'
 import type { LanguageMode } from './modes'
+import { mergeTokens, type SemToken } from './semantic'
 
 export class Highlighter {
   /** states[i] = state at the start of line i. Always valid for every index it holds. */
   private states: string[] = ['']
   private current: LanguageMode
+  /** From the language server: what each name is, by line (lines from an edit onwards are dropped until it answers again). */
+  private semantic: Map<number, SemToken[]> | null = null
 
   /** `mode` is asked on every use: when it changes (the file was renamed), everything is redone. */
   constructor(private readonly buffer: TextBuffer, private readonly mode: () => LanguageMode) {
     this.current = mode()
-    buffer.subscribe((change) => this.invalidateFrom(change.at.line))
+    buffer.subscribe((change) => {
+      this.invalidateFrom(change.at.line)
+      // Same number of lines: only that line's colours are stale; otherwise everything after it may have moved.
+      const moved = change.text.includes('\n')
+      if (this.semantic) for (const line of [...this.semantic.keys()]) if (moved ? line >= change.at.line : line === change.at.line) this.semantic.delete(line)
+    })
   }
 
   private check(): LanguageMode {
@@ -37,7 +45,13 @@ export class Highlighter {
 
   tokensFor(line: number): Token[] {
     const mode = this.check()
-    return mode.tokenize(this.buffer.getLine(line), this.stateAt(line)).tokens
+    const tokens = mode.tokenize(this.buffer.getLine(line), this.stateAt(line)).tokens
+    return this.semantic ? mergeTokens(tokens, this.semantic.get(line)) : tokens
+  }
+
+  /** The language server's semantic tokens for the whole file (null: none). */
+  setSemantic(tokens: Map<number, SemToken[]> | null): void {
+    this.semantic = tokens
   }
 
   /**
