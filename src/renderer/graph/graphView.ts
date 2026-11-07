@@ -8,6 +8,7 @@
  * routes, web APIs called, environment variables.
  */
 import { describeUnreachable, type ProjectGraph } from '../../shared/projectGraph'
+import { formatMs, heatLevel, slowest, timePath, viewTimes, type RunProfile } from '../../shared/profile'
 import { layoutGraph, type Layout } from './layout'
 import { buildView, neighbourhood, type GraphViewData, type ViewNode, type ViewOptions } from './viewModel'
 import type { ApiBox } from '../../shared/boxes'
@@ -61,6 +62,15 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
   return e
 }
 
+/** A tracer id for people: `app:load` → "app.load", `module:app` → "app (top level)". */
+function timeLabel(id: string): string {
+  return id.startsWith('module:') ? `${id.slice(7)} (top level)` : id.replace(':', '.')
+}
+
+function describeTime(t: { calls: number; totalMs: number; selfMs: number }): string {
+  return `${formatMs(t.totalMs)} in total, ${formatMs(t.selfMs)} in its own code, ${t.calls} call${t.calls === 1 ? '' : 's'}`
+}
+
 /** A stable colour per group (top-level package). */
 function groupColour(group: string): string {
   if (!group) return 'var(--fg-muted)'
@@ -108,6 +118,10 @@ export class GraphView {
   private view = { x: 0, y: 0, k: 1 }
   /** The view is the one Fit chose (nothing panned or zoomed since): keep fitting when the canvas resizes. */
   private fitted = false
+  /** How long each function took in the last traced run (the visual profiler), and whether it's shown. */
+  private profile: RunProfile | null = null
+  private showTimes = true
+  private readonly timesToggle: HTMLLabelElement
 
   constructor(private readonly hooks: GraphHooks) {
     this.el = el('div', 'graph-view')
@@ -153,6 +167,18 @@ export class GraphView {
       b.addEventListener('click', fn)
       return b
     }
+    this.timesToggle = el('label', 'graph-toggle')
+    this.timesToggle.title = 'Show how long each function took in the last run'
+    const timesBox = el('input')
+    timesBox.type = 'checkbox'
+    timesBox.checked = this.showTimes
+    timesBox.addEventListener('change', () => {
+      this.showTimes = timesBox.checked
+      this.applyTimes()
+      this.renderSide()
+    })
+    this.timesToggle.append(timesBox, document.createTextNode('Times'))
+    this.timesToggle.hidden = true
     this.status = el('span', 'graph-status')
     this.replayBox = el('span', 'graph-replay')
     this.replayBox.hidden = true
@@ -161,6 +187,7 @@ export class GraphView {
       toggle('Tests', 'Show test files', 'showTests'),
       toggle('Packages', 'Show the packages each module imports (standard library and installed)', 'showExternal'),
       toggle('Web APIs', 'Show the web addresses the code calls (requests, httpx, aiohttp)', 'showHosts'),
+      this.timesToggle,
       this.status,
       this.replayBox,
       button('Fit', 'Fit the graph in view (F)', () => this.fit()),
@@ -198,6 +225,8 @@ export class GraphView {
   reset(): void {
     this.graph = null
     this.selected = null
+    this.profile = null
+    this.timesToggle.hidden = true
     this.opts = { ...this.opts, focus: null, query: '' }
     this.search.value = ''
     this.world.replaceChildren()
@@ -310,6 +339,7 @@ export class GraphView {
     this.sparkLayer = svg('g', {}, 'graph-sparks')
     this.world.replaceChildren(edgeLayer, this.sparkLayer, nodeLayer)
     if (this.runGlow) this.nodeEls.get(this.runGlow)?.classList.add('run-at')
+    this.applyTimes()
     this.markDebug()
     this.boxLayer = null
     this.redrawBoxes()
@@ -328,6 +358,55 @@ export class GraphView {
     if (this.boxLayer) this.boxLayer.replaceWith(layer)
     else this.world.append(layer)
     this.boxLayer = layer
+  }
+
+  /** The times from a traced run (the tracer re-sends them as they add up), or null to clear them. */
+  setProfile(p: RunProfile | null): void {
+    this.profile = p
+    this.timesToggle.hidden = !p
+    this.applyTimes()
+    this.renderSide()
+  }
+
+  /** Each node's time as a badge above it, and the slow ones heated (by their own time, not the calls they make). */
+  private applyTimes(): void {
+    for (const g of this.nodeEls.values()) {
+      g.querySelector('.gtime')?.remove()
+      g.classList.remove('hot-1', 'hot-2', 'hot-3')
+    }
+    if (!this.profile || !this.showTimes || !this.layout) return
+    const times = viewTimes(this.profile, this.opts.mode)
+    let max = 0
+    for (const id of this.nodeEls.keys()) max = Math.max(max, times.get(id)?.selfMs ?? 0)
+    for (const [id, g] of this.nodeEls) {
+      const t = times.get(id)
+      const p = this.layout.nodes.get(id)
+      if (!t || !p) continue
+      const level = heatLevel(t.selfMs, max)
+      if (level) g.classList.add(`hot-${level}`)
+      const badge = svg('g', {}, 'gtime')
+      const text = svg('text', { x: p.width, y: -5, 'text-anchor': 'end' }, 'gtime-text')
+      text.textContent = formatMs(t.totalMs)
+      badge.append(text)
+      const tip = svg('title')
+      tip.textContent = this.opts.mode === 'calls' ? describeTime(t) : `${formatMs(t.selfMs)} running code in this file, ${t.calls} call${t.calls === 1 ? '' : 's'}`
+      badge.append(tip)
+      g.append(badge)
+    }
+  }
+
+  /** A function's time in its details: the numbers, and the chain of calls its time comes through. */
+  private timeDetails(id: string): HTMLElement[] {
+    if (!this.profile || !this.showTimes) return []
+    const t = this.profile.fns.get(id)
+    if (!t) return []
+    const path = timePath(this.profile, id)
+    const list = el('div', 'graph-time-path')
+    list.append(...path.map((step) => this.item(timeLabel(step), formatMs(this.profile!.fns.get(step)?.totalMs ?? 0), () => this.revealFunction(step), step === id ? 'here' : '')))
+    return [
+      ...this.section('Time in the last run', [el('div', 'graph-side-intro', describeTime(t))]),
+      ...(path.length > 1 ? [el('div', 'graph-side-head', 'Where the time comes from'), list] : [])
+    ]
   }
 
   private nodeClass(n: ViewNode): string {
@@ -786,6 +865,12 @@ export class GraphView {
     this.renderSide()
   }
 
+  /** A function from the profile: shown in the Calls view (switching to it if needed). */
+  private revealFunction(id: string): void {
+    if (this.opts.mode !== 'calls' || !this.layout?.nodes.has(id)) this.setOptions({ mode: 'calls', focus: null, query: '' })
+    this.reveal(id)
+  }
+
   /** Select a node and bring it into view. */
   reveal(id: string): void {
     const p = this.layout?.nodes.get(id)
@@ -851,6 +936,10 @@ export class GraphView {
     const short = (module: string, func: string | null) => (func ? `${module}.${func}` : module)
     return [
       intro,
+      ...(this.profile && this.showTimes
+        ? this.section('Slowest in the last run', slowest(this.profile, 5).filter((s) => s.selfMs >= 0.05).map((s) =>
+          this.item(timeLabel(s.id), `${formatMs(s.selfMs)} in its own code · ${s.calls} call${s.calls === 1 ? '' : 's'}`, () => this.revealFunction(s.id), 'hot')))
+        : []),
       ...this.section('Import cycles', g.cycles.map((c) => this.item(c.join(' ⇄ '), '', () => this.revealModule(c[0]), 'warn')), 'None: no modules import each other in a loop.'),
       ...this.section('Possibly unused', g.unused.map((s) => this.item(`${s.module}.${s.qual}`, `${s.kind}, line ${s.line}`, () => this.openAt(s.module, s.line - 1))),
         'Every function and class is used somewhere.'),
@@ -914,6 +1003,10 @@ export class GraphView {
         ...this.section('Code that never runs', g.unreachable.filter((u) => u.module === m.id).map((u) =>
           this.item(u.func ?? 'top level', describeUnreachable(u), () => this.openAt(m.id, u.line - 1), 'warn')))
       )
+      if (this.profile && this.showTimes) {
+        const mine = slowest({ fns: new Map([...this.profile.fns].filter(([id]) => id.startsWith(`${m.id}:`) || id === `module:${m.id}`)), edges: new Map() }, 5)
+        out.push(...this.section('Slowest in the last run', mine.map((s) => this.item(timeLabel(s.id), `${formatMs(s.selfMs)} in its own code`, () => this.revealFunction(s.id)))))
+      }
       const run = this.hooks.runDetails?.(m.id)
       if (run) out.push(...this.section('Last run', [run]))
     } else if (n.kind === 'external' || n.kind === 'host') {
@@ -927,6 +1020,7 @@ export class GraphView {
       if (n.unused) out.push(el('div', 'graph-side-warn', 'Nothing in the project seems to use this (it may still be used dynamically, or from outside).'))
       const history = this.hooks.debugHistory?.(n.id)
       if (history) out.push(...this.section('While debugging', [history]))
+      out.push(...this.timeDetails(n.id))
       const run = this.hooks.runDetails?.(n.id)
       if (run) out.push(...this.section('Last run', [run]))
       const qual = n.id.slice(n.id.indexOf(':') + 1)

@@ -95,6 +95,12 @@ def _forge_trace():
     tree_seq = [0]
     MAX_TREE = 300
     MAX_TREES = 5
+    # Time: per function [calls, total s, own s], and per caller -> callee the
+    # callee's total s. A function that calls itself is timed by its outermost call.
+    clock = time.perf_counter
+    prof_fns = {}
+    prof_edges = {}
+    prof_dirty = [False]
 
     def short(v, n=24):
         try:
@@ -239,6 +245,21 @@ def _forge_trace():
             stack = stacks.get(threading.get_ident())
             if stack and stack[-1][1] is frame:
                 entry = stack.pop()
+                spent = clock() - entry[5]
+                t = prof_fns.get(entry[0])
+                if t is None:
+                    t = prof_fns[entry[0]] = [0, 0.0, 0.0]
+                t[0] += 1
+                t[2] += spent - entry[6]
+                if not entry[7]:
+                    t[1] += spent
+                if stack:
+                    parent = stack[-1]
+                    parent[6] += spent
+                    if not entry[7] and parent[0] != entry[0]:
+                        key = (parent[0], entry[0])
+                        prof_edges[key] = prof_edges.get(key, 0.0) + spent
+                prof_dirty[0] = True
                 if entry[4] is not None:
                     io_end(entry[0], entry[4], arg)
                 if entry[2] is not None:
@@ -257,11 +278,13 @@ def _forge_trace():
             key = (caller, to)
             calls[key] = calls.get(key, 0) + 1
         stack = stacks.setdefault(threading.get_ident(), [])
-        entry = [to, frame, None, None, io_start(to, frame)]  # id, frame, node in its tree, tree key, inputs/output record
+        # id, frame, node in its tree, tree key, inputs/output record, started at, time in calls it made, already running
+        entry = [to, frame, None, None, io_start(to, frame), 0.0, 0.0, False]
         for i in range(len(stack) - 1, max(-1, len(stack) - 200), -1):
             outer = stack[i]
             if outer[0] != to:
                 continue
+            entry[7] = True
             if outer[3] is None:
                 if len(trees) >= MAX_TREES:
                     break
@@ -279,11 +302,23 @@ def _forge_trace():
             tree_dirty.add(outer[3])
             break
         stack.append(entry)
+        entry[5] = clock()  # last, so the bookkeeping above isn't counted as the function's time
 
     def send_trees():
         for key in list(tree_dirty):
             tree_dirty.discard(key)
             send({"t": "rec", "tree": trees[key]})
+
+    def send_prof():
+        if not prof_dirty[0]:
+            return
+        prof_dirty[0] = False
+        ms = lambda s: round(s * 1000, 3)
+        fns = sorted(prof_fns.items(), key=lambda kv: -kv[1][1])[:400]
+        edges = sorted(prof_edges.items(), key=lambda kv: -kv[1])[:400]
+        send({"t": "prof",
+              "fns": [[k, v[0], ms(v[1]), ms(max(0.0, v[2]))] for k, v in fns],
+              "edges": [[a, b, ms(s)] for (a, b), s in edges]})
 
     # ---------- network: every request and connection the program makes ----------
     # Hooks http.client (which urllib and requests/urllib3 use), httpx, aiohttp
@@ -708,6 +743,7 @@ def _forge_trace():
         send_net()
         send_trees()
         send_io()
+        send_prof()
         calls, state["calls"] = state["calls"], {}
         frame = sys._current_frames().get(main_id)
         at = project_frame(frame, 256)

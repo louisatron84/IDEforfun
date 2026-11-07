@@ -48,6 +48,27 @@ const FILES: Record<string, string> = {
     '    print("path0 is script dir", sys.path[0] == __import__("os").path.dirname(__import__("os").path.abspath(__file__)))',
     '    print("total", start())'
   ].join('\n'),
+  'slow.py': [
+    'import time',
+    '',
+    'def slow():',
+    '    time.sleep(0.12)',
+    '',
+    'def fast():',
+    '    return 1',
+    '',
+    'def countdown(n):',
+    '    time.sleep(0.01)',
+    '    return countdown(n - 1) if n else 0',
+    '',
+    'def main():',
+    '    fast()',
+    '    slow()',
+    '    slow()',
+    '    countdown(3)',
+    '',
+    'main()'
+  ].join('\n'),
   'fail.py': ['def boom():', '    raise ValueError("bad")', '', 'boom()'].join('\n'),
   'exit3.py': 'import sys\nsys.exit(3)\n',
   'net.py': [
@@ -299,6 +320,29 @@ describe.skipIf(!python)('run tracer (real Python)', () => {
     } finally {
       server.close()
     }
+  })
+
+  it('times each function: calls, total (a function calling itself counted once) and its own time; and who called it', async () => {
+    const r = await run([join(root, 'slow.py')])
+    expect(r.code).toBe(0)
+    type Prof = { t: string; fns: [string, number, number, number][]; edges: [string, string, number][] }
+    const profs = (r.messages as Prof[]).filter((m) => m.t === 'prof')
+    expect(profs.length).toBeGreaterThan(0)
+    const last = profs.at(-1)!
+    const fn = new Map(last.fns.map(([id, calls, total, self]) => [id, { calls, total, self }]))
+    expect(fn.get('slow:slow')!.calls).toBe(2)
+    expect(fn.get('slow:slow')!.self).toBeGreaterThan(200)
+    expect(fn.get('slow:fast')!.self).toBeLessThan(20)
+    const main = fn.get('slow:main')!
+    expect(main.total).toBeGreaterThan(250)
+    expect(main.self).toBeLessThan(30)
+    const cd = fn.get('slow:countdown')!
+    expect(cd.calls).toBe(4)
+    expect(cd.total).toBeGreaterThan(35)
+    expect(cd.total).toBeLessThan(90)
+    const edges = new Map(last.edges.map(([a, b, ms]) => [`${a}→${b}`, ms]))
+    expect(edges.get('slow:main→slow:slow')).toBeGreaterThan(200)
+    expect(edges.has('slow:countdown→slow:countdown')).toBe(false)
   })
 
   it('records recursion as a tree of calls: arguments in, value returned (capped)', async () => {

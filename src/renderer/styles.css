@@ -1331,6 +1331,14 @@ button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 
 .gnode { cursor: pointer; transition: opacity 0.12s; }
 .gnode rect:first-of-type { fill: var(--raised); stroke: var(--line-strong); stroke-width: 1; }
+/* Visual profiler: time badges, and the slow functions warmed (fill, so it never looks like the selection outline). */
+.gnode .gtime-text { fill: var(--fg-muted); font: 600 10px var(--font-code); }
+.gnode.hot-1 rect:first-of-type { fill: color-mix(in srgb, var(--heat-3) 12%, var(--raised)); }
+.gnode.hot-2 rect:first-of-type { fill: color-mix(in srgb, var(--heat-3) 26%, var(--raised)); }
+.gnode.hot-3 rect:first-of-type { fill: color-mix(in srgb, var(--heat-3) 42%, var(--raised)); }
+.gnode.hot-2 .gtime-text, .gnode.hot-3 .gtime-text { fill: var(--heat-2); }
+.graph-item.hot .graph-item-detail { color: var(--heat-2); }
+.graph-item.here .graph-item-text { font-weight: 600; }
 .gnode .glabel { fill: var(--fg); font: 600 12px var(--font-code); }
 .gnode .gdetail { fill: var(--fg-muted); font: 11px var(--font-ui); }
 .gnode.k-external rect:first-of-type, .gnode.k-host rect:first-of-type { fill: var(--bg); stroke-dasharray: 4 3; }

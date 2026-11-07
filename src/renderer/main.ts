@@ -49,6 +49,7 @@ import { GitView } from './gitView'
 import { DiffView } from './diffView'
 import { GraphView } from './graph/graphView'
 import { buildGraph, keepLastGood, replaceFiles, type ProjectGraph, type RawScan } from '../shared/projectGraph'
+import { parseProf, type RunProfile } from '../shared/profile'
 import { WhereView } from './panels/whereView'
 import { InFileView } from './panels/inFileView'
 import { moduleForPath } from './panels/whereModel'
@@ -2043,6 +2044,15 @@ window.api.onRunTrace((e) => {
     dataLog.begin(e.runId)
     replayTicks = []
     graphView.setReplay(0, () => {}, () => {})
+    pendingProfile = null
+    graphView.setProfile(null)
+    return
+  }
+  const prof = parseProf(e.message)
+  if (prof) {
+    // Re-sent ten times a second while it runs: show the newest at most once a second.
+    pendingProfile = prof
+    if (!profileTimer) profileTimer = window.setTimeout(applyProfile, 1000)
     return
   }
   const data = parseDataMessage(e.message)
@@ -2076,6 +2086,7 @@ window.api.onRunTrace((e) => {
   }
   const tick = parseTrace(e.message)
   if (tick === 'end') {
+    applyProfile()
     endRunOnGraph()
     offerReplay()
     return
@@ -2091,6 +2102,16 @@ window.api.onRunTrace((e) => {
     graphView.redrawBoxes()
   }
 })
+/** The visual profiler: the newest times from the tracer, waiting to be drawn. */
+let pendingProfile: RunProfile | null = null
+let profileTimer = 0
+function applyProfile(): void {
+  window.clearTimeout(profileTimer)
+  profileTimer = 0
+  if (pendingProfile) graphView.setProfile(pendingProfile)
+  pendingProfile = null
+}
+
 /** The last traced run's updates, to replay on the graph. */
 let replayTicks: TraceTick[] = []
 function offerReplay(): void {

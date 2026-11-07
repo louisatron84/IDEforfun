@@ -248,9 +248,9 @@ Optional directions that could extend the IDE beyond the core roadmap.
 - [x] Provide a visual map of how the project works (v0.46: Project Graph, plus the Project Map overview)
 
 **Visual profiler**
-- [ ] Show execution time directly on the project graph
-- [ ] Highlight expensive functions
-- [ ] Display call paths to explain where time is spent
+- [x] Show execution time directly on the project graph (v0.47: after a traced run, each function (Calls) or file (Modules) shows its time; Times toggle in the Graph toolbar)
+- [x] Highlight expensive functions (v0.47: warmed by their own time, not the calls they make; "Slowest in the last run" in the Graph's findings and in each module)
+- [x] Display call paths to explain where time is spent (v0.47: a function's details: "Where the time comes from", the heaviest callers from the start of the program)
 
 **Database explorer**
 - [ ] Detect database connections and ORM models
