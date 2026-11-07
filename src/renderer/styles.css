@@ -1309,6 +1309,26 @@ button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 /* ---------- Project Graph ---------- */
 .graph-view { display: flex; flex-direction: column; background: var(--bg); outline: none; }
 .graph-view[hidden] { display: none; }
+/* Database explorer: laid out like the Graph (toolbar, canvas, side). */
+.db-view { display: flex; flex-direction: column; background: var(--bg); outline: none; height: 100%; }
+.dbtable { cursor: pointer; }
+.dbtable-frame { fill: var(--raised); stroke: var(--line-strong); stroke-width: 1; }
+.dbtable-head { fill: color-mix(in srgb, var(--accent) 16%, var(--raised)); }
+.dbtable.file-only .dbtable-head { fill: var(--bg-panel); }
+.dbtable.file-only .dbtable-frame { stroke-dasharray: 4 3; }
+.dbtable.selected .dbtable-frame { stroke: var(--accent); stroke-width: 2; }
+.dbtable-name { fill: var(--fg); font: 600 12px var(--font-code); }
+.dbtable-tag { fill: var(--fg-muted); font: 11px var(--font-ui); }
+.dbrow-bg { fill: transparent; }
+.dbrow:hover .dbrow-bg { fill: var(--bg-panel); }
+.dbcol-name { fill: var(--fg); font: 11.5px var(--font-code); }
+.dbrow.pk .dbcol-name { font-weight: 600; }
+.dbcol-type { fill: var(--fg-muted); font: 11px var(--font-code); }
+.dbrow.fk .dbcol-type { fill: var(--graph-out); }
+.dbcol-key { fill: var(--heat-2); font: 600 9.5px var(--font-ui); text-transform: uppercase; letter-spacing: 0.04em; }
+.dbedge { fill: none; stroke: var(--graph-out); stroke-width: 1.5; }
+.dbedge.k-many { stroke-dasharray: 6 4; }
+.dbedge.k-relationship { stroke-dasharray: 2 4; stroke: var(--fg-muted); }
 .graph-toolbar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--bg-panel); flex-wrap: wrap; font-size: 12px; }
 .graph-title { font-weight: 600; font-size: 13px; margin-right: 4px; }
 .graph-seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }

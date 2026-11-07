@@ -50,6 +50,8 @@ import { DiffView } from './diffView'
 import { GraphView } from './graph/graphView'
 import { buildGraph, keepLastGood, replaceFiles, type ProjectGraph, type RawScan } from '../shared/projectGraph'
 import { parseProf, type RunProfile } from '../shared/profile'
+import { buildSchema } from '../shared/database'
+import { DatabaseView } from './database/databaseView'
 import { WhereView } from './panels/whereView'
 import { InFileView } from './panels/inFileView'
 import { moduleForPath } from './panels/whereModel'
@@ -1651,6 +1653,7 @@ async function openFolderPath(folder: string): Promise<void> {
     await loadBoxes(folder)
     await tree.setRoot(folder)
     graphView.reset()
+    databaseView.reset()
     projectGraph = null
     projectGraphFolder = null
     workspace.notifyChanged()
@@ -2511,7 +2514,12 @@ function projectChangedSoon(): void {
   window.clearTimeout(rescanTimer)
   rescanTimer = window.setTimeout(() => {
     scanFailedFor = null
-    if (tasks.isShown('where') || tasks.isShown('infile') || tasks.isShown('graph')) void scanProjectGraph().then(() => { if (tasks.isShown('graph')) void graphView.refresh() })
+    if (tasks.isShown('where') || tasks.isShown('infile') || tasks.isShown('graph') || tasks.isShown('database')) {
+      void scanProjectGraph().then(() => {
+        if (tasks.isShown('graph')) void graphView.refresh()
+        if (tasks.isShown('database')) void databaseView.refresh()
+      })
+    }
   }, 1500)
 }
 
@@ -2905,15 +2913,39 @@ const graphView = new GraphView({
     drop: (module) => addBox(module),
     live: () => (runBoxes.size ? new Set([...liveBoxes, ...runBoxes]) : liveBoxes)
   },
-  openModule: (rel, line) => {
-    if (!rootFolder) return
-    const sep = rootFolder.includes('\\') ? '\\' : '/'
-    const path = rootFolder.replace(/[\\/]+$/, '') + sep + rel.split('/').join(sep)
-    tasks.switchTo('code')
-    void openFile(path, line)
-  },
+  openModule: (rel, line) => openProjectFile(rel, line),
 })
 dock.register({ id: 'graph', title: 'Graph', body: graphView.el, onShow: () => void graphView.refresh() })
+
+/** Open a project file (relative path, / separators) at a 0-based line, in the Code task. */
+function openProjectFile(rel: string, line: number): void {
+  if (!rootFolder) return
+  const sep = rootFolder.includes('\\') ? '\\' : '/'
+  const path = rootFolder.replace(/[\\/]+$/, '') + sep + rel.split('/').join(sep)
+  tasks.switchTo('code')
+  void openFile(path, line)
+}
+
+// ---------- Database explorer: the tables the code defines and opens ----------
+const databaseView = new DatabaseView({
+  scan: () => scanProjectGraph().then((r) => (r.graph && lastRawScan ? { schema: buildSchema(lastRawScan) } : { error: r.error })),
+  openAt: (rel, line) => openProjectFile(rel, line),
+  openFunction: (id) => {
+    const module = id.slice(0, id.indexOf(':'))
+    const qual = id.slice(id.indexOf(':') + 1)
+    const file = lastRawScan?.files.find((f) => f.module === module)
+    const def = file?.defs.find((d) => d.qual === qual)
+    if (file) openProjectFile(file.path, (def?.line ?? 1) - 1)
+  }
+})
+dock.register({ id: 'database', title: 'Database', body: databaseView.el, onShow: () => void databaseView.refresh() })
+commands.register({
+  id: 'view.database', title: 'Show Database (tables, keys and connections)', when: () => rootFolder !== null,
+  run: () => {
+    diffView.hide()
+    tasks.reveal('database')
+  }
+})
 commands.register({
   id: 'view.projectGraph', title: 'Show Project Graph', keys: 'Ctrl+Alt+G', when: () => rootFolder !== null,
   run: () => {

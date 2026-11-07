@@ -405,6 +405,328 @@ def module_name(rel):
     return '.'.join(parts), is_package
 
 
+# ---------- databases: ORM models, CREATE TABLE in SQL strings, connections ----------
+# For the Database explorer. Models: SQLAlchemy (Column / mapped_column),
+# SQLModel (table=True), Django and Peewee (models.Model, ...Field()). A
+# SQLite file the code connects to (a literal path inside the project) is
+# opened read-only to list its real tables; nothing in it is read but the schema.
+DB_CONNECT = {
+    'sqlite3.connect': ('sqlite', 'sqlite3'), 'aiosqlite.connect': ('sqlite', 'aiosqlite'),
+    'create_engine': (None, 'sqlalchemy'), 'sqlalchemy.create_engine': (None, 'sqlalchemy'), 'sa.create_engine': (None, 'sqlalchemy'),
+    'create_async_engine': (None, 'sqlalchemy'),
+    'psycopg2.connect': ('postgres', 'psycopg2'), 'psycopg.connect': ('postgres', 'psycopg'),
+    'asyncpg.connect': ('postgres', 'asyncpg'), 'asyncpg.create_pool': ('postgres', 'asyncpg'),
+    'pymysql.connect': ('mysql', 'pymysql'), 'mysql.connector.connect': ('mysql', 'mysql-connector'), 'MySQLdb.connect': ('mysql', 'MySQLdb'),
+    'pymongo.MongoClient': ('mongo', 'pymongo'), 'MongoClient': ('mongo', 'pymongo'), 'AsyncIOMotorClient': ('mongo', 'motor'),
+    'redis.Redis': ('redis', 'redis'), 'redis.StrictRedis': ('redis', 'redis'), 'redis.from_url': ('redis', 'redis'),
+    'SqliteDatabase': ('sqlite', 'peewee'), 'peewee.SqliteDatabase': ('sqlite', 'peewee'),
+    'PostgresqlDatabase': ('postgres', 'peewee'), 'MySQLDatabase': ('mysql', 'peewee'),
+}
+FK_FIELDS = {'ForeignKey', 'OneToOneField', 'ForeignKeyField'}
+MANY_FIELDS = {'ManyToManyField'}
+CREATE_TABLE = _re.compile(r'create\s+table\s+(?:if\s+not\s+exists\s+)?[`"\[]?([\w.]+)[`"\]]?\s*\(', _re.I)
+REFERENCES = _re.compile(r'references\s+[`"\[]?(\w+)[`"\]]?', _re.I)
+
+
+def last_name(name):
+    return (name or '').rsplit('.', 1)[-1]
+
+
+def mask_secret(url):
+    """postgresql://user:password@host -> postgresql://user:***@host"""
+    return _re.sub(r'(//[^:/@\s]+:)[^@/\s]*@', r'\1***@', url)
+
+
+def kw(call, name):
+    for k in call.keywords:
+        if k.arg == name:
+            return k.value
+    return None
+
+
+def kw_true(call, name):
+    v = kw(call, name)
+    return isinstance(v, ast.Constant) and v.value is True
+
+
+def class_ref(node):
+    """The class a relationship points at: User, "User", "app.User", list["User"], Mapped[Optional["User"]]."""
+    if node is None:
+        return None
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        names = _re.findall(r'[A-Za-z_][\w.]*', node.value)
+        names = [n for n in names if n not in ('Mapped', 'List', 'list', 'Optional', 'Set', 'set', 'None')]
+        return last_name(names[-1]) if names else None
+    if isinstance(node, (ast.Name, ast.Attribute)):
+        return last_name(dotted(node))
+    if isinstance(node, ast.Subscript):
+        return class_ref(node.slice)
+    if isinstance(node, ast.BinOp):  # "User" | None
+        return class_ref(node.left)
+    if isinstance(node, ast.Tuple) and node.elts:
+        return class_ref(node.elts[0])
+    return None
+
+
+def mapped_type(ann):
+    """Mapped[int] -> 'int', Mapped[Optional[str]] -> 'str'."""
+    if isinstance(ann, ast.Subscript) and last_name(dotted(ann.value)) == 'Mapped':
+        inner = ann.slice
+        if isinstance(inner, ast.Subscript) and last_name(dotted(inner.value)) == 'Optional':
+            inner = inner.slice
+        return unparse(inner)
+    return unparse(ann) if ann is not None else ''
+
+
+def snake(name):
+    return _re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
+
+
+def model_of(cls, orm='django'):
+    """A ClassDef as a database model, or None if it isn't one."""
+    bases = [dotted(b) or '' for b in cls.bases]
+    sqlmodel = any(k.arg == 'table' and isinstance(k.value, ast.Constant) and k.value.value is True for k in cls.keywords)
+    django_like = any(last_name(b) == 'Model' for b in bases)
+    table = None
+    framework = 'sqlmodel' if sqlmodel else None
+    columns, rels = [], []
+    explicit_pk = False
+    for st in cls.body:
+        if isinstance(st, ast.Assign) and len(st.targets) == 1 and isinstance(st.targets[0], ast.Name):
+            name, value, ann = st.targets[0].id, st.value, None
+        elif isinstance(st, ast.AnnAssign) and isinstance(st.target, ast.Name):
+            name, value, ann = st.target.id, st.value, st.annotation
+        else:
+            continue
+        if name == '__tablename__':
+            table = const_str(value)
+            continue
+        fn = last_name(dotted(value.func)) if isinstance(value, ast.Call) else ''
+        if fn in ('Column', 'mapped_column'):
+            framework = framework or 'sqlalchemy'
+            c = {'name': name, 'type': '', 'line': st.lineno}
+            args = list(value.args)
+            if args and isinstance(args[0], ast.Constant) and isinstance(args[0].value, str):
+                c['name'] = args.pop(0).value
+            for a in args:
+                if isinstance(a, ast.Call) and last_name(dotted(a.func)) == 'ForeignKey':
+                    target = const_str(a.args[0]) if a.args else None
+                    if target:
+                        c['fk'] = target.split('.')[0] if '.' in target else target
+                elif not c['type']:
+                    c['type'] = unparse(a)
+            if not c['type'] and ann is not None:
+                c['type'] = mapped_type(ann)
+            if kw_true(value, 'primary_key'):
+                c['pk'] = True
+            if kw_true(value, 'unique'):
+                c['unique'] = True
+            columns.append(c)
+        elif fn in ('relationship', 'Relationship'):
+            to = class_ref(value.args[0]) if value.args else class_ref(ann)
+            if to:
+                rels.append({'name': name, 'to': to, 'kind': 'relationship', 'line': st.lineno})
+        elif fn in FK_FIELDS and (django_like or framework):
+            framework = framework or ('peewee' if fn == 'ForeignKeyField' else orm)
+            to = class_ref(value.args[0]) if value.args else class_ref(kw(value, 'to') or kw(value, 'model'))
+            c = {'name': name + '_id', 'type': 'ForeignKey', 'line': st.lineno}
+            if to and to != 'self':
+                c['fkModel'] = to
+            elif to == 'self':
+                c['fkModel'] = cls.name
+            if fn == 'OneToOneField' or kw_true(value, 'unique'):
+                c['unique'] = True
+            columns.append(c)
+        elif fn in MANY_FIELDS and django_like:
+            framework = framework or orm
+            to = class_ref(value.args[0]) if value.args else None
+            if to:
+                rels.append({'name': name, 'to': cls.name if to == 'self' else to, 'kind': 'many', 'line': st.lineno})
+        elif fn.endswith('Field') and fn != 'Field' and django_like:
+            framework = framework or orm
+            c = {'name': name, 'type': fn[:-5] or fn, 'line': st.lineno}
+            if kw_true(value, 'primary_key'):
+                c['pk'] = True
+            if kw_true(value, 'unique'):
+                c['unique'] = True
+            columns.append(c)
+        elif sqlmodel and ann is not None and fn in ('Field', ''):
+            c = {'name': name, 'type': unparse(ann), 'line': st.lineno}
+            if isinstance(value, ast.Call):
+                if kw_true(value, 'primary_key'):
+                    c['pk'] = True
+                fk = const_str(kw(value, 'foreign_key'))
+                if fk:
+                    c['fk'] = fk.split('.')[0]
+                if kw_true(value, 'unique'):
+                    c['unique'] = True
+            columns.append(c)
+        if columns and columns[-1].get('pk'):
+            explicit_pk = True
+    if not framework and table is None:
+        return None
+    if not columns and not rels and table is None:
+        return None
+    if framework in ('django', 'peewee') and not explicit_pk:
+        columns.insert(0, {'name': 'id', 'type': 'AutoField', 'pk': True, 'implicit': True, 'line': cls.lineno})
+    if table is None:
+        table = snake(cls.name) if framework == 'sqlalchemy' else cls.name.lower()
+    return {'name': cls.name, 'table': table, 'framework': framework or 'sqlalchemy', 'line': cls.lineno, 'columns': columns, 'rels': rels}
+
+
+def split_top(body):
+    """Split a CREATE TABLE body at the commas outside brackets."""
+    parts, depth, cur = [], 0, []
+    for ch in body:
+        if ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+        if ch == ',' and depth == 0:
+            parts.append(''.join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    parts.append(''.join(cur))
+    return [p.strip() for p in parts if p.strip()]
+
+
+def sql_tables(text, line):
+    """The CREATE TABLE statements in a string of SQL."""
+    out = []
+    for m in CREATE_TABLE.finditer(text):
+        start = m.end()
+        depth, end = 1, None
+        for i in range(start, len(text)):
+            if text[i] == '(':
+                depth += 1
+            elif text[i] == ')':
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        if end is None:
+            continue
+        cols = []
+        for part in split_top(text[start:end]):
+            low = part.lower()
+            words = part.split()
+            if low.startswith('primary key'):
+                for name in _re.findall(r'\w+', part[part.index('(') + 1:] if '(' in part else ''):
+                    for c in cols:
+                        if c['name'] == name:
+                            c['pk'] = True
+                continue
+            if low.startswith('foreign key'):
+                inside = _re.search(r'\(([^)]*)\)', part)
+                ref = REFERENCES.search(part)
+                if inside and ref:
+                    for name in _re.findall(r'\w+', inside.group(1)):
+                        for c in cols:
+                            if c['name'] == name:
+                                c['fk'] = ref.group(1)
+                continue
+            if low.startswith(('constraint', 'unique', 'check', 'index', 'key ')):
+                continue
+            c = {'name': words[0].strip('`"[]'), 'type': words[1] if len(words) > 1 and words[1].upper() not in ('PRIMARY', 'NOT', 'REFERENCES', 'UNIQUE', 'DEFAULT') else ''}
+            if 'primary key' in low:
+                c['pk'] = True
+            if _re.search(r'\bunique\b', low):
+                c['unique'] = True
+            ref = REFERENCES.search(part)
+            if ref:
+                c['fk'] = ref.group(1)
+            cols.append(c)
+        out.append({'name': m.group(1).split('.')[-1], 'line': line, 'columns': cols})
+    return out
+
+
+def sqlite_schema(root, rel_dir, target):
+    """The real tables of a SQLite file in the project the code opens (read-only), or None."""
+    if not target or target == ':memory:' or '{' in target:
+        return None
+    for base in (root, os.path.join(root, rel_dir)):
+        path = os.path.realpath(os.path.join(base, target))
+        if not os.path.normcase(path).startswith(os.path.normcase(os.path.join(os.path.realpath(root), ''))) or not os.path.isfile(path):
+            continue
+        rel = os.path.relpath(path, os.path.realpath(root)).replace(os.sep, '/')
+        try:
+            import sqlite3
+            from urllib.request import pathname2url
+            con = sqlite3.connect('file:' + pathname2url(path) + '?mode=ro', uri=True, timeout=1)
+            try:
+                tables = []
+                names = [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()[:200]]
+                for name in names:
+                    q = name.replace('"', '""')
+                    cols = []
+                    for info in con.execute('PRAGMA table_info("%s")' % q):  # cid, name, type, notnull, default, pk
+                        c = {'name': info[1], 'type': info[2] or ''}
+                        if info[5]:
+                            c['pk'] = True
+                        cols.append(c)
+                    for fk in con.execute('PRAGMA foreign_key_list("%s")' % q):
+                        for c in cols:
+                            if c['name'] == fk[3]:
+                                c['fk'] = fk[2]
+                    tables.append({'name': name, 'columns': cols})
+                return {'file': rel, 'tables': tables}
+            finally:
+                con.close()
+        except Exception as e:
+            return {'file': rel, 'error': f'{type(e).__name__}: {e}'}
+    return None
+
+
+def scan_db(tree, root, rel):
+    """Models, CREATE TABLE statements and connections in one file (None if it has none)."""
+    models, tables, conns = [], [], []
+    rel_dir = os.path.dirname(rel)
+    orm = 'peewee' if any(
+        (isinstance(n, ast.Import) and any(a.name.split('.')[0] == 'peewee' for a in n.names))
+        or (isinstance(n, ast.ImportFrom) and (n.module or '').split('.')[0] == 'peewee')
+        for n in ast.walk(tree)) else 'django'
+
+    def visit(node, func):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.ClassDef):
+                m = model_of(child, orm)
+                if m:
+                    models.append(m)
+                visit(child, func if func else None)
+                continue
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                visit(child, f'{func}.{child.name}' if func else child.name)
+                continue
+            if isinstance(child, ast.Constant) and isinstance(child.value, str) and 'create' in child.value.lower():
+                tables.extend(sql_tables(child.value, child.lineno))
+            if isinstance(child, ast.Call):
+                name = dotted(child.func)
+                hit = DB_CONNECT.get(name or '')
+                if hit:
+                    kind, library = hit
+                    arg = child.args[0] if child.args else (kw(child, 'database') or kw(child, 'url') or kw(child, 'dsn') or kw(child, 'host'))
+                    target = const_str(arg) if arg is not None else None
+                    if target is not None:
+                        target = mask_secret(target)
+                    if kind is None:
+                        low = (target or '').lower()
+                        kind = 'sqlite' if low.startswith('sqlite') else 'postgres' if low.startswith('postgres') else 'mysql' if low.startswith('mysql') else 'sql'
+                    c = {'kind': kind, 'library': library, 'target': target, 'func': func, 'line': child.lineno}
+                    if kind == 'sqlite' and target:
+                        path = target.split(':///', 1)[1] if ':///' in target else target
+                        schema = sqlite_schema(root, rel_dir, path.split('?')[0])
+                        if schema:
+                            c['schema'] = schema
+                    conns.append(c)
+            visit(child, func)
+
+    visit(tree, None)
+    if not (models or tables or conns):
+        return None
+    return {'models': models, 'tables': tables, 'connections': conns}
+
+
 def scan_file(root, rel, text=None):
     """One file; `text` (from the editor, unsaved) is used instead of what's on disk when given."""
     path = os.path.join(root, *rel.split('/'))
@@ -446,6 +768,9 @@ def scan_file(root, rel, text=None):
         d['refs'] = sorted(d['refs'])
     entry.update(imports=s.imports, defs=defs, routes=s.routes, http=s.http, env=s.env)
     entry['unreachable'] = find_unreachable(tree)
+    db = scan_db(tree, root, rel)
+    if db:
+        entry['db'] = db
     if s.all_names is not None:
         entry['all'] = s.all_names
     entry['main'] = any(
