@@ -94,7 +94,7 @@ export class TaskController {
       const side = findStack(root, SIDE_ANCHOR)
       return side ? insertPanel(root, panel, side.id, 'center') : insertAtEdge(root, panel, 'left', 0.2)
     }
-    if (panel === EDITOR || panel === 'graph' || panel === 'pipeline') return insertAtEdge(root, panel, 'right', 0.6)
+    if (panel === EDITOR || panel === 'graph' || panel === 'pipeline' || panel === 'database') return insertAtEdge(root, panel, 'right', 0.6)
     if (CONNECT_PANELS.has(panel)) return insertAtEdge(root, panel, 'right', 0.26)
     const drawer = findStack(root, DRAWER_ANCHOR)
     if (drawer) {

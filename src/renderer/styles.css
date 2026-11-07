@@ -1309,6 +1309,26 @@ button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 /* ---------- Project Graph ---------- */
 .graph-view { display: flex; flex-direction: column; background: var(--bg); outline: none; }
 .graph-view[hidden] { display: none; }
+/* Database explorer: laid out like the Graph (toolbar, canvas, side). */
+.db-view { display: flex; flex-direction: column; background: var(--bg); outline: none; height: 100%; }
+.dbtable { cursor: pointer; }
+.dbtable-frame { fill: var(--raised); stroke: var(--line-strong); stroke-width: 1; }
+.dbtable-head { fill: color-mix(in srgb, var(--accent) 16%, var(--raised)); }
+.dbtable.file-only .dbtable-head { fill: var(--bg-panel); }
+.dbtable.file-only .dbtable-frame { stroke-dasharray: 4 3; }
+.dbtable.selected .dbtable-frame { stroke: var(--accent); stroke-width: 2; }
+.dbtable-name { fill: var(--fg); font: 600 12px var(--font-code); }
+.dbtable-tag { fill: var(--fg-muted); font: 11px var(--font-ui); }
+.dbrow-bg { fill: transparent; }
+.dbrow:hover .dbrow-bg { fill: var(--bg-panel); }
+.dbcol-name { fill: var(--fg); font: 11.5px var(--font-code); }
+.dbrow.pk .dbcol-name { font-weight: 600; }
+.dbcol-type { fill: var(--fg-muted); font: 11px var(--font-code); }
+.dbrow.fk .dbcol-type { fill: var(--graph-out); }
+.dbcol-key { fill: var(--heat-2); font: 600 9.5px var(--font-ui); text-transform: uppercase; letter-spacing: 0.04em; }
+.dbedge { fill: none; stroke: var(--graph-out); stroke-width: 1.5; }
+.dbedge.k-many { stroke-dasharray: 6 4; }
+.dbedge.k-relationship { stroke-dasharray: 2 4; stroke: var(--fg-muted); }
 .graph-toolbar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--bg-panel); flex-wrap: wrap; font-size: 12px; }
 .graph-title { font-weight: 600; font-size: 13px; margin-right: 4px; }
 .graph-seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
@@ -1331,6 +1351,14 @@ button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 
 .gnode { cursor: pointer; transition: opacity 0.12s; }
 .gnode rect:first-of-type { fill: var(--raised); stroke: var(--line-strong); stroke-width: 1; }
+/* Visual profiler: time badges, and the slow functions warmed (fill, so it never looks like the selection outline). */
+.gnode .gtime-text { fill: var(--fg-muted); font: 600 10px var(--font-code); }
+.gnode.hot-1 rect:first-of-type { fill: color-mix(in srgb, var(--heat-3) 12%, var(--raised)); }
+.gnode.hot-2 rect:first-of-type { fill: color-mix(in srgb, var(--heat-3) 26%, var(--raised)); }
+.gnode.hot-3 rect:first-of-type { fill: color-mix(in srgb, var(--heat-3) 42%, var(--raised)); }
+.gnode.hot-2 .gtime-text, .gnode.hot-3 .gtime-text { fill: var(--heat-2); }
+.graph-item.hot .graph-item-detail { color: var(--heat-2); }
+.graph-item.here .graph-item-text { font-weight: 600; }
 .gnode .glabel { fill: var(--fg); font: 600 12px var(--font-code); }
 .gnode .gdetail { fill: var(--fg-muted); font: 11px var(--font-ui); }
 .gnode.k-external rect:first-of-type, .gnode.k-host rect:first-of-type { fill: var(--bg); stroke-dasharray: 4 3; }
@@ -1592,6 +1620,7 @@ button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 .box-test { display: flex; gap: 8px; align-items: center; }
 .box-result.ok { color: var(--ok); }
 .box-result.fail { color: var(--err); }
+.box-test-note { margin: 4px 0 0; font-size: 12px; color: var(--fg-muted); }
 .box-fields { display: flex; flex-direction: column; gap: 1px; }
 .box-field { display: flex; gap: 6px; align-items: center; padding: 1px 0; }
 .box-field-name { font-family: var(--font-code); }

@@ -49,6 +49,9 @@ import { GitView } from './gitView'
 import { DiffView } from './diffView'
 import { GraphView } from './graph/graphView'
 import { buildGraph, keepLastGood, replaceFiles, type ProjectGraph, type RawScan } from '../shared/projectGraph'
+import { parseProf, type RunProfile } from '../shared/profile'
+import { buildSchema } from '../shared/database'
+import { DatabaseView } from './database/databaseView'
 import { WhereView } from './panels/whereView'
 import { InFileView } from './panels/inFileView'
 import { moduleForPath } from './panels/whereModel'
@@ -123,6 +126,13 @@ const editorOptions = (index: number): EditorOptions => ({
     rescanFileSoon(doc)
     semanticSoon(doc)
     completion.onEdit()
+    // The text under a hover tooltip changed (e.g. you fixed the typo it describes): it's out of date.
+    hideHover()
+    // You're fixing the code that failed: "Debug it" no longer fits.
+    if (!failureEdited && /\.pyw?$/i.test(doc.path)) {
+      failureEdited = true
+      suggestionsSoon()
+    }
   },
   onKeyDown: (e) => completion.handleKey(e),
   onType: (text) => completion.onType(text),
@@ -510,6 +520,9 @@ async function saveAllDirty(report: (message: string) => void): Promise<boolean>
   return true
 }
 
+/** Set when you chose "Install into this Python anyway" for debugpy (asked once per session). */
+let debugpySystemOk = false
+
 async function startDebugging(given?: LaunchSpec): Promise<void> {
   const resolved = given ?? launchSpec()
   if (rootSession?.active) await stopDebugging()
@@ -538,8 +551,23 @@ async function startDebugging(given?: LaunchSpec): Promise<void> {
     debugView.setState('idle')
     return
   }
+  if (!prep.hasDebugpy && !prep.isVenv && !debugpySystemOk) {
+    // Don't quietly pip install into the Python every project shares: offer a project .venv first.
+    const python = prep.python
+    debugView.error(`Debugging needs the "debugpy" package. This project uses a system-wide Python:
+  ${python}
+Installing there affects every project, so Forge asks first. A .venv for this project keeps its packages separate.`)
+    debugView.setState('idle')
+    tasks.endDebug()
+    palette.choose('Debugging needs debugpy: where should it be installed?', [
+      { label: 'Create a .venv for this project (recommended)', detail: 'then start debugging again to install debugpy into it', run: () => void pyEnv.createVenv() },
+      { label: 'Install into this Python anyway', detail: python, run: () => { debugpySystemOk = true; void startDebugging(spec) } },
+      { label: 'Cancel', run: () => {} }
+    ])
+    return
+  }
   if (!prep.hasDebugpy) {
-    const ok = confirm(
+    const ok = prep.isVenv === false || confirm(
       `The debugger needs the "debugpy" package, which isn't installed for:\n${prep.python}\n\nInstall it now? (runs: pip install debugpy)`
     )
     if (!ok) {
@@ -1625,6 +1653,7 @@ async function openFolderPath(folder: string): Promise<void> {
     await loadBoxes(folder)
     await tree.setRoot(folder)
     graphView.reset()
+    databaseView.reset()
     projectGraph = null
     projectGraphFolder = null
     workspace.notifyChanged()
@@ -2000,6 +2029,8 @@ function pickTask(): void {
 /** What to do when a tool run (pip, venv) ends, by run id. */
 const afterRun = new Map<number, (code: number | null) => void>()
 let lastExit: { runId: number; code: number | null } | null = null
+/** Python code was edited since the last run ended (so a failure there may already be fixed). */
+let failureEdited = false
 
 // ---------- live run feedback (a traced run's updates) ----------
 /** Boxes whose function is running (lit like during a Test call). */
@@ -2016,6 +2047,15 @@ window.api.onRunTrace((e) => {
     dataLog.begin(e.runId)
     replayTicks = []
     graphView.setReplay(0, () => {}, () => {})
+    pendingProfile = null
+    graphView.setProfile(null)
+    return
+  }
+  const prof = parseProf(e.message)
+  if (prof) {
+    // Re-sent ten times a second while it runs: show the newest at most once a second.
+    pendingProfile = prof
+    if (!profileTimer) profileTimer = window.setTimeout(applyProfile, 1000)
     return
   }
   const data = parseDataMessage(e.message)
@@ -2049,6 +2089,7 @@ window.api.onRunTrace((e) => {
   }
   const tick = parseTrace(e.message)
   if (tick === 'end') {
+    applyProfile()
     endRunOnGraph()
     offerReplay()
     return
@@ -2064,6 +2105,16 @@ window.api.onRunTrace((e) => {
     graphView.redrawBoxes()
   }
 })
+/** The visual profiler: the newest times from the tracer, waiting to be drawn. */
+let pendingProfile: RunProfile | null = null
+let profileTimer = 0
+function applyProfile(): void {
+  window.clearTimeout(profileTimer)
+  profileTimer = 0
+  if (pendingProfile) graphView.setProfile(pendingProfile)
+  pendingProfile = null
+}
+
 /** The last traced run's updates, to replay on the graph. */
 let replayTicks: TraceTick[] = []
 function offerReplay(): void {
@@ -2145,6 +2196,8 @@ window.api.onRunEvent((e) => {
   else if (e.type === 'exit') {
     output.finished(e.code, e.ms, e.signal)
     lastExit = { runId: e.runId, code: e.code }
+    failureEdited = false
+    suggestionsSoon()
     const after = afterRun.get(e.runId)
     afterRun.delete(e.runId)
     after?.(e.code)
@@ -2461,7 +2514,12 @@ function projectChangedSoon(): void {
   window.clearTimeout(rescanTimer)
   rescanTimer = window.setTimeout(() => {
     scanFailedFor = null
-    if (tasks.isShown('where') || tasks.isShown('infile') || tasks.isShown('graph')) void scanProjectGraph().then(() => { if (tasks.isShown('graph')) void graphView.refresh() })
+    if (tasks.isShown('where') || tasks.isShown('infile') || tasks.isShown('graph') || tasks.isShown('database')) {
+      void scanProjectGraph().then(() => {
+        if (tasks.isShown('graph')) void graphView.refresh()
+        if (tasks.isShown('database')) void databaseView.refresh()
+      })
+    }
   }, 1500)
 }
 
@@ -2855,15 +2913,39 @@ const graphView = new GraphView({
     drop: (module) => addBox(module),
     live: () => (runBoxes.size ? new Set([...liveBoxes, ...runBoxes]) : liveBoxes)
   },
-  openModule: (rel, line) => {
-    if (!rootFolder) return
-    const sep = rootFolder.includes('\\') ? '\\' : '/'
-    const path = rootFolder.replace(/[\\/]+$/, '') + sep + rel.split('/').join(sep)
-    tasks.switchTo('code')
-    void openFile(path, line)
-  },
+  openModule: (rel, line) => openProjectFile(rel, line),
 })
 dock.register({ id: 'graph', title: 'Graph', body: graphView.el, onShow: () => void graphView.refresh() })
+
+/** Open a project file (relative path, / separators) at a 0-based line, in the Code task. */
+function openProjectFile(rel: string, line: number): void {
+  if (!rootFolder) return
+  const sep = rootFolder.includes('\\') ? '\\' : '/'
+  const path = rootFolder.replace(/[\\/]+$/, '') + sep + rel.split('/').join(sep)
+  tasks.switchTo('code')
+  void openFile(path, line)
+}
+
+// ---------- Database explorer: the tables the code defines and opens ----------
+const databaseView = new DatabaseView({
+  scan: () => scanProjectGraph().then((r) => (r.graph && lastRawScan ? { schema: buildSchema(lastRawScan) } : { error: r.error })),
+  openAt: (rel, line) => openProjectFile(rel, line),
+  openFunction: (id) => {
+    const module = id.slice(0, id.indexOf(':'))
+    const qual = id.slice(id.indexOf(':') + 1)
+    const file = lastRawScan?.files.find((f) => f.module === module)
+    const def = file?.defs.find((d) => d.qual === qual)
+    if (file) openProjectFile(file.path, (def?.line ?? 1) - 1)
+  }
+})
+dock.register({ id: 'database', title: 'Database', body: databaseView.el, onShow: () => void databaseView.refresh() })
+commands.register({
+  id: 'view.database', title: 'Show Database (tables, keys and connections)', when: () => rootFolder !== null,
+  run: () => {
+    diffView.hide()
+    tasks.reveal('database')
+  }
+})
 commands.register({
   id: 'view.projectGraph', title: 'Show Project Graph', keys: 'Ctrl+Alt+G', when: () => rootFolder !== null,
   run: () => {
@@ -3354,7 +3436,7 @@ function renderSuggestions(): void {
     task: tasks.current,
     file: python ? { path: python.path, text: python.getText() } : null,
     debug: session?.state ?? 'idle',
-    lastRunFailed: !!lastExit && lastExit.runId === lastRunId && lastExit.code !== 0 && lastExit.code !== null,
+    lastRunFailed: !failureEdited && !!lastExit && lastExit.runId === lastRunId && lastExit.code !== 0 && lastExit.code !== null,
     problems: python ? languages.diagnosticsFor(python.path).filter((d) => d.severity <= 2).length : 0,
     changes: repo ? new Set([...repo.staged, ...repo.unstaged, ...repo.conflicts].map((c) => c.path)).size : 0,
     shown: (panel) => tasks.isShown(panel)

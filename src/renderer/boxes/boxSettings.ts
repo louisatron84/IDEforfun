@@ -294,6 +294,8 @@ export class BoxSettings {
     test.append(tb)
     if (req.test) test.append(el('span', `box-result ${req.test.ok ? 'ok' : 'fail'}`, resultLine(req)))
     s.append(test)
+    // Say up front that it writes a file (the same one the generated function writes).
+    s.append(el('p', 'box-test-note', `A test call saves the rows it gets to ${req.output} in your project.`))
 
     const choices = this.ctrl.recordChoices(box.id, req.id)
     if (choices.length > 1) {

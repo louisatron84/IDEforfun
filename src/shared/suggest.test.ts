@@ -15,6 +15,12 @@ describe('suggestTools', () => {
     expect(ids(ctx({ file: { path: 'etl.py', text: 'import pandas as pd\n' } }))).toEqual(['pipeline'])
     expect(ids(ctx({ file: { path: 'tests/test_x.py', text: 'from forge_blocks import read_csv\n' } }))).toEqual(['tests', 'pipeline'])
   })
+  it('a file that uses a database suggests the Database panel', () => {
+    expect(ids(ctx({ file: { path: 'db.py', text: 'import sqlite3\n' } }))).toEqual(['database'])
+    expect(ids(ctx({ file: { path: 'models.py', text: 'from sqlalchemy.orm import Mapped\n' } }))).toEqual(['database'])
+    expect(ids(ctx({ file: { path: 'shop/models.py', text: 'from django.db import models\n' } }))).toEqual(['database'])
+    expect(ids(ctx({ file: { path: 'x.py', text: 'import sqlite3\n' }, shown: (p) => p === 'database' }))).toEqual([])
+  })
   it('a failed run suggests debugging it; a pause, the Debug panel', () => {
     expect(ids(ctx({ lastRunFailed: true }))).toEqual(['debug-it'])
     expect(ids(ctx({ debug: 'paused', lastRunFailed: true }))).toEqual(['debug'])

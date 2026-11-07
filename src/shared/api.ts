@@ -222,7 +222,7 @@ export interface IdeApi {
   onTerminalEvent(listener: (event: TerminalEvent) => void): () => void
 
   /** The interpreter to debug with, and whether debugpy is installed in it. */
-  debugPrepare(cwd: string, python?: string): Promise<{ python: string | null; hasDebugpy: boolean }>
+  debugPrepare(cwd: string, python?: string): Promise<{ python: string | null; hasDebugpy: boolean; isVenv: boolean }>
   /** pip install debugpy into that interpreter. */
   debugInstall(python: string): Promise<{ ok: boolean; output: string }>
   /** Start the debugpy adapter; then talk to it with debugSend / onDebugMessage (DAP). */

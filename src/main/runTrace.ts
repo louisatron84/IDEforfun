@@ -4,12 +4,20 @@
  */
 import { createServer, type Socket } from 'node:net'
 import { randomBytes } from 'node:crypto'
+import { deflateSync } from 'node:zlib'
 import TRACER from './runTrace.py?raw'
+
+/**
+ * The tracer goes on the command line (no file to write or clean up), packed:
+ * Windows limits a command line to 32,767 characters and the script alone is
+ * about that size.
+ */
+const BOOT = `import base64,zlib;exec(compile(zlib.decompress(base64.b64decode('${deflateSync(Buffer.from(TRACER, 'utf8'), { level: 9 }).toString('base64')}')),'<forge-trace>','exec'))`
 
 /** Python's arguments for a traced run (`target` is `[file]` or `['-m', module]`). */
 export function traceCommand(target: string[], args: string[]): string[] {
   const t = target[0] === '-m' ? ['--module', target[1]] : ['--script', target[0]]
-  return ['-u', '-c', TRACER, ...t, ...args]
+  return ['-u', '-c', BOOT, ...t, ...args]
 }
 
 /** What the tracer reads from its environment (it removes them before the program runs). */

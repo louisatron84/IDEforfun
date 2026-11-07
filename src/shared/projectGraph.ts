@@ -59,6 +59,45 @@ export interface RawFile {
   main?: boolean
   /** A client Forge generated (from an OpenAPI description), and whether it was edited by hand since. */
   generated?: { kind: 'openapi'; slug: string; edited: boolean }
+  /** Database models, CREATE TABLE statements and connections (only when the file has any). See database.ts. */
+  db?: RawDb
+}
+
+export interface RawDbColumn {
+  name: string
+  type: string
+  pk?: boolean
+  unique?: boolean
+  /** The table it refers to (a ForeignKey / REFERENCES). */
+  fk?: string
+  /** The model class it refers to (Django / Peewee foreign keys). */
+  fkModel?: string
+  /** Added by the framework (Django's id), not written in the code. */
+  implicit?: boolean
+  line?: number
+}
+export interface RawDbModel {
+  name: string
+  table: string
+  framework: 'sqlalchemy' | 'sqlmodel' | 'django' | 'peewee'
+  line: number
+  columns: RawDbColumn[]
+  rels: { name: string; to: string; kind: 'relationship' | 'many'; line: number }[]
+}
+export interface RawDbConnection {
+  kind: 'sqlite' | 'postgres' | 'mysql' | 'mongo' | 'redis' | 'sql'
+  library: string
+  /** The database's address or file, passwords masked; null when built at run time. */
+  target: string | null
+  func: string | null
+  line: number
+  /** A SQLite file in the project, opened read-only: its real tables. */
+  schema?: { file: string; tables?: { name: string; columns: RawDbColumn[] }[]; error?: string }
+}
+export interface RawDb {
+  models: RawDbModel[]
+  tables: { name: string; line: number; columns: RawDbColumn[] }[]
+  connections: RawDbConnection[]
 }
 export interface RawScan { root: string; python: string; truncated: boolean; files: RawFile[] }
 

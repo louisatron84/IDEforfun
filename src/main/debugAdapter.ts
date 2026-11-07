@@ -53,6 +53,13 @@ export async function hasDebugpy(python: string): Promise<boolean> {
   return (await run(python, ['-c', 'import debugpy'], 20000)).ok
 }
 
+/** True for a virtual environment (.venv, conda env): installing there doesn't touch the system Python. */
+export async function isVirtualEnv(python: string): Promise<boolean> {
+  const code = "import os, sys; print(sys.prefix != sys.base_prefix or os.path.isdir(os.path.join(sys.prefix, 'conda-meta')))"
+  const r = await run(python, ['-c', code], 20000)
+  return r.ok && r.output.trim().split(/\s+/).pop() === 'True'
+}
+
 /** `python -m pip install debugpy` (up to 5 minutes). */
 export function installDebugpy(python: string): Promise<{ ok: boolean; output: string }> {
   return run(python, ['-m', 'pip', 'install', '--disable-pip-version-check', 'debugpy'], 5 * 60 * 1000)

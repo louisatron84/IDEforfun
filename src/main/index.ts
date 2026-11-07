@@ -32,7 +32,7 @@ import { prepareProjectDir } from './projectDir'
 import type { FindOptions } from '../shared/regex'
 import { PythonRunner } from './python'
 import { Terminals } from './terminals'
-import { DebugAdapter, hasDebugpy, installDebugpy, resolvePython } from './debugAdapter'
+import { DebugAdapter, hasDebugpy, installDebugpy, isVirtualEnv, resolvePython } from './debugAdapter'
 import { normalizeSettings } from '../shared/settings'
 
 // Lets automated tests use a throwaway profile instead of the real settings.
@@ -297,7 +297,9 @@ ipcMain.handle('run:input', (_event, text: string) => runner.sendInput(text))
 
 ipcMain.handle('debug:prepare', async (_event, cwd: string, configured?: string) => {
   const python = await resolvePython(cwd, configured)
-  return { python, hasDebugpy: python ? await hasDebugpy(python) : false }
+  if (!python) return { python, hasDebugpy: false, isVenv: false }
+  const [has, venv] = await Promise.all([hasDebugpy(python), isVirtualEnv(python)])
+  return { python, hasDebugpy: has, isVenv: venv }
 })
 ipcMain.handle('debug:install', (_event, python: string) => installDebugpy(python))
 ipcMain.handle('debug:start', (event, python: string, cwd: string) => debugAdapter.start(event.sender, python, cwd))

@@ -243,20 +243,20 @@ Each of these is a big project of its own. Kept as a wishlist.
 Optional directions that could extend the IDE beyond the core roadmap.
 
 **Architecture explorer**
-- [ ] Automatically reconstruct the architecture of an unfamiliar codebase
-- [ ] Show components, dependencies, entry points and communication paths
-- [ ] Provide a visual map of how the project works
+- [x] Automatically reconstruct the architecture of an unfamiliar codebase (v0.41: the Project Graph is built from the code with Python's `ast`, nothing to set up)
+- [x] Show components, dependencies, entry points and communication paths (v0.41: modules, imports, calls, programs with `__main__`, web routes and the web APIs they call)
+- [x] Provide a visual map of how the project works (v0.46: Project Graph, plus the Project Map overview)
 
 **Visual profiler**
-- [ ] Show execution time directly on the project graph
-- [ ] Highlight expensive functions
-- [ ] Display call paths to explain where time is spent
+- [x] Show execution time directly on the project graph (v0.47: after a traced run, each function (Calls) or file (Modules) shows its time; Times toggle in the Graph toolbar)
+- [x] Highlight expensive functions (v0.47: warmed by their own time, not the calls they make; "Slowest in the last run" in the Graph's findings and in each module)
+- [x] Display call paths to explain where time is spent (v0.47: a function's details: "Where the time comes from", the heaviest callers from the start of the program)
 
 **Database explorer**
-- [ ] Detect database connections and ORM models
-- [ ] Generate interactive schema diagrams
-- [ ] Show database relationships
-- [ ] Navigate from schema elements to relevant code
+- [x] Detect database connections and ORM models (v0.48: SQLAlchemy, SQLModel, Django and Peewee models; CREATE TABLE in SQL strings; sqlite3, SQLAlchemy engines, psycopg, MySQL, Mongo, Redis connections, passwords masked; SQLite files in the project read as they really are, read-only)
+- [x] Generate interactive schema diagrams (v0.48: Database panel in the Connect task: tables with columns and keys, pan / zoom / fit)
+- [x] Show database relationships (v0.48: foreign keys from the key's row, many-to-many dashed, relationship() dotted where no key links them)
+- [x] Navigate from schema elements to relevant code (v0.48: double-click a table to open its model; "Used in" lists the functions that use it; connections open where they're made)
 
 **Event-flow visualiser**
 - [ ] Track events through an application: where they originate, which handlers process them, what gets triggered and where they end up

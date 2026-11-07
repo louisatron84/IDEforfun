@@ -1,6 +1,6 @@
 {
   "name": "ideforfun",
-  "version": "0.46.2",
+  "version": "0.47.0",
   "description": "A hobby IDE with a hand-written editor",
   "main": "./out/main/index.js",
   "private": true,
@@ -88,7 +88,10 @@
       "artifactName": "Forge-Setup-${version}.${ext}"
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "icon": "build/icon.png",
       "category": "Development",
       "executableName": "forge",
@@ -98,7 +101,10 @@
     },
     "deb": {
       "packageName": "forge",
-      "fpm": ["--replaces=ideforfun", "--conflicts=ideforfun"]
+      "fpm": [
+        "--replaces=ideforfun",
+        "--conflicts=ideforfun"
+      ]
     },
     "portable": {
       "artifactName": "Forge-${version}-portable.${ext}"
