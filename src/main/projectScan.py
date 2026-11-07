@@ -405,16 +405,23 @@ def module_name(rel):
     return '.'.join(parts), is_package
 
 
-def scan_file(root, rel):
+def scan_file(root, rel, text=None):
+    """One file; `text` (from the editor, unsaved) is used instead of what's on disk when given."""
     path = os.path.join(root, *rel.split('/'))
     mod, is_package = module_name(rel)
     entry = {'path': rel, 'module': mod, 'isPackage': is_package, 'imports': [], 'defs': [], 'routes': [], 'http': [], 'env': [], 'lines': 0}
     try:
-        if os.path.getsize(path) > MAX_BYTES:
+        if text is not None:
+            source = text.encode('utf-8')
+        elif os.path.getsize(path) > MAX_BYTES:
             entry['error'] = 'too large to analyse'
             return entry
-        with open(path, 'rb') as f:
-            source = f.read()
+        else:
+            with open(path, 'rb') as f:
+                source = f.read()
+        if len(source) > MAX_BYTES:
+            entry['error'] = 'too large to analyse'
+            return entry
         entry['lines'] = source.count(b'\n') + 1
         tree = ast.parse(source, filename=rel)
     except SyntaxError as e:
@@ -450,6 +457,15 @@ def scan_file(root, rel):
 
 def main():
     root = os.path.abspath(sys.argv[1])
+    # Unsaved editor text: a JSON file of {relative path: text}, used instead of the files on disk.
+    overrides = {}
+    if len(sys.argv) >= 4 and sys.argv[2] == '--overrides':
+        with open(sys.argv[3], encoding='utf-8') as f:
+            overrides = json.load(f)
+    # Just these files (the ones being edited): print a list of their results.
+    if len(sys.argv) >= 5 and sys.argv[4] == '--only':
+        sys.stdout.write(json.dumps([scan_file(root, rel, overrides.get(rel)) for rel in sys.argv[5:]]))
+        return
     files = []
     truncated = False
     for dirpath, dirnames, filenames in os.walk(root):
@@ -462,7 +478,7 @@ def main():
             truncated = True
             files = files[:MAX_FILES]
             break
-    out = {'root': root, 'python': sys.version.split()[0], 'truncated': truncated, 'files': [scan_file(root, rel) for rel in files]}
+    out = {'root': root, 'python': sys.version.split()[0], 'truncated': truncated, 'files': [scan_file(root, rel, overrides.get(rel)) for rel in files]}
     sys.stdout.write(json.dumps(out))
 
 

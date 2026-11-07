@@ -39,4 +39,6 @@ jobs:
       - name: Attach to the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG" release/*.AppImage release/*.deb release/latest-linux.yml --clobber --repo "$GITHUB_REPOSITORY"
+        run: |
+          (cd release && sha256sum *.AppImage *.deb > SHA256SUMS-linux.txt)
+          gh release upload "$TAG" release/*.AppImage release/*.deb release/latest-linux.yml release/SHA256SUMS-linux.txt --clobber --repo "$GITHUB_REPOSITORY"

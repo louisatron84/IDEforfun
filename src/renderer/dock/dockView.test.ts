@@ -53,6 +53,16 @@ describe('DockView', () => {
     buttons[0].click()
     expect(floated).toEqual(['files'])
   })
+  it('with the drawer collapsed, the rest of the split takes all the space (flex-grow under 1 would leave a blank gap)', () => {
+    const { container, view } = setup()
+    const root = defaultArrangement('code')
+    const drawer = findStack(root, 'terminal')!
+    drawer.collapsed = true
+    view.render(root)
+    const editorCell = (container.querySelector(`[data-stack="${findStack(root, 'editor')!.id}"]`) as HTMLElement).parentElement as HTMLElement
+    expect(Number.parseFloat(editorCell.style.flex)).toBeGreaterThanOrEqual(1)
+  })
+
   it('a collapsed stack gives its space back to the rest of the split', () => {
     const { container, view } = setup()
     const root = defaultArrangement('code')

@@ -34,6 +34,13 @@ const el = (cls: string): HTMLDivElement => {
   return d
 }
 
+/**
+ * A cell's flex for its share of the split. Scaled up: grow values summing to
+ * less than 1 only share out that fraction of the space, so with the drawer
+ * collapsed the editor's 0.7 would leave a blank gap below it.
+ */
+const grow = (size: number): string => `${Math.max(0, size) * 1000} 1 0`
+
 export class DockView {
   private readonly panels = new Map<string, PanelDef & { tab?: HTMLElement }>()
   private readonly rootEl: HTMLDivElement
@@ -181,7 +188,7 @@ export class DockView {
       if (i > 0) box.append(this.divider(n, i - 1, box))
       const cell = el('dock-cell')
       // A collapsed stack (the drawer after Ctrl+J) is only its tab strip: the rest of the split gets the space.
-      cell.style.flex = c.kind === 'stack' && c.collapsed ? '0 0 auto' : `${n.sizes[i]} 1 0`
+      cell.style.flex = c.kind === 'stack' && c.collapsed ? '0 0 auto' : grow(n.sizes[i])
       cell.append(this.node(c))
       box.append(cell)
     })
@@ -273,7 +280,7 @@ export class DockView {
         sizes[index + 1] -= delta
         latest = resize(this.current, n.id, sizes)
         const fixed = findSplit(latest, n.id)?.sizes ?? sizes
-        cells.forEach((c, i) => (c.style.flex = `${fixed[i]} 1 0`))
+        cells.forEach((c, i) => (c.style.flex = grow(fixed[i])))
       }
       const up = () => {
         window.removeEventListener('pointermove', move)

@@ -80,7 +80,8 @@ const api: IdeApi = {
   },
   listFiles: (root) => ipcRenderer.invoke('fs:listFiles', root),
   prepareProjectDir: (root) => ipcRenderer.invoke('project:prepare', root),
-  scanProject: (root, python) => ipcRenderer.invoke('graph:scan', root, python),
+  scanProject: (root, python, overrides) => ipcRenderer.invoke('graph:scan', root, python, overrides),
+  scanProjectFiles: (root, rels, python, overrides) => ipcRenderer.invoke('graph:scanFiles', root, rels, python, overrides),
   searchProject: (root, query, opts) => ipcRenderer.invoke('search:project', root, query, opts),
   gitStatus: (folder) => ipcRenderer.invoke('git:status', folder),
   gitRepo: (folder) => ipcRenderer.invoke('git:repo', folder),
@@ -141,6 +142,7 @@ const api: IdeApi = {
   checkForUpdates: (manual) => ipcRenderer.invoke('update:check', manual),
   downloadUpdate: () => ipcRenderer.invoke('update:download'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
+  updateState: () => ipcRenderer.invoke('update:current'),
   onUpdateState: (listener) => {
     ipcRenderer.on('update:state', (_e, state) => listener(state))
   },

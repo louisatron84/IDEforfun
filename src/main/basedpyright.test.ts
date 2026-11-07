@@ -11,6 +11,7 @@ import { encodeMessage, MessageReader } from './jsonrpc'
 import { SERVERS } from './languageServer'
 import { pathToUri } from '../shared/uri'
 import { decodeSemanticTokens } from '../renderer/editor/semantic'
+import { pyright } from '../renderer/lsp/pyright'
 
 describe('basedpyright', () => {
   it('answers semantic tokens', async () => {
@@ -19,9 +20,13 @@ describe('basedpyright', () => {
     const dir = mkdtempSync(join(tmpdir(), 'forge-bpr-'))
     const proc = fork(require.resolve(launch.module), [...launch.args], { stdio: ['pipe', 'pipe', 'pipe', 'ipc'], execArgv: [] })
     const waiting = new Map<number, (r: unknown) => void>()
+    const diagnostics = new Map<string, { code?: string; message: string }[]>()
     const reader = new MessageReader((m: any) => {
       if (m.id !== undefined && m.method === 'workspace/configuration') {
-        proc.stdin!.write(encodeMessage({ jsonrpc: '2.0', id: m.id, result: m.params.items.map((i: { section?: string }) => (/analysis/.test(i.section ?? '') ? { typeCheckingMode: 'standard', diagnosticMode: 'openFilesOnly' } : {})) }))
+        // Forge's own answers, as the editor gives them.
+        proc.stdin!.write(encodeMessage({ jsonrpc: '2.0', id: m.id, result: m.params.items.map((i: { section?: string }) => pyright.configuration!(i.section, {})) }))
+      } else if (m.method === 'textDocument/publishDiagnostics') {
+        diagnostics.set(m.params.uri, m.params.diagnostics)
       } else if (m.id !== undefined && m.method) {
         proc.stdin!.write(encodeMessage({ jsonrpc: '2.0', id: m.id, result: null }))
       } else if (m.id !== undefined && waiting.has(m.id)) {
@@ -52,6 +57,12 @@ describe('basedpyright', () => {
       expect(byLine.get(0)).toEqual([{ start: 7, end: 9, type: 'sem-module' }])
       expect(byLine.get(4)?.map((t) => t.type)).toContain('sem-parameter')
       expect(byLine.get(2)?.map((t) => t.type)).toContain('sem-class')
+      // Beginner code without type hints: no 'unknown type' warnings (Pyright's standard checks).
+      const plain = pathToUri(join(dir, 'b.py'))
+      notify('textDocument/didOpen', { textDocument: { uri: plain, languageId: 'python', version: 1, text: ['def double(n):', '    result = n * 2', '    return result', '', 'items = [double(x) for x in range(3)]', 'print(items)', ''].join('\n') } })
+      for (let i = 0; i < 100 && !diagnostics.has(plain); i++) await new Promise((r) => setTimeout(r, 100))
+      expect(diagnostics.has(plain)).toBe(true)
+      expect(diagnostics.get(plain)!.map((d) => d.code)).toEqual([])
     } finally {
       proc.kill()
       rmSync(dir, { recursive: true, force: true })

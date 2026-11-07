@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { failureLine, findTests, isTestFile, parseJUnit, parseUnittest, pytestId, unittestId } from './tests'
+import { failureLine, findTests, isTestFile, parseJUnit, parseUnittest, pytestId, unittestId, unittestModules } from './tests'
 
 describe('isTestFile', () => {
   it('matches test_*.py and *_test.py', () => {
@@ -143,5 +143,15 @@ describe('matchJUnit', () => {
     expect(m.get('tests/test_a.py::test_ok')?.status).toBe('passed')
     expect(m.get('tests/test_a.py::TestK::test_bad')?.message).toBe('boom')
     expect(m.get('tests/test_a.py::test_p')).toMatchObject({ status: 'failed', message: 'p2' })
+  })
+})
+
+describe('unittestModules', () => {
+  it('names every file with unittest tests as a module (a plain tests/ folder too)', () => {
+    expect(unittestModules([
+      { rel: 'tests/test_a.py', tests: [{ unittest: true }] },
+      { rel: String.raw`tests\sub\test_b.py`, tests: [{ unittest: true }] },
+      { rel: 'test_plain.py', tests: [{ unittest: false }] }
+    ])).toEqual(['tests.test_a', 'tests.sub.test_b'])
   })
 })

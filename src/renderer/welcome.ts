@@ -160,7 +160,7 @@ export class WelcomePage {
       const key = this.keyFor(a.command)
       if (a.detail && !showKeys) {
         const d = document.createElement('span')
-        d.className = 'welcome-detail'
+        d.className = 'welcome-detail wrap'
         d.textContent = a.detail
         b.append(d)
       }
@@ -192,7 +192,7 @@ export class WelcomePage {
     if (!list.length) {
       const none = document.createElement('p')
       none.className = 'welcome-detail'
-      none.textContent = 'Folders you open will be listed here.'
+      none.textContent = current ? 'Other folders you open will be listed here.' : 'Folders you open will be listed here.'
       sec.append(none)
       return sec
     }

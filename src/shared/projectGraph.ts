@@ -453,3 +453,29 @@ export function stronglyConnected(nodes: readonly string[], edges: readonly { fr
   }
   return result
 }
+
+/**
+ * A file that can't be read right now (a syntax error while typing) keeps what
+ * the last good scan found in it, so the outline panels don't go blank: the
+ * error is still reported.
+ */
+export function keepLastGood(next: RawScan, prev: RawScan | null): RawScan {
+  if (!prev) return next
+  const before = new Map(prev.files.map((f) => [f.path, f]))
+  return {
+    ...next,
+    files: next.files.map((f) => {
+      const old = before.get(f.path)
+      if (!f.error || !old || old.error || !/SyntaxError/.test(f.error)) return f
+      return { ...old, error: f.error, lines: f.lines || old.lines }
+    })
+  }
+}
+
+/** A scan with some files scanned again (e.g. the one being edited); new files are added. */
+export function replaceFiles(scan: RawScan, files: readonly RawFile[]): RawScan {
+  const fresh = new Map(files.map((f) => [f.path, f]))
+  const kept = scan.files.map((f) => fresh.get(f.path) ?? f)
+  const known = new Set(scan.files.map((f) => f.path))
+  return { ...scan, files: [...kept, ...files.filter((f) => !known.has(f.path))] }
+}
