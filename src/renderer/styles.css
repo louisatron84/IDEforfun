@@ -1592,6 +1592,7 @@ button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 .box-test { display: flex; gap: 8px; align-items: center; }
 .box-result.ok { color: var(--ok); }
 .box-result.fail { color: var(--err); }
+.box-test-note { margin: 4px 0 0; font-size: 12px; color: var(--fg-muted); }
 .box-fields { display: flex; flex-direction: column; gap: 1px; }
 .box-field { display: flex; gap: 6px; align-items: center; padding: 1px 0; }
 .box-field-name { font-family: var(--font-code); }

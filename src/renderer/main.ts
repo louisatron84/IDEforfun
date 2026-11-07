@@ -123,6 +123,13 @@ const editorOptions = (index: number): EditorOptions => ({
     rescanFileSoon(doc)
     semanticSoon(doc)
     completion.onEdit()
+    // The text under a hover tooltip changed (e.g. you fixed the typo it describes): it's out of date.
+    hideHover()
+    // You're fixing the code that failed: "Debug it" no longer fits.
+    if (!failureEdited && /\.pyw?$/i.test(doc.path)) {
+      failureEdited = true
+      suggestionsSoon()
+    }
   },
   onKeyDown: (e) => completion.handleKey(e),
   onType: (text) => completion.onType(text),
@@ -510,6 +517,9 @@ async function saveAllDirty(report: (message: string) => void): Promise<boolean>
   return true
 }
 
+/** Set when you chose "Install into this Python anyway" for debugpy (asked once per session). */
+let debugpySystemOk = false
+
 async function startDebugging(given?: LaunchSpec): Promise<void> {
   const resolved = given ?? launchSpec()
   if (rootSession?.active) await stopDebugging()
@@ -538,8 +548,23 @@ async function startDebugging(given?: LaunchSpec): Promise<void> {
     debugView.setState('idle')
     return
   }
+  if (!prep.hasDebugpy && !prep.isVenv && !debugpySystemOk) {
+    // Don't quietly pip install into the Python every project shares: offer a project .venv first.
+    const python = prep.python
+    debugView.error(`Debugging needs the "debugpy" package. This project uses a system-wide Python:
+  ${python}
+Installing there affects every project, so Forge asks first. A .venv for this project keeps its packages separate.`)
+    debugView.setState('idle')
+    tasks.endDebug()
+    palette.choose('Debugging needs debugpy: where should it be installed?', [
+      { label: 'Create a .venv for this project (recommended)', detail: 'then start debugging again to install debugpy into it', run: () => void pyEnv.createVenv() },
+      { label: 'Install into this Python anyway', detail: python, run: () => { debugpySystemOk = true; void startDebugging(spec) } },
+      { label: 'Cancel', run: () => {} }
+    ])
+    return
+  }
   if (!prep.hasDebugpy) {
-    const ok = confirm(
+    const ok = prep.isVenv === false || confirm(
       `The debugger needs the "debugpy" package, which isn't installed for:\n${prep.python}\n\nInstall it now? (runs: pip install debugpy)`
     )
     if (!ok) {
@@ -2000,6 +2025,8 @@ function pickTask(): void {
 /** What to do when a tool run (pip, venv) ends, by run id. */
 const afterRun = new Map<number, (code: number | null) => void>()
 let lastExit: { runId: number; code: number | null } | null = null
+/** Python code was edited since the last run ended (so a failure there may already be fixed). */
+let failureEdited = false
 
 // ---------- live run feedback (a traced run's updates) ----------
 /** Boxes whose function is running (lit like during a Test call). */
@@ -2145,6 +2172,8 @@ window.api.onRunEvent((e) => {
   else if (e.type === 'exit') {
     output.finished(e.code, e.ms, e.signal)
     lastExit = { runId: e.runId, code: e.code }
+    failureEdited = false
+    suggestionsSoon()
     const after = afterRun.get(e.runId)
     afterRun.delete(e.runId)
     after?.(e.code)
@@ -3354,7 +3383,7 @@ function renderSuggestions(): void {
     task: tasks.current,
     file: python ? { path: python.path, text: python.getText() } : null,
     debug: session?.state ?? 'idle',
-    lastRunFailed: !!lastExit && lastExit.runId === lastRunId && lastExit.code !== 0 && lastExit.code !== null,
+    lastRunFailed: !failureEdited && !!lastExit && lastExit.runId === lastRunId && lastExit.code !== 0 && lastExit.code !== null,
     problems: python ? languages.diagnosticsFor(python.path).filter((d) => d.severity <= 2).length : 0,
     changes: repo ? new Set([...repo.staged, ...repo.unstaged, ...repo.conflicts].map((c) => c.path)).size : 0,
     shown: (panel) => tasks.isShown(panel)

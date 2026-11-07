@@ -106,6 +106,8 @@ export class GraphView {
   private hovered: string | null = null
   /** Pan and zoom. */
   private view = { x: 0, y: 0, k: 1 }
+  /** The view is the one Fit chose (nothing panned or zoomed since): keep fitting when the canvas resizes. */
+  private fitted = false
 
   constructor(private readonly hooks: GraphHooks) {
     this.el = el('div', 'graph-view')
@@ -388,6 +390,7 @@ export class GraphView {
     const k = Math.min(1, (box.width - pad * 2) / size.width, (box.height - pad * 2) / size.height)
     this.view = { k: Math.max(0.05, k), x: (box.width - size.width * k) / 2, y: Math.max(pad, (box.height - size.height * k) / 2) }
     this.applyView()
+    this.fitted = true
   }
 
   /** What is on screen, for the live run planner. */
@@ -659,11 +662,21 @@ export class GraphView {
     if (!p || !box.width) return
     this.view = panToShow(this.view, p, box)
     this.applyView()
+    this.fitted = false
   }
 
   private wireCanvas(canvas: HTMLDivElement): void {
     let drag: { x: number; y: number; vx: number; vy: number; moved: boolean } | null = null
     const nodeAt = (target: EventTarget | null) => (target as Element | null)?.closest?.('.gnode') as SVGGElement | null
+    // The canvas changes size when a panel opens beside it (Box settings) or the window resizes:
+    // refit a fitted view, else keep the selected box in sight. (Measured after the resize, not guessed.)
+    if (typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(() => {
+        const sel = this.hooks.boxes?.selected()
+        if (this.fitted) this.fit()
+        else if (sel) this.revealBox(sel)
+      }).observe(canvas)
+    }
     canvas.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return
       drag = { x: e.clientX, y: e.clientY, vx: this.view.x, vy: this.view.y, moved: false }
@@ -677,6 +690,7 @@ export class GraphView {
         if (drag.moved) {
           this.view.x = drag.vx + dx
           this.view.y = drag.vy + dy
+          this.fitted = false
           this.applyView()
           canvas.classList.add('panning')
         }
@@ -738,6 +752,7 @@ export class GraphView {
       this.view.y = py - ((py - this.view.y) * k) / this.view.k
       this.view.k = k
       this.applyView()
+      this.fitted = false
     }, { passive: false })
   }
 
@@ -780,6 +795,7 @@ export class GraphView {
     this.view.x = box.width / 2 - (p.x + p.width / 2) * this.view.k
     this.view.y = box.height / 2 - (p.y + p.height / 2) * this.view.k
     this.applyView()
+    this.fitted = false
     this.select(id)
   }
 

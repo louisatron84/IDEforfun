@@ -243,9 +243,9 @@ Each of these is a big project of its own. Kept as a wishlist.
 Optional directions that could extend the IDE beyond the core roadmap.
 
 **Architecture explorer**
-- [ ] Automatically reconstruct the architecture of an unfamiliar codebase
-- [ ] Show components, dependencies, entry points and communication paths
-- [ ] Provide a visual map of how the project works
+- [x] Automatically reconstruct the architecture of an unfamiliar codebase (v0.41: the Project Graph is built from the code with Python's `ast`, nothing to set up)
+- [x] Show components, dependencies, entry points and communication paths (v0.41: modules, imports, calls, programs with `__main__`, web routes and the web APIs they call)
+- [x] Provide a visual map of how the project works (v0.46: Project Graph, plus the Project Map overview)
 
 **Visual profiler**
 - [ ] Show execution time directly on the project graph

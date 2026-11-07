@@ -104,6 +104,13 @@ describe('Box settings', () => {
     expect(files.get('api/api.py')).toContain('fields = ["b.c"]')
   })
 
+  it('says before a test call that it saves the rows to the CSV file', async () => {
+    const { ctrl } = setup()
+    ctrl.add(null)
+    await flush()
+    expect(q('.box-test-note')!.textContent).toBe('A test call saves the rows it gets to api_data.csv in your project.')
+  })
+
   it('after a test call, Open CSV opens the saved file', async () => {
     const { ctrl, opened } = setup()
     ctrl.add(null)
