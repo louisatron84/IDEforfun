@@ -43,9 +43,11 @@ export async function latestRelease(fetchImpl: typeof fetch = fetch): Promise<{ 
   return { version: r.tag_name.replace(/^v/i, ''), notes: typeof r.body === 'string' ? r.body.slice(0, 4000) : '', url: typeof r.html_url === 'string' ? r.html_url : RELEASES_PAGE }
 }
 
-/** Can this copy replace itself? Only the installed Windows app (not portable, not from source). */
+/** Can this copy replace itself? The installed Windows app and the Linux AppImage (not portable, .deb or from source). */
 export function canSelfUpdate(): boolean {
-  return app.isPackaged && process.platform === 'win32' && !process.env['PORTABLE_EXECUTABLE_DIR']
+  if (!app.isPackaged) return false
+  if (process.platform === 'win32') return !process.env['PORTABLE_EXECUTABLE_DIR']
+  return process.platform === 'linux' && !!process.env['APPIMAGE']
 }
 
 export class Updates {
