@@ -1,6 +1,6 @@
 {
   "name": "ideforfun",
-  "version": "0.46.1",
+  "version": "0.46.2",
   "description": "A hobby IDE with a hand-written editor",
   "main": "./out/main/index.js",
   "private": true,
@@ -90,9 +90,14 @@
       "target": ["AppImage", "deb"],
       "icon": "build/icon.png",
       "category": "Development",
+      "executableName": "forge",
       "maintainer": "louisatron84 <louisatron84@users.noreply.github.com>",
       "synopsis": "A small Python IDE, built by hand",
       "artifactName": "Forge-${version}-${arch}.${ext}"
+    },
+    "deb": {
+      "packageName": "forge",
+      "fpm": ["--replaces=ideforfun", "--conflicts=ideforfun"]
     },
     "portable": {
       "artifactName": "Forge-${version}-portable.${ext}"

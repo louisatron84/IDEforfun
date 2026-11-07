@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { runScan } from './projectScan'
+import { runScan, runScanFiles } from './projectScan'
 import { readSpec } from '../shared/openapi'
 import { generateClient } from '../shared/openapiCode'
 import { buildGraph, describeUnreachable, hostOf, isTestPath, stronglyConnected, type ProjectGraph, type RawScan } from '../shared/projectGraph'
@@ -244,4 +244,22 @@ describe.skipIf(!python)('project scan: generated clients and base addresses (re
     expect(graph.http.filter((h) => h.module === 'raw').map((h) => `${h.library} ${h.method} ${h.host}`)).toEqual(['urllib HTTP data.example.org'])
     expect(graph.http.filter((h) => h.module === 'shop_client').map((h) => h.host)).toEqual(['shop.example.com'])
   })
+})
+
+describe.skipIf(!python)('project scan: unsaved editor text (real Python)', () => {
+  it('overrides replace files on disk, and --only scans just the files asked for', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'forge-scan-over-'))
+    try {
+      writeFileSync(join(dir, 'a.py'), 'def old_name():' + String.fromCharCode(10) + '    pass' + String.fromCharCode(10))
+      writeFileSync(join(dir, 'b.py'), 'x = 1' + String.fromCharCode(10))
+      const text = 'def new_name():' + String.fromCharCode(10) + '    pass' + String.fromCharCode(10)
+      const full = await runScan(python!, dir, 60000, { 'a.py': text })
+      expect(full.scan!.files.find((f) => f.path === 'a.py')!.defs.map((d) => d.name)).toEqual(['<module>', 'new_name'])
+      const one = await runScanFiles(python!, dir, ['a.py'], { 'a.py': 'def broken(:' })
+      expect(one.files!.map((f) => f.path)).toEqual(['a.py'])
+      expect(one.files![0].error).toMatch(/SyntaxError/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 60000)
 })

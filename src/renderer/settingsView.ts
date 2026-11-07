@@ -59,6 +59,16 @@ export class SettingsView {
     if (this.isOpen) this.render()
   }
 
+  /** Settings → Updates: what version this is and what the last check found. */
+  private updateInfo = ''
+  onCheckUpdates: (() => void) | null = null
+
+  setUpdateInfo(text: string): void {
+    this.updateInfo = text
+    const el = this.dialog.querySelector('#setting-update-info')
+    if (el) el.textContent = text
+  }
+
   /** Buttons at the bottom (e.g. Keyboard Shortcuts…, Project Settings…). */
   setLinks(links: { label: string; run: () => void }[]): void {
     this.links = links
@@ -228,6 +238,14 @@ export class SettingsView {
     upd.addEventListener('change', () => this.update({ checkForUpdates: upd.checked }))
     const updRow = this.row('Updates', 'Look for a new version of Forge when it starts (it asks before downloading anything)', upd)
     updRow.querySelector('label')!.htmlFor = upd.id
+    const checkNow = document.createElement('button')
+    checkNow.textContent = 'Check now'
+    checkNow.addEventListener('click', () => this.onCheckUpdates?.())
+    const updInfo = document.createElement('p')
+    updInfo.className = 'settings-note'
+    updInfo.id = 'setting-update-info'
+    updInfo.textContent = this.updateInfo
+    updRow.append(checkNow)
 
     const rows: HTMLElement[] = [header]
     if (this.projectNote) {
@@ -236,7 +254,7 @@ export class SettingsView {
       note.textContent = this.projectNote
       rows.push(note)
     }
-    rows.push(fontRow, themeRow, densityRow, animRow, tabRow, pyRow, shellRow, fmtRow, fosRow, lintRow, dbgRow, dbgTaskRow, runGraphRow, reopenRow, updRow)
+    rows.push(fontRow, themeRow, densityRow, animRow, tabRow, pyRow, shellRow, fmtRow, fosRow, lintRow, dbgRow, dbgTaskRow, runGraphRow, reopenRow, updRow, updInfo)
 
     if (this.links.length) {
       const linkRow = document.createElement('div')

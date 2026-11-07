@@ -93,6 +93,12 @@ body { display: flex; flex-direction: column; }
   color: var(--fg-muted); font-size: 12px;
 }
 .welcome-section > p.welcome-detail { white-space: normal; margin: 4px 0; }
+/* What each action does: wraps instead of being cut off in a small window. */
+.welcome-detail.wrap { white-space: normal; overflow: visible; }
+@media (max-width: 760px) {
+  .welcome-cols { grid-template-columns: 1fr; }
+  .welcome-page { padding: 28px 20px 20px; }
+}
 .welcome-link kbd {
   margin-left: auto; padding: 1px 6px; border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--bg-panel); color: var(--fg); font-family: var(--font-code); font-size: 11px;

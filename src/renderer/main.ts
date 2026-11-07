@@ -48,7 +48,7 @@ import { CodeTools } from './codeTools'
 import { GitView } from './gitView'
 import { DiffView } from './diffView'
 import { GraphView } from './graph/graphView'
-import { buildGraph, type ProjectGraph } from '../shared/projectGraph'
+import { buildGraph, keepLastGood, replaceFiles, type ProjectGraph, type RawScan } from '../shared/projectGraph'
 import { WhereView } from './panels/whereView'
 import { InFileView } from './panels/inFileView'
 import { moduleForPath } from './panels/whereModel'
@@ -73,6 +73,7 @@ import { moduleOfPath } from '../shared/boxes'
 import { suggestTools } from '../shared/suggest'
 import { showProjectMap } from './projectMap'
 import { FloatingPanels } from './dock/floating'
+import { setAppShortcutCheck } from './terminalKeys'
 import type { UpdateState } from '../shared/api'
 import { envKeys } from '../shared/openapi'
 import { addImport, generateClient, generatedState, importLine } from '../shared/openapiCode'
@@ -119,6 +120,7 @@ const editorOptions = (index: number): EditorOptions => ({
   onEdit: (doc) => {
     workspace.notifyChanged()
     languages.docChanged(doc)
+    rescanFileSoon(doc)
     semanticSoon(doc)
     completion.onEdit()
   },
@@ -1601,6 +1603,8 @@ async function openFolderPath(folder: string): Promise<void> {
     if (!workspace.closeAll()) return
     rootFolder = folder
     lastRepoSignature = null
+    // A terminal opened before the project (in the home folder) moves to it, if it hasn't been used.
+    void terminal.moveIdleTo(folder)
     folderName.textContent = folder
     folderName.classList.remove('muted')
     void window.api.recentAdd(folder).catch(() => {})
@@ -2395,13 +2399,43 @@ $('groups').append(diffView.el)
 let projectGraph: ProjectGraph | null = null
 let projectGraphFolder: string | null = null
 let projectScan: Promise<{ graph?: ProjectGraph; error?: string }> | null = null
+/** The last analysis as the script returned it (single files are swapped in while you edit). */
+let lastRawScan: RawScan | null = null
+
+/** Unsaved Python files in the project: their editor text counts instead of the file on disk. */
+function unsavedPython(): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const d of workspace.docs) {
+    const rel = d.dirty && /\.pyi?$/i.test(d.path) ? projectRel(d.path) : null
+    if (rel) out[rel] = d.getText()
+  }
+  return out
+}
+
+let fileRescanTimer: number | undefined
+/** You're editing a Python file: analyse just that file again a moment after you stop (for the outline panels). */
+function rescanFileSoon(doc: Doc): void {
+  if (!/\.pyi?$/i.test(doc.path) || !lastRawScan || !rootFolder) return
+  if (!tasks.isShown('where') && !tasks.isShown('infile')) return
+  window.clearTimeout(fileRescanTimer)
+  fileRescanTimer = window.setTimeout(async () => {
+    const folder = rootFolder
+    const rel = folder ? projectRel(doc.path) : null
+    if (!folder || !rel || !lastRawScan) return
+    const res = await window.api.scanProjectFiles(folder, [rel], settings.pythonPath || undefined, { [rel]: doc.getText() }).catch(() => null)
+    if (!res?.files || rootFolder !== folder || !lastRawScan) return
+    lastRawScan = keepLastGood(replaceFiles(lastRawScan, res.files), lastRawScan)
+    projectGraph = buildGraph(lastRawScan)
+    refreshFilePanels()
+  }, 900)
+}
 /** The folder whose last analysis failed (not retried automatically). */
 let scanFailedFor: string | null = null
 function scanProjectGraph(): Promise<{ graph?: ProjectGraph; error?: string }> {
   if (!rootFolder) return Promise.resolve({ error: 'Open a folder first.' })
   if (projectScan) return projectScan
   const folder = rootFolder
-  projectScan = window.api.scanProject(folder, settings.pythonPath || undefined)
+  projectScan = window.api.scanProject(folder, settings.pythonPath || undefined, unsavedPython())
     .catch((err) => ({ error: String(err), scan: undefined }))
     .then((res) => {
       projectScan = null
@@ -2413,7 +2447,8 @@ function scanProjectGraph(): Promise<{ graph?: ProjectGraph; error?: string }> {
         return { error: res.error ?? 'no result' }
       }
       scanFailedFor = null
-      projectGraph = buildGraph(res.scan)
+      lastRawScan = keepLastGood(res.scan, projectGraphFolder === folder ? lastRawScan : null)
+      projectGraph = buildGraph(lastRawScan)
       projectGraphFolder = folder
       refreshFilePanels()
       return { graph: projectGraph }
@@ -2735,8 +2770,23 @@ function showUpdateState(s: UpdateState): void {
   } else {
     b.hidden = true
     if (s.kind === 'checking' && s.manual) statusNote('Checking for updates…')
-    if (s.kind === 'none' && s.manual) statusNote(`Forge ${s.current} is the newest version.`)
-    if (s.kind === 'error' && 'manual' in s && s.manual) statusNote(`Couldn't check for updates: ${s.message}`)
+    // You asked: say how it went in a way that stays until you've read it.
+    if (s.kind === 'none' && s.manual) alert(`You have the newest version of Forge (${s.current}).`)
+    if (s.kind === 'error' && 'manual' in s && s.manual) alert(`Couldn't check for updates:\n${s.message}\n\nYou can always download the newest version from forgecode.uk.`)
+  }
+  settingsView.setUpdateInfo(updateSummary(s))
+}
+
+/** One line for Settings → Updates: the version you have and what the last check found. */
+function updateSummary(s: UpdateState): string {
+  switch (s.kind) {
+    case 'checking': return `You have Forge ${s.current}. Checking…`
+    case 'none': return `You have Forge ${s.current}, the newest version.`
+    case 'available': return `You have Forge ${s.current}. Forge ${s.latest} is available: see the button in the status bar.`
+    case 'downloading': return `Downloading Forge ${s.latest ?? ''} (${s.percent}%)…`
+    case 'ready': return `Forge ${s.latest ?? ''} is downloaded: restart to finish.`
+    case 'error': return `You have Forge ${s.current}. The last check failed: ${s.message}`
+    default: return `You have Forge ${s.current}.`
   }
 }
 async function offerUpdate(): Promise<void> {
@@ -2754,6 +2804,8 @@ $('sb-update').addEventListener('click', () => {
   else if (updateState?.kind === 'ready' && confirm('Restart Forge now to finish updating? (If anything is unsaved, you\'ll be asked first.)')) void window.api.installUpdate()
 })
 commands.register({ id: 'help.checkUpdates', title: 'Check for Updates…', run: () => void window.api.checkForUpdates(true) })
+settingsView.onCheckUpdates = () => void window.api.checkForUpdates(true)
+void window.api.updateState().then((s) => settingsView.setUpdateInfo(updateSummary(s))).catch(() => {})
 // A quiet look a little after starting (Settings → Updates turns it off).
 window.setTimeout(() => {
   if (settings.checkForUpdates) void window.api.checkForUpdates(false).catch(() => {})
@@ -3232,6 +3284,8 @@ async function applyWorkspaceEdits(edits: FileEdits): Promise<boolean> {
   }
   languages.filesChangedOnDisk(onDisk)
   workspace.notifyChanged()
+  // A rename across files: the outline panels and the Graph read the project again (unsaved edits included).
+  projectChangedSoon()
   if (failed.length) alert(`These files couldn't be changed:\n${failed.join('\n')}`)
   return failed.length === 0
 }
@@ -3472,12 +3526,20 @@ $('run-button').addEventListener('click', () => commands.run(output.isRunning ||
 
 // While typing in the terminal, keys belong to the shell (Ctrl+C, Ctrl+W, Ctrl+F...).
 // Only these IDE commands' shortcuts still work there (whatever keys they're set to).
+/** Shortcuts that work while the terminal has focus (the shell never sees these keys). */
 const TERMINAL_PASSTHROUGH = new Set([
+  'task.code', 'task.connect', 'task.debug', 'task.run', 'view.projectGraph', 'nav.projectMap',
+  'file.openFolder', 'file.openRecent', 'palette.files', 'debug.start',
   'terminal.new', 'terminal.toggle', 'panel.toggle', 'palette.commands', 'tab.next', 'tab.prev',
   'run.smart', 'run.stop', 'run.file', 'settings.open', 'debug.restart',
   'debug.toggleBreakpoint', 'debug.stepOver', 'debug.stepInto', 'debug.stepOut'
 ])
 const PALETTE_TOGGLES = new Set(['palette.commands', 'palette.files', 'palette.line'])
+// The terminal hands exactly these keys back to Forge.
+setAppShortcutCheck((e) => {
+  const c = commands.commandForKey(keyString(e as KeyboardEvent))
+  return !!c && TERMINAL_PASSTHROUGH.has(c.id)
+})
 
 // Global shortcuts. Capture phase, so they win over the editor's own key handling.
 window.addEventListener('keydown', (e) => {

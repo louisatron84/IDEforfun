@@ -36,7 +36,7 @@ describe('LspServer (with the Pyright config)', () => {
     client.handleMessage({ jsonrpc: '2.0', id: 'c1', method: 'workspace/configuration', params: { items: [{ section: 'python' }, { section: 'python.analysis' }, { section: 'other' }] } })
     await new Promise((r) => setTimeout(r, 0))
     const reply = sent.find((m) => m.id === 'c1')
-    expect(reply.result[0]).toEqual({ pythonPath: '/proj/.venv/bin/python' })
+    expect(reply.result[0]).toMatchObject({ pythonPath: '/proj/.venv/bin/python', analysis: { typeCheckingMode: 'standard' } })
     expect(reply.result[1]).toMatchObject({ diagnosticMode: 'openFilesOnly', autoSearchPaths: true })
     expect(reply.result[2]).toEqual({})
   })

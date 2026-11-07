@@ -109,6 +109,15 @@ export function unittestId(rel: string, t: Pick<DiscoveredTest, 'name' | 'classN
   return [mod, t.className, t.name].filter(Boolean).join('.')
 }
 
+/**
+ * The modules to give unittest for "run all": every test file by module name.
+ * (unittest discover only looks in folders with an __init__.py, so a plain
+ * tests/ folder would be skipped and nothing would run.)
+ */
+export function unittestModules(files: readonly { rel: string; tests: readonly { unittest?: boolean }[] }[]): string[] {
+  return files.filter((f) => f.tests.some((t) => t.unittest)).map((f) => f.rel.replace(/\\/g, '/').replace(/\.py$/, '').split('/').join('.'))
+}
+
 const unescapeXml = (s: string) =>
   s.replace(/&(lt|gt|quot|apos|amp|#(\d+)|#x([0-9a-fA-F]+));/g, (_m, name: string, dec?: string, hex?: string) => {
     if (dec) return String.fromCodePoint(Number(dec))

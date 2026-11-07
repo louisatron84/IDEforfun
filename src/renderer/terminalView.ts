@@ -56,6 +56,7 @@ class TerminalSession {
     this.term.loadAddon(this.fit)
     this.term.open(this.el)
     this.term.onData((data) => {
+      this.used = true
       if (this.exited && this.program) return // a finished program isn't restarted
       if (this.exited) {
         // Any key after the shell exited starts a new one.
@@ -102,11 +103,22 @@ class TerminalSession {
     }
   }
 
+  /** You've typed into it (so it isn't moved to another folder behind your back). */
+  used = false
+  /** The folder it started in (null: none was open). */
+  startedIn: string | null = null
+
+  /** A program run in it (a task, a debug session), not a shell. */
+  get runsProgram(): boolean {
+    return !!this.program
+  }
+
   async start(): Promise<void> {
     if (this.starting) return
     this.starting = true
     try {
       this.layout()
+      this.startedIn = this.getCwd()
       if (this.program) {
         const r = await window.api.terminalRun(this.program.args, this.getCwd(), this.program.env, this.term.cols, this.term.rows)
         this.ptyId = r.id
@@ -249,6 +261,20 @@ export class TerminalView {
 
   get hasFocus(): boolean {
     return this.body.contains(document.activeElement)
+  }
+
+  /**
+   * A project was opened: shells that started elsewhere (often before the project
+   * finished opening, so in the home folder) and haven't been typed into start
+   * again in the project. Ones you've used are left alone.
+   */
+  async moveIdleTo(folder: string): Promise<void> {
+    for (const s of this.sessions) {
+      if (s.used || s.runsProgram || s.startedIn === folder) continue
+      s.kill()
+      s.term.reset()
+      await s.start()
+    }
   }
 
   /** Re-apply font and colors (after a settings change). */

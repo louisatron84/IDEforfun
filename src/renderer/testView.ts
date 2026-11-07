@@ -7,7 +7,7 @@
  * otherwise unittest.
  */
 import type { TestFile, TestResult, DiscoveredTest } from '../shared/tests'
-import { failureLine, matchJUnit, parseJUnit, parseUnittest, pytestId, unittestId } from '../shared/tests'
+import { failureLine, matchJUnit, parseJUnit, parseUnittest, pytestId, unittestId, unittestModules } from '../shared/tests'
 import { lastLines } from '../shared/outputBuffer'
 
 /** Lines of raw output kept in the Log view. */
@@ -204,11 +204,11 @@ export class TestView {
     const all = which === 'all'
     const runIds = pytest
       ? (all ? [] : this.shorten(ids))
-      : (all ? [] : selected.map(({ file, test }) => unittestId(file.rel, test)))
+      : (all ? unittestModules(this.files) : selected.map(({ file, test }) => unittestId(file.rel, test)))
 
     this.running = new Set(ids)
     this.stopButton.disabled = false
-    this.setLog(`$ ${pytest ? 'python -m pytest' : 'python -m unittest -v'} ${runIds.join(' ')}\n`)
+    this.setLog(`$ ${pytest ? 'python -m pytest' : 'python -m unittest -v'} ${runIds.join(' ')}   (in ${root})\n`)
     this.summary = `Running ${ids.length} test${ids.length === 1 ? '' : 's'} with ${this.framework}…`
     this.render()
     let res

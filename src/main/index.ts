@@ -27,7 +27,7 @@ import { searchProject } from './search'
 import { gitStatus } from './git'
 import * as gitOps from './gitOps'
 import { LanguageServers, resolvePythonForAnalysis } from './languageServer'
-import { scanProject } from './projectScan'
+import { scanProject, scanProjectFiles } from './projectScan'
 import { prepareProjectDir } from './projectDir'
 import type { FindOptions } from '../shared/regex'
 import { PythonRunner } from './python'
@@ -230,7 +230,19 @@ ipcMain.handle('fs:trash', (_event, path: string) => shell.trashItem(path))
 ipcMain.handle('fs:delete', (_event, path: string) => rm(path, { recursive: true }))
 ipcMain.handle('fs:listFiles', (_event, root: string) => listFiles(root))
 ipcMain.handle('project:prepare', (_event, root: string) => prepareProjectDir(root))
-ipcMain.handle('graph:scan', (_event, root: string, python?: string) => scanProject(root, python))
+ipcMain.handle('graph:scan', (_event, root: string, python?: string, overrides?: Record<string, string>) => scanProject(root, python, cleanOverrides(overrides)))
+ipcMain.handle('graph:scanFiles', (_event, root: string, rels: string[], python?: string, overrides?: Record<string, string>) =>
+  scanProjectFiles(root, (Array.isArray(rels) ? rels : []).filter((r) => typeof r === 'string' && /\.pyi?$/i.test(r) && !r.split(/[\\/]/).includes('..')), python, cleanOverrides(overrides)))
+
+/** Editor text for the analysis: plain strings, Python files inside the project only. */
+function cleanOverrides(raw: unknown): Record<string, string> | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === 'string' && /\.pyi?$/i.test(k) && !k.split(/[\\/]/).includes('..')) out[k.replace(/\\/g, '/')] = v
+  }
+  return out
+}
 ipcMain.handle('lsp:start', (event, id: string) => {
   languageServers.start(id, event.sender)
 })
@@ -382,6 +394,7 @@ ipcMain.handle('openapi:load', (_event, source: string) => loadSpec(String(sourc
 ipcMain.handle('update:check', (_event, manual: boolean) => updates.check(manual === true))
 ipcMain.handle('update:download', () => updates.download())
 ipcMain.handle('update:install', () => updates.install())
+ipcMain.handle('update:current', () => updates.current)
 ipcMain.handle('dataflow:read', (_event, root: string, source: string, func: string, python?: string) =>
   dataflow(String(root), String(source), String(func ?? ''), typeof python === 'string' && python ? python : undefined))
 ipcMain.handle('openapi:pick', async (event) => {

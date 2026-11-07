@@ -245,7 +245,10 @@ export interface IdeApi {
    */
   prepareProjectDir(root: string): Promise<'none' | 'migrated' | 'copied' | 'both' | 'error'>
   /** Analyse every Python file of a project (for the Project Graph); `python`: the configured interpreter. */
-  scanProject(root: string, python?: string): Promise<{ scan?: RawScan; error?: string }>
+  /** `overrides`: unsaved editor text by relative path, used instead of the files on disk. */
+  scanProject(root: string, python?: string, overrides?: Record<string, string>): Promise<{ scan?: RawScan; error?: string }>
+  /** Scan just these files again (relative paths). */
+  scanProjectFiles(root: string, rels: string[], python?: string, overrides?: Record<string, string>): Promise<{ files?: import('./projectGraph').RawFile[]; error?: string }>
 
   /** Search every text file under `root` (Ctrl+Shift+F). */
   searchProject(root: string, query: string, opts: FindOptions): Promise<ProjectSearchResult>
@@ -329,6 +332,8 @@ export interface IdeApi {
   checkForUpdates(manual: boolean): Promise<UpdateState>
   /** Installed app: download the update. Otherwise: open the download page. */
   downloadUpdate(): Promise<void>
+  /** Where updates stand now (includes the version you have). */
+  updateState(): Promise<UpdateState>
   /** Restart into the downloaded update. */
   installUpdate(): Promise<void>
   onUpdateState(listener: (state: UpdateState) => void): void
