@@ -32,6 +32,11 @@ For that to work, every release must carry the files the updater reads.
    The release notes are shown in Forge's update dialog, so write them for people using Forge.
    Don't mark it as a draft or pre-release: those are ignored.
 
+   Publishing the release starts the **Release Linux** workflow (GitHub Actions): it
+   builds `Forge-<version>-x86_64.AppImage` and `Forge-<version>-amd64.deb` on Ubuntu and
+   attaches them with `latest-linux.yml` (AppImage copies update themselves; .deb users
+   download the new one). Check it finished under the repository's Actions tab.
+
 4. Update the download links on the website (forgecode.uk) to the new version.
 
 ## Notes
