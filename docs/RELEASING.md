@@ -23,6 +23,8 @@ For that to work, every release must carry the files the updater reads.
    - `latest.yml`: what installed copies read to find the update
    - `Forge-<version>-portable.exe`: the portable version
 
+   Then `npm run checksums` writes `release/SHA256SUMS-windows.txt`: attach it too.
+
 3. Publish a GitHub release tagged `v<version>` with **all four files**:
 
    ```
