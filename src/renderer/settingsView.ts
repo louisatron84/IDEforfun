@@ -236,7 +236,7 @@ export class SettingsView {
     upd.id = 'setting-updates'
     upd.checked = s.checkForUpdates
     upd.addEventListener('change', () => this.update({ checkForUpdates: upd.checked }))
-    const updRow = this.row('Updates', 'Look for a new version of Forge when it starts (it asks before downloading anything)', upd)
+    const updRow = this.row('Updates', 'Keep Forge up to date: download new versions in the background and install them when you close Forge. Off: only when you choose Check for Updates.', upd)
     updRow.querySelector('label')!.htmlFor = upd.id
     const checkNow = document.createElement('button')
     checkNow.textContent = 'Check now'

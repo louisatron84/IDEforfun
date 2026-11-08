@@ -1,6 +1,6 @@
 {
   "name": "ideforfun",
-  "version": "0.48.0",
+  "version": "0.49.0",
   "description": "A hobby IDE with a hand-written editor",
   "main": "./out/main/index.js",
   "private": true,

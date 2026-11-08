@@ -2837,8 +2837,8 @@ function showUpdateState(s: UpdateState): void {
     b.title = 'Downloading the update'
   } else if (s.kind === 'ready') {
     b.hidden = false
-    b.textContent = '⟳ Restart to update'
-    b.title = `Forge ${s.latest ?? ''} is downloaded: restart to finish (or it installs when you quit)`
+    b.textContent = '⟳ Update ready'
+    b.title = `Forge ${s.latest ?? ''} installs when you close Forge. Click to restart now.`
   } else {
     b.hidden = true
     if (s.kind === 'checking' && s.manual) statusNote('Checking for updates…')
@@ -2856,7 +2856,7 @@ function updateSummary(s: UpdateState): string {
     case 'none': return `You have Forge ${s.current}, the newest version.`
     case 'available': return `You have Forge ${s.current}. Forge ${s.latest} is available: see the button in the status bar.`
     case 'downloading': return `Downloading Forge ${s.latest ?? ''} (${s.percent}%)…`
-    case 'ready': return `Forge ${s.latest ?? ''} is downloaded: restart to finish.`
+    case 'ready': return `Forge ${s.latest ?? ''} is downloaded and installs when you close Forge (or click "Update ready" in the status bar to restart now).`
     case 'error': return `You have Forge ${s.current}. The last check failed: ${s.message}`
     default: return `You have Forge ${s.current}.`
   }
@@ -2873,15 +2873,33 @@ async function offerUpdate(): Promise<void> {
 }
 $('sb-update').addEventListener('click', () => {
   if (updateState?.kind === 'available') void offerUpdate()
-  else if (updateState?.kind === 'ready' && confirm('Restart Forge now to finish updating? (If anything is unsaved, you\'ll be asked first.)')) void window.api.installUpdate()
+  else if (updateState?.kind === 'ready' && confirm(`Restart now to finish updating to Forge ${updateState.latest ?? ''}? (Otherwise it installs when you close Forge. If anything is unsaved, you'll be asked first.)`)) void window.api.installUpdate()
 })
 commands.register({ id: 'help.checkUpdates', title: 'Check for Updates…', run: () => void window.api.checkForUpdates(true) })
 settingsView.onCheckUpdates = () => void window.api.checkForUpdates(true)
 void window.api.updateState().then((s) => settingsView.setUpdateInfo(updateSummary(s))).catch(() => {})
-// A quiet look a little after starting (Settings → Updates turns it off).
-window.setTimeout(() => {
-  if (settings.checkForUpdates) void window.api.checkForUpdates(false).catch(() => {})
-}, 15_000)
+// Keep Forge up to date (Settings → Updates): a quiet look a little after starting and every
+// 6 hours; a new version downloads in the background and installs when Forge closes.
+const autoUpdateCheck = () => {
+  if (settings.checkForUpdates) void window.api.checkForUpdates(false, true).catch(() => {})
+}
+window.setTimeout(autoUpdateCheck, 15_000)
+window.setInterval(autoUpdateCheck, 6 * 60 * 60 * 1000)
+
+// After an update: the release notes on the Welcome page, once.
+void window.api.whatsNew().then((news) => {
+  if (!news) return
+  welcome.setWhatsNew(news)
+  showWelcomePage()
+}).catch(() => {})
+commands.register({
+  id: 'help.releaseNotes', title: "Release Notes (What's New)",
+  run: async () => {
+    const version = (updateState ?? (await window.api.updateState())).current
+    welcome.setWhatsNew({ version, notes: await window.api.releaseNotes(version).catch(() => '') })
+    showWelcomePage()
+  }
+})
 
 commands.register({ id: 'nav.projectMap', title: 'Project Map (find a file visually)', keys: 'Ctrl+Alt+M', run: () => void openProjectMap() })
 commands.register({ id: 'view.pipeline', title: 'Show Pipeline (data flow of a function)', run: () => panel.show('pipeline') })

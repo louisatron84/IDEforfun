@@ -330,8 +330,12 @@ export interface IdeApi {
   apiTestCall(root: string, box: ApiBox, requestId: string): Promise<TestCallResult>
   /** Read a function's data flow (its parameters and steps) from a file's text; with no function, just list them. */
   readDataflow(root: string, source: string, func: string, python?: string): Promise<import('./dataflow').RawFlow>
-  /** Look for a newer Forge (manual: the user asked). */
-  checkForUpdates(manual: boolean): Promise<UpdateState>
+  /** Look for a newer Forge (manual: the user asked; auto: download it in the background, to install when Forge closes). */
+  checkForUpdates(manual: boolean, auto?: boolean): Promise<UpdateState>
+  /** On the first start after an update: the version and its release notes (once); otherwise null. */
+  whatsNew(): Promise<{ version: string; notes: string } | null>
+  /** A version's release notes (Help → Release Notes). */
+  releaseNotes(version: string): Promise<string>
   /** Installed app: download the update. Otherwise: open the download page. */
   downloadUpdate(): Promise<void>
   /** Where updates stand now (includes the version you have). */
