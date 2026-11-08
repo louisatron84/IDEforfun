@@ -32,6 +32,8 @@ import { prepareProjectDir } from './projectDir'
 import type { FindOptions } from '../shared/regex'
 import { PythonRunner } from './python'
 import { Terminals } from './terminals'
+import { createProject, listUserTemplates, saveTemplate } from './projectTemplates'
+import { BUILTIN_TEMPLATES, renderTemplate } from '../shared/templates'
 import { DebugAdapter, hasDebugpy, installDebugpy, isVirtualEnv, resolvePython } from './debugAdapter'
 import { normalizeSettings } from '../shared/settings'
 
@@ -224,6 +226,25 @@ ipcMain.handle('backup:write', (_event, data: BackupData) => backups.write(data)
 ipcMain.handle('backup:remove', (_event, path: string) => backups.remove(path))
 ipcMain.handle('backup:list', () => backups.list())
 ipcMain.handle('fs:create', (_event, dir: string, name: string, isDirectory: boolean) => createEntry(dir, name, isDirectory))
+
+// ----- project templates (Forge's, and yours in <userData>/templates) -----
+const templatesDir = () => join(app.getPath('userData'), 'templates')
+const allTemplates = async () => [...BUILTIN_TEMPLATES, ...(await listUserTemplates(templatesDir()))]
+ipcMain.handle('templates:list', async () => (await allTemplates()).map(({ id, name, detail, user }) => ({ id, name, detail, ...(user ? { user } : {}) })))
+ipcMain.handle('templates:create', async (_event, parent: unknown, name: unknown, templateId: unknown) => {
+  if (typeof parent !== 'string' || typeof name !== 'string' || typeof templateId !== 'string') throw new Error('Bad request')
+  const t = (await allTemplates()).find((x) => x.id === templateId)
+  if (!t) throw new Error('That template no longer exists.')
+  const files = renderTemplate(t, name)
+  const path = await createProject(parent, name, files)
+  const open = t.open ? renderTemplate({ ...t, files: [{ path: t.open, content: '' }] }, name)[0].path : undefined
+  return { path, open, packages: files.some((f) => f.path === 'requirements.txt' || f.path === 'pyproject.toml') }
+})
+ipcMain.handle('templates:save', async (_event, root: unknown, name: unknown) => {
+  if (typeof root !== 'string' || typeof name !== 'string') throw new Error('Bad request')
+  await saveTemplate(root, templatesDir(), name)
+  return name.trim()
+})
 ipcMain.handle('fs:rename', (_event, path: string, newName: string) => renameEntry(path, newName))
 // To the Recycle Bin (not a permanent delete), so mistakes can be undone.
 ipcMain.handle('fs:trash', (_event, path: string) => shell.trashItem(path))

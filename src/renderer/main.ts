@@ -1878,6 +1878,49 @@ async function newProjectFolder(): Promise<void> {
   }, '', 'Create')
 }
 
+/** File → New Project from Template…: pick a template, a name and where it goes; then open it. */
+async function newProjectFromTemplate(): Promise<void> {
+  const list = await window.api.listTemplates()
+  palette.choose('New project from which template?', list.map((t) => ({
+    label: t.name, detail: t.detail, hint: t.user ? 'yours' : undefined,
+    run: () => setTimeout(() => void pickProjectPlace(t.id, t.name))
+  })))
+}
+async function pickProjectPlace(templateId: string, templateName: string): Promise<void> {
+  const parent = await window.api.pickParentFolder()
+  if (!parent) return
+  if (typeof parent !== 'string') return alert(parent.error)
+  palette.prompt(`Name of the new ${templateName} project (a folder inside ${parent})`, (name) => {
+    void window.api.createFromTemplate(parent, name, templateId).then(async (made) => {
+      await openFolderPath(made.path)
+      if (made.open) {
+        const sep = made.path.includes('\\') ? '\\' : '/'
+        await openFile(made.path + sep + made.open.split('/').join(sep), 0)
+      }
+      // Packages to install: a .venv for the project first (it then offers to install them).
+      if (made.packages) {
+        palette.choose('This project uses packages. Set up a virtual environment (.venv) and install them?', [
+          { label: 'Create a .venv and install the packages', run: () => void pyEnv.createVenv() },
+          { label: 'Not now', detail: 'the 🐍 button in the status bar does it later', run: () => {} }
+        ])
+      }
+    }, (err) => alert(err instanceof Error ? err.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(err)))
+  }, '', 'Create')
+}
+commands.register({ id: 'file.newProject', title: 'New Project from Template…', run: () => void newProjectFromTemplate() })
+commands.register({
+  id: 'file.saveTemplate', title: 'Save Project as Template…', when: () => rootFolder !== null,
+  run: () => {
+    const root = rootFolder!
+    palette.prompt('Name of the template (its text files are saved, without .venv, .git or .env)', (name) => {
+      void window.api.saveAsTemplate(root, name).then(
+        (saved) => statusNote(`Saved the template "${saved}": File → New Project from Template… lists it.`),
+        (err) => alert(err instanceof Error ? err.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(err))
+      )
+    }, root.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '', 'Save')
+  }
+})
+
 commands.register({ id: 'file.new', title: 'New File…', keys: 'Ctrl+N', run: () => (hasFolder() ? newItem(false) : void newFileAnywhere()) })
 commands.register({ id: 'file.newFolder', title: 'New Folder…', run: () => (hasFolder() ? newItem(true) : void newProjectFolder()) })
 commands.register({ id: 'help.welcome', title: 'Welcome', run: () => (welcome.isVisible && welcomeForced ? closeWelcomePage() : showWelcomePage()) })

@@ -106,6 +106,7 @@ export class WelcomePage {
     left.append(this.section('Start', [
       { label: 'New File…', command: 'file.new', detail: folder ? 'in the project (type a/b.py to make folders too)' : 'choose where to save it' },
       { label: 'New Folder…', command: 'file.newFolder', detail: folder ? 'in the project' : 'a new project folder, then open it' },
+      { label: 'New Project from Template…', command: 'file.newProject', detail: 'a script, web API, data analysis, desktop app… or one of yours' },
       { label: 'Open Folder…', command: 'file.openFolder' },
       { label: 'Open Folder by Path…', command: 'file.openFolderByPath', detail: 'type or paste a path' }
     ]))

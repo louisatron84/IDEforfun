@@ -44,6 +44,7 @@ export function buildMenu(state: MenuState = { keys: {}, recent: [] }): Menu {
       submenu: [
         cmd('New File…', 'file.new', 'CmdOrCtrl+N'),
         cmd('New Folder…', 'file.newFolder'),
+        cmd('New Project from Template…', 'file.newProject'),
         sep,
         cmd('Open Folder…', 'file.openFolder', 'CmdOrCtrl+O'),
         cmd('Open Folder by Path…', 'file.openFolderByPath'),
