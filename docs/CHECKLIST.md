@@ -263,9 +263,9 @@ Optional directions that could extend the IDE beyond the core roadmap.
 - [ ] Support asynchronous and event-driven applications
 
 **Memory explorer**
-- [ ] Visualise object references, memory allocations and object lifetimes
-- [ ] Inspect memory usage during execution
-- [ ] Identify unexpected object retention
+- [x] Visualise object references, memory allocations and object lifetimes (v0.48: Memory panel, Run with Memory Tracking: where memory is allocated, by your line and function; how many objects of each of your classes are alive over the run. Object references: v0.46's Objects on the debugger's card)
+- [x] Inspect memory usage during execution (v0.48: memory in use over the run, as it runs, with the peak)
+- [x] Identify unexpected object retention (v0.48: classes whose objects keep growing are flagged; at the end, what keeps them alive, e.g. app.CACHE → list)
 
 ## Suggested implementation priorities
 

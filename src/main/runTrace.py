@@ -734,6 +734,141 @@ def _forge_trace():
                 except Exception:
                     pass
 
+    # ---------- memory (FORGE_TRACE_MEMORY=1, asked for in Forge: it slows programs down) ----------
+    # Memory in use over time; the project lines that allocate the most (each
+    # allocation counts for its innermost project frame, so a list growing in
+    # C code counts for the line that grew it); how many objects of each
+    # project class are alive; and at the end, what keeps them alive.
+    mem_on = os.environ.pop("FORGE_TRACE_MEMORY", "") == "1" and conn["sock"] is not None
+    mem = {"samples": [], "next_send": 0.0, "next_full": 0.0, "t0": time.monotonic(), "globals": None}
+    rel_cache = {}
+
+    def rel_of(filename):
+        try:
+            return rel_cache[filename]
+        except KeyError:
+            pass
+        found = None
+        if filename and not filename.startswith("<"):
+            p = os.path.abspath(filename)
+            if os.path.normcase(p).startswith(root_cmp):
+                parts = p[len(root_cmp):].replace("\\", "/").split("/")
+                if not any(x in skip_dirs for x in parts[:-1]) and parts[-1].endswith((".py", ".pyw")):
+                    found = "/".join(parts)
+        rel_cache[filename] = found
+        return found
+
+    if mode == "--module":
+        main_module = target
+    else:
+        rel_main = rel_of(target)
+        main_module = rel_main.rsplit(".", 1)[0].replace("/", ".") if rel_main else "__main__"
+        if main_module.endswith(".__init__"):
+            main_module = main_module[: -len(".__init__")]
+
+    if mem_on:
+        import gc
+        import tracemalloc
+        import types as _types
+        tracemalloc.start(16)
+
+    project_type = {}
+
+    def is_project_type(t):
+        try:
+            return project_type[t]
+        except KeyError:
+            pass
+        mod = getattr(t, "__module__", None)
+        ok = False
+        if mod == "__main__":
+            ok = True
+        elif isinstance(mod, str):
+            m = sys.modules.get(mod)
+            ok = bool(m is not None and rel_of(getattr(m, "__file__", None) or ""))
+        project_type[t] = ok
+        return ok
+
+    def type_name(t):
+        mod = getattr(t, "__module__", "?")
+        return "%s.%s" % (main_module if mod == "__main__" else mod, getattr(t, "__qualname__", t.__name__))
+
+    def mem_types():
+        """Live objects of each project class: counts, and one of each (to explain what keeps them)."""
+        counts, sample = {}, {}
+        for o in gc.get_objects():
+            t = type(o)
+            if is_project_type(t):
+                counts[t] = counts.get(t, 0) + 1
+                if t not in sample:
+                    sample[t] = o
+        return counts, sample
+
+    def mem_sites():
+        sites = {}
+        for st in tracemalloc.take_snapshot().statistics("traceback"):
+            for fr in reversed(st.traceback):  # most recent frame first
+                rel = rel_of(fr.filename)
+                if rel:
+                    cur = sites.get((rel, fr.lineno))
+                    if cur is None:
+                        sites[(rel, fr.lineno)] = [st.size, st.count]
+                    else:
+                        cur[0] += st.size
+                        cur[1] += st.count
+                    break
+        top = sorted(sites.items(), key=lambda kv: -kv[1][0])[:30]
+        return [[rel, line, size, count] for (rel, line), (size, count) in top]
+
+    def keep_path(obj):
+        """How a live object is reached from a module's variable: ["app.CACHE", "list"], or []."""
+        mine = set()
+        seen = {id(obj)}
+        paths = {id(obj): []}
+        frontier = [obj]
+        mine.add(id(frontier))
+        for _ in range(6):
+            nxt = []
+            mine.add(id(nxt))
+            for o in frontier:
+                for r in gc.get_referrers(o):
+                    rid = id(r)
+                    if rid in seen or rid in mine or isinstance(r, _types.FrameType):
+                        continue
+                    seen.add(rid)
+                    if isinstance(r, dict) and "__builtins__" in r and isinstance(r.get("__name__"), str):
+                        name = next((k for k, v in r.items() if v is o), None)
+                        if name is not None:
+                            mod = r["__name__"]
+                            return ["%s.%s" % (main_module if mod == "__main__" else mod, name)] + paths[id(o)]
+                        continue
+                    paths[rid] = [type(r).__name__] + paths[id(o)]
+                    nxt.append(r)
+            frontier = nxt[:300]
+            if not frontier:
+                break
+        return []
+
+    def send_mem(final=False):
+        now = time.monotonic()
+        cur, peak = tracemalloc.get_traced_memory()
+        mem["samples"].append([round(now - mem["t0"], 2), cur])
+        if not final and now < mem["next_send"]:
+            return
+        mem["next_send"] = now + 0.5
+        msg = {"t": "mem", "samples": mem["samples"], "peak": peak}
+        mem["samples"] = []
+        if final or now >= mem["next_full"]:
+            mem["next_full"] = now + 2.0
+            msg["sites"] = mem_sites()
+            counts, sample = mem_types()
+            ranked = sorted(counts.items(), key=lambda kv: -kv[1])
+            msg["types"] = [[type_name(t), n] for t, n in ranked[:30]]
+            if final:
+                msg["final"] = True
+                msg["kept"] = [{"type": type_name(t), "count": n, "path": keep_path(sample[t])} for t, n in ranked[:5]]
+        send(msg)
+
     # ---------- sending updates ----------
     main_id = threading.main_thread().ident
     last = {"at": None}
@@ -744,6 +879,8 @@ def _forge_trace():
         send_trees()
         send_io()
         send_prof()
+        if mem_on and not finished["done"]:
+            send_mem()
         calls, state["calls"] = state["calls"], {}
         frame = sys._current_frames().get(main_id)
         at = project_frame(frame, 256)
@@ -769,6 +906,13 @@ def _forge_trace():
             sys.settrace(None)
         stop.set()
         flush()
+        if mem_on:
+            try:
+                send_mem(final=True)
+            except Exception:
+                pass
+            tracemalloc.stop()
+            mem["globals"] = None
         send({"t": "end"})
         s = conn["sock"]
         if s is not None:
@@ -794,12 +938,13 @@ def _forge_trace():
         if mode == "--module":
             sys.argv = [target] + args
             sys.path[0] = os.getcwd()
-            runpy.run_module(target, run_name="__main__", alter_sys=True)
+            # The program's variables are kept until the end, so memory tracking can tell what they hold on to.
+            mem["globals"] = runpy.run_module(target, run_name="__main__", alter_sys=True)
         else:
             path = os.path.abspath(target)
             sys.argv = [target] + args
             sys.path[0] = os.path.dirname(path)
-            runpy.run_path(path, run_name="__main__")
+            mem["globals"] = runpy.run_path(path, run_name="__main__")
     except SystemExit:
         finish()
         raise
