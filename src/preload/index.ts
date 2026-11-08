@@ -5,6 +5,9 @@ const api: IdeApi = {
   openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
   newFileDialog: () => ipcRenderer.invoke('dialog:newFile'),
   pickParentFolder: () => ipcRenderer.invoke('dialog:pickParent'),
+  listTemplates: () => ipcRenderer.invoke('templates:list'),
+  createFromTemplate: (parent, name, templateId) => ipcRenderer.invoke('templates:create', parent, name, templateId),
+  saveAsTemplate: (root, name) => ipcRenderer.invoke('templates:save', root, name),
   checkFolder: (path) => ipcRenderer.invoke('fs:checkFolder', path),
   onMenuCommand: (listener) => {
     const handler = (_e: unknown, id: string) => listener(id)

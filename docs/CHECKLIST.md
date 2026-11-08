@@ -230,7 +230,7 @@ Each of these is a big project of its own. Kept as a wishlist.
 - [ ] Live project-state sharing
 
 ### 6.4 Developer automation
-- [ ] Project templates and custom scaffolding
+- [x] Project templates and custom scaffolding (v0.50: File → New Project from Template…: Script, Command-line tool, FastAPI, Flask, Data analysis, Tkinter, Package with tests; Save Project as Template… for your own, with the project's name as a placeholder)
 - [ ] Build-system integration
 - [ ] Docker integration
 - [ ] Remote development over SSH

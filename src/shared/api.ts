@@ -170,6 +170,12 @@ export interface IdeApi {
   newFileDialog(): Promise<string | { error: string } | null>
   /** Pick the folder a new project folder goes in. null = cancelled. */
   pickParentFolder(): Promise<string | { error: string } | null>
+  /** Project templates: Forge's and yours (without their files). */
+  listTemplates(): Promise<{ id: string; name: string; detail: string; user?: boolean }[]>
+  /** Make <parent>/<name> from a template. `open`: the file to open; `packages`: it has a requirements.txt. */
+  createFromTemplate(parent: string, name: string, templateId: string): Promise<{ path: string; open?: string; packages: boolean }>
+  /** Save the project as one of your templates; returns its name. */
+  saveAsTemplate(root: string, name: string): Promise<string>
   /** Menu bar: run a command (an id from the keymap). */
   onMenuCommand(listener: (id: string) => void): () => void
   /** Menu bar: an Edit action (undo, copy, paste...). */
