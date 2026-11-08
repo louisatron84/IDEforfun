@@ -7,6 +7,7 @@ import type { ApiBox } from '../../shared/boxes'
 import { requestFunctions } from '../../shared/boxCode'
 import { hostOf } from '../../shared/projectGraph'
 import { stateOf, type NetRecord } from '../../shared/network'
+import type { GraphMode } from './viewModel'
 
 export interface TraceTick {
   /** The project function the program is in now (`module:qual`, or `module:<module>` for top-level code). */
@@ -17,7 +18,7 @@ export interface TraceTick {
 
 /** What the Graph shows now: its view mode, node ids and edges (`from→to`). */
 export interface RunView {
-  mode: 'modules' | 'calls'
+  mode: GraphMode
   nodes: ReadonlySet<string>
   edges: ReadonlySet<string>
 }
@@ -49,7 +50,8 @@ export function moduleOfId(id: string): string {
 }
 
 export function planFrame(tick: TraceTick, view: RunView, boxes: readonly ApiBox[]): RunFrame {
-  const toView = (id: string) => (view.mode === 'calls' ? id : moduleOfId(id))
+  const toView = (id: string) => (view.mode === 'modules' ? moduleOfId(id) : id)
+  const eventIds = view.mode === 'events' ? [...view.nodes].filter((id) => id.startsWith('event:')) : []
   const at = tick.at === null ? null : toView(tick.at)
   const glow = at !== null && view.nodes.has(at) ? at : null
 
@@ -58,12 +60,26 @@ export function planFrame(tick: TraceTick, view: RunView, boxes: readonly ApiBox
     const from = toView(a)
     const to = toView(b)
     if (from === to) continue
+    const count = (a: string, b: string) => {
+      const key = `${a}→${b}`
+      const c = counts.get(key)
+      if (c) c.n += n
+      else counts.set(key, { from: a, to: b, n })
+    }
+    if (view.mode === 'events' && !view.edges.has(`${from}→${to}`)) {
+      // A handler ran: through the event it handles, from the code that emitted it (or from the event alone,
+      // when it came from outside the code: a click, a message, a signal).
+      const through = eventIds.filter((e) => view.edges.has(`${e}→${to}`))
+      const emitted = through.filter((e) => view.edges.has(`${from}→${e}`))
+      if (emitted.length) {
+        count(from, emitted[0])
+        count(emitted[0], to)
+      } else if (through.length) count(through[0], to)
+      continue
+    }
     // In the Modules view a call can go against the import line (callbacks): the spark runs backwards along it.
     if (!view.edges.has(`${from}→${to}`) && !(view.mode === 'modules' && view.edges.has(`${to}→${from}`))) continue
-    const key = `${from}→${to}`
-    const c = counts.get(key)
-    if (c) c.n += n
-    else counts.set(key, { from, to, n })
+    count(from, to)
   }
   const sparks = [...counts.values()].sort((x, y) => y.n - x.n).slice(0, MAX_SPARKS).map(({ from, to }) => ({ from, to }))
 
@@ -84,7 +100,7 @@ export interface NetSpark {
 export function planNetSpark(r: NetRecord, view: RunView, boxes: readonly ApiBox[]): NetSpark | null {
   if (!r.func || r.kind !== 'http') return null
   const module = moduleOfId(r.func)
-  const from = view.mode === 'calls' ? r.func : module
+  const from = view.mode === 'modules' ? module : r.func
   if (!view.nodes.has(from)) return null
   const ok = stateOf(r) !== 'failed'
   const box = boxes.find((b) => b.attach?.module === module && hostOf(b.baseUrl) === r.host.toLowerCase())

@@ -44,8 +44,8 @@ export function parseProf(raw: unknown): RunProfile | null {
 const moduleOf = (id: string) => (id.startsWith('module:') ? id.slice(7) : id.slice(0, id.indexOf(':')))
 
 /** Times for the Graph's nodes: per function (Calls view), or the time spent in each file (Modules view). */
-export function viewTimes(p: RunProfile, mode: 'modules' | 'calls'): Map<string, FnTime> {
-  if (mode === 'calls') return p.fns
+export function viewTimes(p: RunProfile, mode: 'modules' | 'calls' | 'events'): Map<string, FnTime> {
+  if (mode !== 'modules') return p.fns
   const out = new Map<string, FnTime>()
   for (const [id, t] of p.fns) {
     const m = moduleOf(id)

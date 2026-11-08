@@ -46,6 +46,22 @@ describe('planFrame', () => {
     expect(planFrame({ at: null, calls: [] }, calls, []).glow).toBeNull()
   })
 
+  it('events view: an emitter calling a handler sparks through the event; a handler run from outside sparks from its event', () => {
+    const events: RunView = {
+      mode: 'events',
+      nodes: new Set(['a:send', 'event:reply', 'a:on_reply', 'event:click', 'gui:clicked', 'a:main', 'a:work']),
+      edges: new Set(['a:send→event:reply', 'event:reply→a:on_reply', 'event:click→gui:clicked', 'a:main→a:work'])
+    }
+    const f = planFrame({ at: 'a:on_reply', calls: [['a:send', 'a:on_reply', 1], ['module:gui', 'gui:clicked', 1], ['a:main', 'a:work', 1]] }, events, [])
+    expect(f.glow).toBe('a:on_reply')
+    expect(f.sparks).toEqual([
+      { from: 'a:send', to: 'event:reply' },
+      { from: 'event:reply', to: 'a:on_reply' },
+      { from: 'event:click', to: 'gui:clicked' },
+      { from: 'a:main', to: 'a:work' }
+    ])
+  })
+
   it('at most 12 sparks, busiest first', () => {
     const edges = new Set<string>()
     const many: RunView = { mode: 'calls', nodes: new Set(), edges }

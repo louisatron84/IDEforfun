@@ -4,6 +4,7 @@
  * generated function), stacked if several share a node, so it never drifts
  * away from its code when the graph is laid out again.
  */
+import type { GraphMode } from './viewModel'
 import type { ApiBox, ApiRequest, FieldNode } from '../../shared/boxes'
 import { requestFunctions } from '../../shared/boxCode'
 import type { Layout } from './layout'
@@ -32,10 +33,10 @@ export interface PlacedBox {
 }
 
 /** The node a box sits beside in this view, if it is shown. */
-export function boxAnchor(box: ApiBox, mode: 'modules' | 'calls', nodeIds: ReadonlySet<string>): string | null {
+export function boxAnchor(box: ApiBox, mode: GraphMode, nodeIds: ReadonlySet<string>): string | null {
   if (!box.attach) return null
   const module = box.attach.module
-  if (mode === 'calls') {
+  if (mode !== 'modules') {
     for (const fn of requestFunctions(box).values()) if (nodeIds.has(`${module}:${fn}`)) return `${module}:${fn}`
   }
   return nodeIds.has(module) ? module : null
@@ -72,7 +73,7 @@ const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.widt
  * Boxes beside their nodes, pushed down where they would overlap another box;
  * boxes with no node on the graph in a column right of everything else.
  */
-export function placeBoxes(layout: Layout, boxes: readonly ApiBox[], mode: 'modules' | 'calls', nodeIds: ReadonlySet<string>): Map<string, PlacedBox> {
+export function placeBoxes(layout: Layout, boxes: readonly ApiBox[], mode: GraphMode, nodeIds: ReadonlySet<string>): Map<string, PlacedBox> {
   const out = new Map<string, PlacedBox>()
   const placed: Rect[] = []
   const loose: ApiBox[] = []

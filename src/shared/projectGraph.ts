@@ -61,6 +61,24 @@ export interface RawFile {
   generated?: { kind: 'openapi'; slug: string; edited: boolean }
   /** Database models, CREATE TABLE statements and connections (only when the file has any). See database.ts. */
   db?: RawDb
+  /** Event handlers, events emitted, work started on tasks and threads (only when the file has any). */
+  events?: RawEvent[]
+}
+
+/**
+ * handles: `ref` handles `event` (registered by a decorator or a call);
+ * emits: the code at `def` emits `event`; spawns: the code at `def` starts
+ * `ref` on a task, thread or executor. `ref` is a name as written in the
+ * code; `def` the enclosing function's qual (null: top-level code).
+ */
+export interface RawEvent {
+  kind: 'handles' | 'emits' | 'spawns'
+  event: string | null
+  ref: string | null
+  def: string | null
+  line: number
+  /** The decorator or call that does it ("sio.on", "asyncio.create_task"). */
+  via: string
 }
 
 export interface RawDbColumn {
@@ -151,6 +169,17 @@ export interface CallEdge {
   line: number
 }
 
+/** An event use with its functions resolved: `func` handles / emits / starts (`target`). */
+export interface EventUse {
+  kind: 'handles' | 'emits' | 'spawns'
+  event: string | null
+  func: string
+  target?: string
+  module: string
+  line: number
+  via: string
+}
+
 export interface HttpUse extends RawHttp {
   module: string
   /** "api.github.com", or null when the URL isn't written out in the code. */
@@ -171,6 +200,7 @@ export interface ProjectGraph {
   unreachable: (RawUnreachable & { module: string })[]
   routes: (RawRoute & { module: string })[]
   http: HttpUse[]
+  events: EventUse[]
   env: { name: string; uses: { module: string; line: number; func: string | null; default: boolean }[] }[]
   errors: { module: string; path: string; error: string }[]
   truncated: boolean
@@ -334,6 +364,30 @@ export function buildGraph(scan: RawScan): ProjectGraph {
     }
   }
 
+  // ----- events: handlers, emitters and work started, with their functions resolved -----
+  const events: EventUse[] = []
+  const eventSeen = new Set<string>()
+  for (const f of scan.files) {
+    if (!f.events?.length) continue
+    const b = bindings.get(f.module)!
+    const moduleDef = f.defs.find((d) => d.kind === 'module') ?? f.defs[0]
+    for (const e of f.events) {
+      const ctx = (e.def !== null && f.defs.find((d) => d.qual === e.def)) || moduleDef
+      const here = ctx && ctx.kind !== 'module' ? `${f.module}:${ctx.qual}` : `module:${f.module}`
+      const resolved = e.ref === null ? undefined : (symbolIn(f.module, e.ref) ?? (ctx ? resolveCall(e.ref, f, ctx, b, symbolIn, isModule) : undefined))
+      if (e.kind !== 'emits' && (!resolved || resolved.kind === 'class')) continue
+      const use: EventUse = e.kind === 'handles'
+        ? { kind: 'handles', event: e.event, func: resolved!.id, module: f.module, line: e.line, via: e.via }
+        : e.kind === 'emits'
+          ? { kind: 'emits', event: e.event, func: here, module: f.module, line: e.line, via: e.via }
+          : { kind: 'spawns', event: null, func: here, target: resolved!.id, module: f.module, line: e.line, via: e.via }
+      const key = `${use.kind}\u0000${use.event}\u0000${use.func}\u0000${use.target ?? ''}`
+      if (eventSeen.has(key)) continue
+      eventSeen.add(key)
+      events.push(use)
+    }
+  }
+
   // ----- possibly unused: never named anywhere else in the project -----
   const referencedBy = new Map<string, Set<string>>()
   for (const f of scan.files) {
@@ -385,6 +439,7 @@ export function buildGraph(scan: RawScan): ProjectGraph {
     unreachable: scan.files.flatMap((f) => (f.unreachable ?? []).map((u) => ({ ...u, module: f.module }))).sort((a, b) => a.module.localeCompare(b.module) || a.line - b.line),
     routes,
     http,
+    events,
     env: [...envMap].map(([name, uses]) => ({ name, uses })).sort((a, b) => a.name.localeCompare(b.name)),
     errors: modules.filter((m) => m.error).map((m) => ({ module: m.id, path: m.path, error: m.error! })),
     truncated: scan.truncated
