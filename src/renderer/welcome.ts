@@ -5,6 +5,7 @@
  * Every action is a command, so it does exactly what the menu item does.
  */
 import type { CommandRegistry } from './keymap'
+import { noteBlocks, type Span } from '../shared/releaseNotes'
 
 export interface WelcomeHooks {
   commands: CommandRegistry
@@ -32,6 +33,8 @@ const folderName = (p: string) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() 
 export class WelcomePage {
   readonly el: HTMLDivElement
   private recentList: string[] = []
+  /** After an update (or Help → Release Notes): shown at the top until dismissed. */
+  private news: { version: string; notes: string } | null = null
 
   constructor(private readonly hooks: WelcomeHooks) {
     this.el = document.createElement('div')
@@ -58,6 +61,11 @@ export class WelcomePage {
 
   hide(): void {
     this.el.hidden = true
+  }
+
+  setWhatsNew(news: { version: string; notes: string } | null): void {
+    this.news = news
+    if (!this.el.hidden) this.render()
   }
 
   /** Redraw if showing (e.g. a folder was opened, or shortcuts changed). */
@@ -138,8 +146,46 @@ export class WelcomePage {
     box.addEventListener('change', () => this.hooks.setShowWhenEmpty(box.checked))
     foot.append(box, document.createTextNode(' Show this page when no files are open (Help → Welcome always shows it)'))
 
-    page.append(head, cols, foot)
+    page.append(head, ...(this.news ? [this.newsCard(this.news)] : []), cols, foot)
     this.el.replaceChildren(page)
+  }
+
+  /** "What's new in Forge X": the release notes, built as text (nothing in them can run as HTML). */
+  private newsCard(news: { version: string; notes: string }): HTMLElement {
+    const card = document.createElement('section')
+    card.className = 'welcome-news'
+    const top = document.createElement('div')
+    top.className = 'welcome-news-head'
+    const h = document.createElement('h2')
+    h.textContent = `What's new in Forge ${news.version}`
+    const close = document.createElement('button')
+    close.className = 'welcome-news-close'
+    close.textContent = '×'
+    close.title = 'Dismiss (Help → Release Notes shows it again)'
+    close.setAttribute('aria-label', 'Dismiss the release notes')
+    close.addEventListener('click', () => this.setWhatsNew(null))
+    top.append(h, close)
+    card.append(top)
+    const line = (parent: HTMLElement, spans: Span[]) => {
+      for (const s of spans) {
+        if (s.bold || s.code) {
+          const e = document.createElement(s.code ? 'code' : 'strong')
+          e.textContent = s.text
+          parent.append(e)
+        } else parent.append(document.createTextNode(s.text))
+      }
+      return parent
+    }
+    const blocks = noteBlocks(news.notes)
+    if (!blocks.length) card.append(Object.assign(document.createElement('p'), { textContent: 'No notes for this version.' }))
+    for (const b of blocks) {
+      if (b.kind === 'ul') {
+        const ul = document.createElement('ul')
+        for (const item of b.items) ul.append(line(document.createElement('li'), item))
+        card.append(ul)
+      } else card.append(line(document.createElement(b.kind === 'h' ? 'h3' : 'p'), b.text))
+    }
+    return card
   }
 
   private section(title: string, actions: Action[], showKeys = false): HTMLElement {

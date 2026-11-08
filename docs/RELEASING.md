@@ -1,10 +1,13 @@
 # Releasing a new version of Forge
 
-Installed copies of Forge update themselves from GitHub Releases. They check a
-little after starting (Settings → Updates), or when you choose Help → Check for
-Updates. They ask before downloading, then offer "Restart to update". The
-portable version can't replace itself: it says a new version exists and opens
-the download page.
+Installed copies of Forge update themselves from GitHub Releases, like VS Code:
+with Settings → Updates on (the default) they check a little after starting and
+every 6 hours, download a new version in the background, and install it when
+Forge closes (the status bar's "Update ready" restarts now instead). The first
+start of the new version shows the release notes on the Welcome page, so write
+them for people using Forge. Help → Check for Updates asks first. The portable
+version and the .deb can't replace themselves: they say a new version exists
+and open the download page.
 
 For that to work, every release must carry the files the updater reads.
 
