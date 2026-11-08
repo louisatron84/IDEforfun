@@ -85,6 +85,8 @@ export interface RunSpec {
   trace?: boolean
   /** Also record what each line of this function (`module:qual`) produces (implies trace). */
   traceData?: string
+  /** Also track memory: use over time, where it's allocated, live objects (implies trace; slows the program). */
+  traceMemory?: boolean
 }
 
 /** Where an update stands (see src/main/updates.ts). */

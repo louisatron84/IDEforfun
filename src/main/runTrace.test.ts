@@ -48,6 +48,30 @@ const FILES: Record<string, string> = {
     '    print("path0 is script dir", sys.path[0] == __import__("os").path.dirname(__import__("os").path.abspath(__file__)))',
     '    print("total", start())'
   ].join('\n'),
+  'mem.py': [
+    'import time',
+    '',
+    'class Item:',
+    '    def __init__(self, n):',
+    '        self.n = n',
+    '        self.data = [n] * 50',
+    '',
+    'CACHE = []',
+    '',
+    'def fill(count):',
+    '    for i in range(count):',
+    '        CACHE.append(Item(i))',
+    '        if i % 500 == 0:',
+    '            time.sleep(0.15)',
+    '',
+    'def temporary():',
+    '    junk = [Item(i) for i in range(300)]',
+    '    return len(junk)',
+    '',
+    'temporary()',
+    'fill(2000)',
+    'print(len(CACHE))'
+  ].join('\n'),
   'slow.py': [
     'import time',
     '',
@@ -320,6 +344,30 @@ describe.skipIf(!python)('run tracer (real Python)', () => {
     } finally {
       server.close()
     }
+  })
+
+  it('memory (when asked): use over time, the project lines that allocate, objects of its classes, and what keeps them alive at the end', async () => {
+    const r = await run([join(root, 'mem.py')], [], { env: { FORGE_TRACE_MEMORY: '1' } })
+    expect(r.code).toBe(0)
+    expect(r.stdout).toBe('2000\n')
+    type Mem = { t: string; samples?: [number, number][]; peak?: number; sites?: [string, number, number, number][]; types?: [string, number][]; final?: boolean; kept?: { type: string; count: number; path: string[] }[] }
+    const mems = (r.messages as Mem[]).filter((m) => m.t === 'mem')
+    expect(mems.length).toBeGreaterThan(1)
+    const samples = mems.flatMap((m) => m.samples ?? [])
+    expect(samples.length).toBeGreaterThan(3)
+    expect(samples.at(-1)![1]).toBeGreaterThan(100_000)
+    const final = mems.at(-1)!
+    expect(final.final).toBe(true)
+    expect(final.peak).toBeGreaterThanOrEqual(samples.at(-1)![1])
+    // The biggest allocations are on the project's own lines, even though list growth happens in C.
+    const top = final.sites![0]
+    expect(top[0]).toBe('mem.py')
+    expect([6, 12]).toContain(top[1])
+    expect(new Map(final.types!).get('mem.Item')).toBe(2000)
+    expect(final.kept![0]).toEqual({ type: 'mem.Item', count: 2000, path: ['mem.CACHE', 'list'] })
+    // Without the setting, no memory tracking (it slows programs down).
+    const plain = await run([join(root, 'mem.py')])
+    expect((plain.messages as Mem[]).some((m) => m.t === 'mem')).toBe(false)
   })
 
   it('times each function: calls, total (a function calling itself counted once) and its own time; and who called it', async () => {

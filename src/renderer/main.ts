@@ -50,6 +50,8 @@ import { DiffView } from './diffView'
 import { GraphView } from './graph/graphView'
 import { buildGraph, keepLastGood, replaceFiles, type ProjectGraph, type RawScan } from '../shared/projectGraph'
 import { parseProf, type RunProfile } from '../shared/profile'
+import { MemoryLog, parseMem } from '../shared/memory'
+import { MemoryView } from './memory/memoryView'
 import { buildSchema } from '../shared/database'
 import { DatabaseView } from './database/databaseView'
 import { WhereView } from './panels/whereView'
@@ -1907,7 +1909,7 @@ const parentDir = (path: string) => path.replace(/[\\/][^\\/]*$/, '')
 let lastRunId = 0
 
 /** Run the selected run configuration, or the open file (Ctrl+F5). `traceData`: also record a function's values line by line. */
-async function runCurrentFile(traceData?: string): Promise<void> {
+async function runCurrentFile(traceData?: string, opts: { memory?: boolean } = {}): Promise<void> {
   panel.show('output')
   const spec = launchSpec()
   if ('error' in spec) {
@@ -1925,7 +1927,12 @@ async function runCurrentFile(traceData?: string): Promise<void> {
   // With the Graph in view (and the setting on), the run shows where it's at on it.
   // With the Network panel in view, the run reports its web requests there too.
   const trace = (settings.showRunsOnGraph && tasks.isShown('graph')) || tasks.isShown('network')
-  await window.api.runPython({ ...spec, root: rootFolder ?? spec.cwd, python: settings.pythonPath || undefined, trace: trace || !!traceData, ...(traceData ? { traceData } : {}) })
+  await window.api.runPython({
+    ...spec, root: rootFolder ?? spec.cwd, python: settings.pythonPath || undefined,
+    trace: trace || !!traceData || !!opts.memory,
+    ...(traceData ? { traceData } : {}),
+    ...(opts.memory ? { traceMemory: true } : {})
+  })
   editor.focus()
 }
 
@@ -2073,6 +2080,13 @@ window.api.onRunTrace((e) => {
       recursion.add(rec)
       recursionChanged()
     }
+    return
+  }
+  const mem = parseMem(e.message)
+  if (mem) {
+    if (memLog.runId !== e.runId) memLog.begin(e.runId)
+    memLog.add(mem)
+    memorySoon(mem.final)
     return
   }
   const net = parseNet(e.message)
@@ -2890,6 +2904,45 @@ const networkView = new NetworkView(netLog, {
   }
 })
 panel.addView('network', 'Network', networkView.body, networkView.actions)
+
+// ---------- Memory panel: a run with memory tracking ----------
+const memLog = new MemoryLog()
+const memoryView = new MemoryView(memLog, {
+  run: () => {
+    void runCurrentFile(undefined, { memory: true }).then(() => panel.show('memory'))
+  },
+  describe: (path, line) => {
+    const file = lastRawScan?.files.find((f) => f.path === path)
+    if (!file) return null
+    // The innermost function or method around the line.
+    const def = file.defs
+      .filter((d) => (d.kind === 'function' || d.kind === 'method') && d.line <= line && line <= d.endLine)
+      .sort((a, b) => b.line - a.line)[0]
+    return def ? `${file.module}.${def.qual}` : `${file.module} (top level)`
+  },
+  openAt: (path, line) => openProjectFile(path, line)
+})
+let memoryTimer = 0
+/** Redraw the Memory panel at most twice a second while the program runs (now, when it ends). */
+function memorySoon(now = false): void {
+  if (now) {
+    window.clearTimeout(memoryTimer)
+    memoryTimer = 0
+    memoryView.update()
+    return
+  }
+  if (memoryTimer) return
+  memoryTimer = window.setTimeout(() => {
+    memoryTimer = 0
+    memoryView.update()
+  }, 500)
+}
+panel.addView('memory', 'Memory', memoryView.el, document.createElement('span'), () => {
+  // The analysis names the functions memory was allocated in.
+  if (!lastRawScan && rootFolder) void scanProjectGraph().then(() => memoryView.update())
+})
+commands.register({ id: 'panel.memory', title: 'Show Memory', run: () => panel.show('memory') })
+commands.register({ id: 'run.memory', title: 'Run with Memory Tracking', when: canLaunch, run: () => memoryView.el.querySelector<HTMLButtonElement>('[data-action="run-memory"]')!.click() })
 commands.register({ id: 'panel.network', title: 'Show Network (web requests while running)', run: () => panel.show('network') })
 
 const graphView = new GraphView({
