@@ -10,7 +10,7 @@
 import { describeUnreachable, type ProjectGraph } from '../../shared/projectGraph'
 import { formatMs, heatLevel, slowest, timePath, viewTimes, type RunProfile } from '../../shared/profile'
 import { layoutGraph, type Layout } from './layout'
-import { buildView, neighbourhood, type GraphViewData, type ViewNode, type ViewOptions } from './viewModel'
+import { buildView, neighbourhood, type GraphMode, type GraphViewData, type ViewNode, type ViewOptions } from './viewModel'
 import type { ApiBox } from '../../shared/boxes'
 import { boxBounds, drawBoxLayer, panToShow, placeBoxes, type PlacedBox } from './boxLayer'
 import { BOX_DRAG_TYPE } from '../boxes/toolbox'
@@ -86,7 +86,7 @@ export class GraphView {
   private readonly side: HTMLDivElement
   private readonly note: HTMLDivElement
   private readonly search: HTMLInputElement
-  private readonly modeButtons: Record<'modules' | 'calls', HTMLButtonElement>
+  private readonly modeButtons: Record<GraphMode, HTMLButtonElement>
   private readonly focusChip: HTMLButtonElement
   private readonly status: HTMLSpanElement
   private readonly canvas: HTMLDivElement
@@ -133,7 +133,7 @@ export class GraphView {
     const bar = el('div', 'graph-toolbar')
     const title = el('span', 'graph-title', 'Project Graph')
     const seg = el('div', 'graph-seg')
-    const modeButton = (mode: 'modules' | 'calls', label: string, tip: string) => {
+    const modeButton = (mode: GraphMode, label: string, tip: string) => {
       const b = el('button', '', label)
       b.title = tip
       b.addEventListener('click', () => this.setOptions({ mode }))
@@ -142,7 +142,8 @@ export class GraphView {
     }
     this.modeButtons = {
       modules: modeButton('modules', 'Modules', 'Files and the imports between them'),
-      calls: modeButton('calls', 'Calls', 'Functions and the calls between them')
+      calls: modeButton('calls', 'Calls', 'Functions and the calls between them'),
+      events: modeButton('events', 'Events', 'Events: what emits them, the handlers that run and what they call, and work started on tasks and threads')
     }
     this.focusChip = el('button', 'graph-chip')
     this.focusChip.title = 'Show the whole project instead'
@@ -268,7 +269,8 @@ export class GraphView {
   private updateToolbar(): void {
     this.modeButtons.modules.classList.toggle('active', this.opts.mode === 'modules')
     this.modeButtons.calls.classList.toggle('active', this.opts.mode === 'calls')
-    const showChip = this.opts.mode === 'calls' && !!this.opts.focus
+    this.modeButtons.events.classList.toggle('active', this.opts.mode === 'events')
+    const showChip = this.opts.mode !== 'modules' && !!this.opts.focus
     this.focusChip.hidden = !showChip
     this.focusChip.textContent = showChip ? `in ${this.opts.focus} ✕` : ''
   }
@@ -323,7 +325,8 @@ export class GraphView {
       if (!p) continue
       const g = svg('g', { transform: `translate(${p.x},${p.y})` }, this.nodeClass(n))
       g.dataset.id = n.id
-      const rect = svg('rect', { width: p.width, height: p.height, rx: n.kind === 'external' || n.kind === 'host' ? p.height / 2 : 6 })
+      const pill = n.kind === 'external' || n.kind === 'host' || n.kind === 'event'
+      const rect = svg('rect', { width: p.width, height: p.height, rx: pill ? p.height / 2 : 6 })
       const stripe = svg('rect', { x: 0, y: 0, width: 4, height: p.height, rx: 2 }, 'gstripe')
       stripe.style.fill = groupColour(n.group)
       const label = svg('text', { x: 12, y: 17 }, 'glabel')
@@ -332,7 +335,7 @@ export class GraphView {
       detail.textContent = n.detail
       const tip = svg('title')
       tip.textContent = this.tooltip(n)
-      g.append(rect, n.kind === 'external' || n.kind === 'host' ? svg('g') : stripe, label, detail, tip)
+      g.append(rect, pill ? svg('g') : stripe, label, detail, tip)
       nodeLayer.append(g)
       this.nodeEls.set(n.id, g)
     }
@@ -389,7 +392,7 @@ export class GraphView {
       text.textContent = formatMs(t.totalMs)
       badge.append(text)
       const tip = svg('title')
-      tip.textContent = this.opts.mode === 'calls' ? describeTime(t) : `${formatMs(t.selfMs)} running code in this file, ${t.calls} call${t.calls === 1 ? '' : 's'}`
+      tip.textContent = this.opts.mode !== 'modules' ? describeTime(t) : `${formatMs(t.selfMs)} running code in this file, ${t.calls} call${t.calls === 1 ? '' : 's'}`
       badge.append(tip)
       g.append(badge)
     }
@@ -656,7 +659,7 @@ export class GraphView {
 
   /** A traced id as this view shows it (the module in the Modules view). */
   private debugView(id: string): string {
-    if (this.opts.mode === 'calls') return id
+    if (this.opts.mode !== 'modules') return id
     return id.startsWith('module:') ? id.slice(7) : id.slice(0, id.indexOf(':'))
   }
 
@@ -1009,6 +1012,19 @@ export class GraphView {
       }
       const run = this.hooks.runDetails?.(m.id)
       if (run) out.push(...this.section('Last run', [run]))
+    } else if (n.kind === 'event') {
+      const name = n.id.slice(6)
+      const uses = g.events.filter((e) => e.event === name)
+      const label = (id: string) => this.data.nodes.find((x) => x.id === id)?.label ?? id
+      const where = (e: (typeof uses)[number]) =>
+        this.item(label(e.func), `${e.via} · line ${e.line}`, () => this.openAt(e.module, e.line - 1))
+      out.push(el('div', 'graph-side-intro', uses.some((e) => e.kind === 'emits')
+        ? 'Emitted by the code below; each handler runs when it is.'
+        : 'Nothing in the code emits it: it comes from outside (a click, a message, a signal, the framework).'))
+      out.push(
+        ...this.section('Emitted by', uses.filter((e) => e.kind === 'emits').map(where)),
+        ...this.section('Handled by', uses.filter((e) => e.kind === 'handles').map(where))
+      )
     } else if (n.kind === 'external' || n.kind === 'host') {
       out.push(...this.section(n.kind === 'host' ? 'Called from' : 'Imported by', links(nb.in)))
       if (n.kind === 'host') {

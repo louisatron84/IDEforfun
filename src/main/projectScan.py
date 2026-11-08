@@ -23,6 +23,12 @@ import re as _re
 BASE_URL_NAME = _re.compile(r'^(BASE|API|ROOT|SERVER)_?(URL|ADDRESS|ENDPOINT)$|^BASE$', _re.I)
 HTTP_METHODS = {'get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'request', 'stream'}
 ROUTE_METHODS = {'get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'route', 'api_route', 'websocket'}
+# Events (the Graph's Events view).
+ON_DECORATORS = {'on', 'on_event', 'listener', 'subscribe', 'handler', 'event_handler', 'message_handler', 'callback_query_handler', 'message', 'callback_query'}
+REGISTER_EVENT_FIRST = {'on', 'add_event_handler', 'subscribe', 'bind', 'bind_all', 'tag_bind'}  # x.on('event', handler)
+EMIT_CALLS = {'emit', 'dispatch', 'trigger', 'fire', 'publish', 'event_generate'}
+SPAWN_CALLS = {'create_task', 'ensure_future', 'run', 'gather', 'run_coroutine_threadsafe'}  # asyncio.create_task(work())
+SPAWN_FUNC_ARG = {'submit': 0, 'call_soon': 0, 'call_soon_threadsafe': 0, 'call_later': 1, 'call_at': 1, 'run_in_executor': 1, 'to_thread': 0, 'start_soon': 0}
 
 
 def dotted(node):
@@ -68,6 +74,7 @@ class FileScan(ast.NodeVisitor):
         self.stack = []  # enclosing defs (dicts)
         self.module_def = {'name': '<module>', 'qual': '<module>', 'kind': 'module', 'line': 1, 'endLine': 1, 'calls': [], 'refs': set(), 'decorators': []}
         self.http_aliases = {}  # local name -> library ('requests', 'httpx', 'aiohttp')
+        self.events = []  # handlers, emitters, work started (see _event_call)
 
     @property
     def current(self):
@@ -115,6 +122,8 @@ class FileScan(ast.NodeVisitor):
         for dec in node.decorator_list:
             self.visit(dec)
             self._route(dec, qual, node.lineno)
+            if kind != 'class':
+                self._event_decorator(dec, qual, node.lineno, node.name)
         self.stack.append(d)
         for child in node.body:
             self.visit(child)
@@ -158,6 +167,84 @@ class FileScan(ast.NodeVisitor):
             framework = 'fastapi'
         self.routes.append({'methods': methods, 'path': path, 'func': qual, 'line': line, 'framework': framework, 'owner': dotted(dec.func.value)})
 
+    # ---- events: handlers, emitters, work started on tasks and threads ----
+    def _event(self, kind, event, ref, line, via, owner_def=None):
+        self.events.append({'kind': kind, 'event': event, 'ref': ref, 'def': owner_def if owner_def is not None else self.current_qual(), 'line': line, 'via': via})
+
+    def _event_decorator(self, dec, qual, line, fname):
+        """@sio.on('message'), @client.event, @receiver(post_save), @app.task, @event.listens_for(X, 'evt')..."""
+        call = dec if isinstance(dec, ast.Call) else None
+        name = dotted(call.func if call else dec) or ''
+        last = last_name(name)
+        has_owner = '.' in name
+        event = None
+        if last == 'receiver' and call and call.args:
+            event = last_name(dotted(call.args[0])) or None
+        elif last == 'event' and has_owner and not call:
+            event = fname  # discord.py: the function's name is the event (on_message)
+        elif last in ('task', 'shared_task'):
+            event = 'task ' + fname  # Celery: started with .delay() / .apply_async()
+        elif last == 'listens_for' and call and len(call.args) >= 2:
+            event = const_str(call.args[1])
+        elif last in ON_DECORATORS and has_owner and call:
+            event = (const_str(call.args[0]) if call.args else None) or last
+        if event:
+            self._event('handles', event, qual, line, name, owner_def=qual)
+
+    def _event_call(self, node, name):
+        last = last_name(name)
+        owner = name.rsplit('.', 1)[0] if '.' in name else ''
+        line = node.lineno
+        args = node.args
+        ref = lambda n: dotted(n) if n is not None and not isinstance(n, ast.Call) else None
+        # Handlers registered by a call.
+        if owner and last in REGISTER_EVENT_FIRST and len(args) >= 2:
+            ev, h = const_str(args[0]), ref(args[1])
+            if ev and h:
+                self._event('handles', ev, h, line, name)
+        elif owner and last == 'add_listener' and args:
+            h = ref(args[0])
+            ev = const_str(args[1]) if len(args) > 1 else const_str(kw(node, 'name'))
+            if h:
+                self._event('handles', ev or last_name(h), h, line, name)
+        elif owner and last == 'connect' and args:
+            h = ref(args[0])  # Qt signals, Django signals, blinker: <signal>.connect(handler)
+            if h:
+                self._event('handles', last_name(owner), h, line, name)
+        elif name == 'signal.signal' and len(args) >= 2 and ref(args[1]):
+            self._event('handles', last_name(dotted(args[0])) or 'signal', ref(args[1]), line, name)
+        elif name == 'atexit.register' and args and ref(args[0]):
+            self._event('handles', 'exit', ref(args[0]), line, name)
+        elif last == 'do' and '.every(' in name and args and ref(args[0]):
+            self._event('handles', 'schedule', ref(args[0]), line, name)
+        command = kw(node, 'command')
+        if command is not None and ref(command) and (last[:1].isupper() or last in ('config', 'configure')):
+            widget = last if last[:1].isupper() else (last_name(owner) or 'widget')
+            self._event('handles', widget + ' command', ref(command), line, name)
+        # Events emitted.
+        if owner and last in EMIT_CALLS:
+            ev = const_str(args[0]) if args else None
+            if ev is None and last == 'emit':
+                ev = last_name(owner)  # Qt: self.changed.emit(value)
+            if ev:
+                self._event('emits', ev, None, line, name)
+        elif owner and last in ('send', 'send_robust') and kw(node, 'sender') is not None:
+            self._event('emits', last_name(owner), None, line, name)  # Django signals
+        elif owner and last in ('delay', 'apply_async'):
+            self._event('emits', 'task ' + last_name(owner), None, line, name)  # Celery
+        # Work started elsewhere: tasks, threads, executors, callbacks.
+        if last in SPAWN_CALLS:
+            for a in (args if last == 'gather' else args[:1]):
+                if isinstance(a, ast.Call) and dotted(a.func):
+                    self._event('spawns', None, dotted(a.func), line, name)
+        target = kw(node, 'target')
+        if target is not None and last in ('Thread', 'Process') and ref(target):
+            self._event('spawns', None, ref(target), line, name)
+        if last == 'Timer' and len(args) >= 2 and ref(args[1]):
+            self._event('spawns', None, ref(args[1]), line, name)
+        if owner and last in SPAWN_FUNC_ARG and len(args) > SPAWN_FUNC_ARG[last] and ref(args[SPAWN_FUNC_ARG[last]]):
+            self._event('spawns', None, ref(args[SPAWN_FUNC_ARG[last]]), line, name)
+
     # ---- calls, names, HTTP, environment ----
     def visit_Call(self, node):
         name = dotted(node.func)
@@ -165,6 +252,7 @@ class FileScan(ast.NodeVisitor):
             self.current['calls'].append({'name': name, 'line': node.lineno})
             self._http(node, name)
             self._env_call(node, name)
+            self._event_call(node, name)
         self.generic_visit(node)
 
     def _http(self, node, name):
@@ -767,6 +855,8 @@ def scan_file(root, rel, text=None):
     for d in defs:
         d['refs'] = sorted(d['refs'])
     entry.update(imports=s.imports, defs=defs, routes=s.routes, http=s.http, env=s.env)
+    if s.events:
+        entry['events'] = s.events
     entry['unreachable'] = find_unreachable(tree)
     db = scan_db(tree, root, rel)
     if db:

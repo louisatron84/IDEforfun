@@ -1385,6 +1385,11 @@ button.sb-item:hover { background: var(--bg-hover); color: var(--fg); }
 
 .gedge { fill: none; stroke: var(--fg-muted); stroke-width: 1.2; opacity: 0.55; transition: opacity 0.12s; }
 .gedge.k-external, .gedge.k-http { stroke-dasharray: 4 3; }
+/* Events view: events are pills; emitting and handling run through them, started work is dashed. */
+.gnode.k-event rect:first-of-type { fill: color-mix(in srgb, var(--graph-out) 14%, var(--raised)); stroke: var(--graph-out); }
+.gnode.k-event .glabel { fill: var(--graph-out); }
+.gedge.k-emits, .gedge.k-handles { stroke: var(--graph-out); opacity: 0.75; }
+.gedge.k-spawns { stroke-dasharray: 6 4; opacity: 0.75; }
 .gedge.cyc { stroke: var(--err); opacity: 0.85; }
 .arrow { fill: var(--fg-muted); }
 .arrow.cyc { fill: var(--err); }

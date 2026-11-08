@@ -259,8 +259,8 @@ Optional directions that could extend the IDE beyond the core roadmap.
 - [x] Navigate from schema elements to relevant code (v0.48: double-click a table to open its model; "Used in" lists the functions that use it; connections open where they're made)
 
 **Event-flow visualiser**
-- [ ] Track events through an application: where they originate, which handlers process them, what gets triggered and where they end up
-- [ ] Support asynchronous and event-driven applications
+- [x] Track events through an application: where they originate, which handlers process them, what gets triggered and where they end up (v0.48: the Graph's Events view: code that emits each event (or "from outside the code"), its handlers and what they call; handlers from decorators (@sio.on, @client.event, @receiver, @app.task...), .on() / .connect() / .bind() / command=, emit() / send(sender=) / delay(); sparks through the event as it runs)
+- [x] Support asynchronous and event-driven applications (v0.48: work started with asyncio.create_task / gather / run, Thread(target=), Timer, executor.submit, run_in_executor, call_soon / call_later, to_thread)
 
 **Memory explorer**
 - [x] Visualise object references, memory allocations and object lifetimes (v0.48: Memory panel, Run with Memory Tracking: where memory is allocated, by your line and function; how many objects of each of your classes are alive over the run. Object references: v0.46's Objects on the debugger's card)
